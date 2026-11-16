@@ -265,20 +265,20 @@ class MainActivity : AppCompatActivity() {
 
         muteButton.setOnClickListener {
 
-            muteAudio = !muteAudio
+    muteAudio = !muteAudio
 
-            text = if (muteAudio) {
-                "♫ AUDIO : OFF"
-            } else {
-                "♫ AUDIO : ON"
-            }
+    muteButton.text = if (muteAudio) {
+        "♫ AUDIO : OFF"
+    } else {
+        "♫ AUDIO : ON"
+    }
 
-            statusLabel.text = if (muteAudio) {
-                "Audio akan dihilangkan saat ekspor"
-            } else {
-                "Audio asli dipertahankan"
-            }
-        }
+    statusLabel.text = if (muteAudio) {
+        "Audio akan dihilangkan saat ekspor"
+    } else {
+        "Audio asli dipertahankan"
+    }
+}
 
         root.addView(muteButton)
 
