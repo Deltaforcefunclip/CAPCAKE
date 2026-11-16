@@ -670,13 +670,13 @@ class MainActivity : AppCompatActivity() {
 
                 videoSelected = !videoSelected
 
-                timeline.setSelected(videoSelected)
+                timeline.updateSelection(videoSelected)
 
                 updateToolMenu()
             }
         )
 
-        timeline.setSelected(videoSelected)
+        timeline.updateSelection(videoSelected)
 
         root.addView(
             timeline,
@@ -1284,7 +1284,7 @@ class TimelineView(
     // SELECTED STATE
     // =====================================
 
-    fun setSelected(selected: Boolean) {
+    fun updateSelection(selected: Boolean) {
 
         isSelected = selected
 
