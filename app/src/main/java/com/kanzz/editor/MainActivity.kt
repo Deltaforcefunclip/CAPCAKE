@@ -13,6 +13,7 @@ import android.os.Looper
 import android.provider.MediaStore
 import android.view.Gravity
 import android.view.MotionEvent
+import android.view.ScaleGestureDetector
 import android.view.View
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
@@ -26,8 +27,20 @@ import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
+import org.json.JSONArray
+import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import kotlin.math.max
+import kotlin.math.min
+
+data class VideoProject(
+    var id: String,
+    var name: String,
+    var uri: String,
+    var position: Long = 0L,
+    var muted: Boolean = false
+)
 
 class MainActivity : AppCompatActivity() {
 
@@ -38,17 +51,34 @@ class MainActivity : AppCompatActivity() {
     private lateinit var player: ExoPlayer
     private lateinit var playerView: PlayerView
     private lateinit var timeline: TimelineView
-    private lateinit var timeLabel: TextView
-    private lateinit var statusLabel: TextView
-    private lateinit var muteButton: Button
 
+    private lateinit var statusLabel: TextView
+    private lateinit var timeLabel: TextView
+    private lateinit var muteButton: TextView
+    private lateinit var toolsContainer: LinearLayout
+
+    private val projects = mutableListOf<VideoProject>()
+
+    private var currentProject: VideoProject? = null
     private var videoUri: Uri? = null
+
     private var muteAudio = false
+    private var videoSelected = false
 
     private var trimStart = 0L
     private var trimEnd = 0L
 
+    private var isCreatingProject = false
+
     private val handler = Handler(Looper.getMainLooper())
+
+    private val prefs by lazy {
+        getSharedPreferences("CAPCAKE_PROJECTS", MODE_PRIVATE)
+    }
+
+    // =====================================
+    // VIDEO PICKER
+    // =====================================
 
     private val pickVideo =
         registerForActivityResult(
@@ -57,21 +87,47 @@ class MainActivity : AppCompatActivity() {
 
             if (uri != null) {
 
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {}
+
                 videoUri = uri
+                videoSelected = true
 
-                trimStart = 0L
-                trimEnd = 0L
+                if (isCreatingProject) {
 
-                player.setMediaItem(
-                    MediaItem.fromUri(uri)
-                )
+                    val project = VideoProject(
+                        id = System.currentTimeMillis().toString(),
+                        name = "Project ${projects.size + 1}",
+                        uri = uri.toString()
+                    )
 
-                player.prepare()
-                player.playWhenReady = false
+                    projects.add(0, project)
 
-                statusLabel.text = "Video berhasil dimuat"
+                    currentProject = project
+
+                    isCreatingProject = false
+
+                    saveProjects()
+
+                } else {
+
+                    currentProject?.let {
+                        it.uri = uri.toString()
+                    }
+                }
+
+                openEditor()
+                loadVideo(uri)
             }
         }
+
+    // =====================================
+    // ACTIVITY
+    // =====================================
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -81,57 +137,376 @@ class MainActivity : AppCompatActivity() {
 
         player = ExoPlayer.Builder(this).build()
 
-        buildInterface()
+        loadProjects()
 
-        playerView.player = player
-
-        player.addListener(object : Player.Listener {
-
-            override fun onPlaybackStateChanged(state: Int) {
-
-                if (state == Player.STATE_READY) {
-
-                    val duration = player.duration
-
-                    trimEnd = duration
-
-                    timeline.setValues(
-                        duration,
-                        trimStart,
-                        trimEnd,
-                        player.currentPosition
-                    )
-
-                    updateTime()
-                }
-            }
-        })
-
-        handler.post(updateRunnable)
+        showHome()
     }
 
-    private fun buildInterface() {
+    // =====================================
+    // HOME SCREEN
+    // =====================================
+
+    private fun showHome() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(10), dp(8), dp(10), dp(6))
+            setPadding(dp(20), dp(25), dp(20), dp(15))
+            setBackgroundColor(bg)
+        }
+
+        val title = TextView(this).apply {
+
+            text = "CAPCAKE"
+            textSize = 36f
+            setTextColor(green)
+            gravity = Gravity.CENTER
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+
+        root.addView(
+            title,
+            LinearLayout.LayoutParams(-1, dp(85))
+        )
+
+        val subtitle = TextView(this).apply {
+
+            text = "VIDEO PROJECTS"
+            textSize = 13f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, dp(20), 0, dp(15))
+        }
+
+        root.addView(subtitle)
+
+        val scroll = ScrollView(this)
+
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+        }
+
+        if (projects.isEmpty()) {
+
+            val empty = TextView(this).apply {
+
+                text = "Belum ada project.\n\nBuat project pertamamu!"
+                textSize = 15f
+                gravity = Gravity.CENTER
+                setTextColor(Color.GRAY)
+                setPadding(0, dp(50), 0, dp(50))
+            }
+
+            list.addView(empty)
+
+        } else {
+
+            projects.forEach { project ->
+
+                val row = LinearLayout(this).apply {
+
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(14), dp(8), dp(8), dp(8))
+                    setBackgroundColor(panel)
+                }
+
+                val info = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(5), dp(5), dp(5), dp(5))
+                }
+
+                val name = TextView(this).apply {
+
+                    text = project.name
+                    textSize = 16f
+                    setTextColor(Color.WHITE)
+                }
+
+                val detail = TextView(this).apply {
+
+                    text = "Project CAPCAKE"
+                    textSize = 11f
+                    setTextColor(Color.GRAY)
+                }
+
+                info.addView(name)
+                info.addView(detail)
+
+                info.setOnClickListener {
+                    openProject(project)
+                }
+
+                val menu = TextView(this).apply {
+
+                    text = "⋮"
+                    textSize = 26f
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.WHITE)
+                }
+
+                menu.setOnClickListener {
+                    showProjectMenu(project)
+                }
+
+                row.addView(
+                    info,
+                    LinearLayout.LayoutParams(0, dp(58), 1f)
+                )
+
+                row.addView(
+                    menu,
+                    LinearLayout.LayoutParams(dp(45), dp(58))
+                )
+
+                val outer = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(0, 0, 0, dp(10))
+                }
+
+                outer.addView(
+                    row,
+                    LinearLayout.LayoutParams(-1, dp(75))
+                )
+
+                list.addView(outer)
+            }
+        }
+
+        scroll.addView(list)
+
+        root.addView(
+            scroll,
+            LinearLayout.LayoutParams(-1, 0, 1f)
+        )
+
+        val newButton = TextView(this).apply {
+
+            text = "＋  PROJECT BARU"
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+            setBackgroundColor(green)
+        }
+
+        newButton.setOnClickListener {
+
+            isCreatingProject = true
+
+            pickVideo.launch(arrayOf("video/*"))
+        }
+
+        root.addView(
+            newButton,
+            LinearLayout.LayoutParams(-1, dp(52))
+        )
+
+        setContentView(root)
+    }
+
+    // =====================================
+    // PROJECT MENU
+    // =====================================
+
+    private fun showProjectMenu(project: VideoProject) {
+
+        val options = arrayOf(
+            "Duplikat",
+            "Ganti nama",
+            "Hapus"
+        )
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setItems(options) { _, which ->
+
+                when (which) {
+
+                    0 -> duplicateProject(project)
+
+                    1 -> renameProject(project)
+
+                    2 -> deleteProject(project)
+                }
+            }
+            .show()
+    }
+
+    private fun duplicateProject(project: VideoProject) {
+
+        val copy = project.copy(
+            id = System.currentTimeMillis().toString(),
+            name = project.name + " Copy"
+        )
+
+        projects.add(0, copy)
+
+        saveProjects()
+        showHome()
+    }
+
+    private fun renameProject(project: VideoProject) {
+
+        val input = EditText(this).apply {
+            setText(project.name)
+            setSingleLine()
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Ganti nama project")
+            .setView(input)
+            .setNegativeButton("Batal", null)
+            .setPositiveButton("Simpan") { _, _ ->
+
+                val newName = input.text.toString().trim()
+
+                if (newName.isNotEmpty()) {
+
+                    project.name = newName
+
+                    saveProjects()
+                    showHome()
+                }
+            }
+            .show()
+    }
+
+    private fun deleteProject(project: VideoProject) {
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Hapus project?")
+            .setMessage("Project ${project.name} akan dihapus.")
+            .setNegativeButton("Batal", null)
+            .setPositiveButton("Hapus") { _, _ ->
+
+                projects.remove(project)
+
+                saveProjects()
+                showHome()
+            }
+            .show()
+    }
+
+    // =====================================
+    // SAVE PROJECT DATA
+    // =====================================
+
+    private fun saveProjects() {
+
+        val array = JSONArray()
+
+        projects.forEach { project ->
+
+            val obj = JSONObject()
+
+            obj.put("id", project.id)
+            obj.put("name", project.name)
+            obj.put("uri", project.uri)
+            obj.put("position", project.position)
+            obj.put("muted", project.muted)
+
+            array.put(obj)
+        }
+
+        prefs.edit()
+            .putString("projects", array.toString())
+            .apply()
+    }
+
+    private fun loadProjects() {
+
+        projects.clear()
+
+        val data = prefs.getString("projects", null) ?: return
+
+        try {
+
+            val array = JSONArray(data)
+
+            for (i in 0 until array.length()) {
+
+                val obj = array.getJSONObject(i)
+
+                projects.add(
+                    VideoProject(
+                        id = obj.getString("id"),
+                        name = obj.getString("name"),
+                        uri = obj.getString("uri"),
+                        position = obj.optLong("position", 0L),
+                        muted = obj.optBoolean("muted", false)
+                    )
+                )
+            }
+
+        } catch (_: Exception) {}
+    }
+
+    // =====================================
+    // OPEN PROJECT
+    // =====================================
+
+    private fun openProject(project: VideoProject) {
+
+        currentProject = project
+
+        try {
+
+            val uri = Uri.parse(project.uri)
+
+            contentResolver.openFileDescriptor(uri, "r")?.close()
+
+            videoUri = uri
+            muteAudio = project.muted
+            videoSelected = true
+
+            openEditor()
+            loadVideo(uri)
+
+        } catch (_: Exception) {
+
+            showMessage(
+                "File video tidak dapat ditemukan.\n" +
+                "Silakan pilih video kembali."
+            )
+
+            currentProject = project
+
+            isCreatingProject = false
+
+            pickVideo.launch(arrayOf("video/*"))
+        }
+    }
+
+    // =====================================
+    // EDITOR SCREEN
+    // =====================================
+
+    private fun openEditor() {
+
+        val root = LinearLayout(this).apply {
+
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(5), dp(8), dp(5))
             setBackgroundColor(bg)
         }
 
         // TOP BAR
 
         val top = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val close = button("✕")
-        close.setOnClickListener { finish() }
+        val back = button("‹")
+
+        back.setOnClickListener {
+
+            saveCurrentProject()
+            player.pause()
+            showHome()
+        }
 
         val title = TextView(this).apply {
-            text = "CAPCAKE"
-            textSize = 19f
-            setTextColor(green)
+
+            text = currentProject?.name ?: "CAPCAKE"
+            textSize = 16f
+            setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
         }
 
@@ -143,19 +518,28 @@ class MainActivity : AppCompatActivity() {
             exportVideo()
         }
 
-        top.addView(close)
-        top.addView(title)
-        top.addView(spacer, LinearLayout.LayoutParams(0, 1, 1f))
+        top.addView(back)
+
+        top.addView(
+            title,
+            LinearLayout.LayoutParams(0, dp(45), 1f)
+        )
+
+        top.addView(spacer, LinearLayout.LayoutParams(0, 1, 0f))
+
         top.addView(export)
 
-        root.addView(top, LinearLayout.LayoutParams(-1, dp(48)))
+        root.addView(top)
 
         // VIDEO PREVIEW
 
         playerView = PlayerView(this).apply {
+
             useController = false
             setBackgroundColor(Color.BLACK)
-            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+
+            resizeMode =
+                androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
         }
 
         root.addView(
@@ -163,187 +547,353 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(-1, 0, 1.2f)
         )
 
-        // PLAYBACK BUTTONS
+        playerView.player = player
+
+        // PLAYBACK CONTROLS
 
         val controls = LinearLayout(this).apply {
             gravity = Gravity.CENTER
         }
 
-        val back = button("↶")
+        val backButton = button("↶")
 
-        back.setOnClickListener {
+        backButton.setOnClickListener {
             player.seekTo(0)
         }
 
-        val play = button("▶")
+        val playButton = button("▶")
 
-        play.setOnClickListener {
+        playButton.setOnClickListener {
 
-            if (videoUri == null) {
-                pickVideo.launch(arrayOf("video/*"))
+            if (player.isPlaying) {
+
+                player.pause()
+                playButton.text = "▶"
+
             } else {
-                if (player.isPlaying) {
-                    player.pause()
-                    play.text = "▶"
-                } else {
-                    player.play()
-                    play.text = "Ⅱ"
-                }
+
+                player.play()
+                playButton.text = "Ⅱ"
             }
         }
 
-        val forward = button("↷")
+        val forwardButton = button("↷")
 
-        forward.setOnClickListener {
+        forwardButton.setOnClickListener {
             player.seekTo(player.duration)
         }
 
-        controls.addView(back)
-        controls.addView(play)
-        controls.addView(forward)
+        controls.addView(backButton)
+        controls.addView(playButton)
+        controls.addView(forwardButton)
 
-        root.addView(controls, LinearLayout.LayoutParams(-1, dp(45)))
+        root.addView(
+            controls,
+            LinearLayout.LayoutParams(-1, dp(42))
+        )
 
-        // TIME INFORMATION
+        // TIME
 
         timeLabel = TextView(this).apply {
+
             text = "00:00 / 00:00"
-            textSize = 13f
+            textSize = 12f
             setTextColor(Color.WHITE)
+            setPadding(dp(5), dp(5), 0, dp(5))
         }
 
         root.addView(timeLabel)
 
-        // TIMELINE
+        // TIMELINE TITLE
 
         val timelineTitle = TextView(this).apply {
+
             text = "TIMELINE"
-            textSize = 13f
+            textSize = 12f
             setTextColor(green)
-            setPadding(0, dp(12), 0, dp(6))
+            setPadding(dp(5), dp(8), 0, dp(5))
         }
 
         root.addView(timelineTitle)
 
-        timeline = TimelineView(this) { position, start, end ->
+        // TIMELINE ROW
 
-            trimStart = start
-            trimEnd = end
-
-            player.seekTo(position)
-
-            updateTime()
+        val timelineRow = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
         }
 
-        root.addView(
-            timeline,
-            LinearLayout.LayoutParams(-1, dp(115))
-        )
+        // AUDIO BUTTON LEFT
 
-        // IMPORT VIDEO
+        muteButton = TextView(this).apply {
 
-        val importButton = button("＋ PILIH VIDEO")
+            text = if (muteAudio) "♫ OFF" else "♫ ON"
 
-        importButton.setOnClickListener {
-            pickVideo.launch(arrayOf("video/*"))
-        }
-
-        root.addView(
-            importButton,
-            LinearLayout.LayoutParams(-1, dp(42))
-        )
-
-        // AUDIO
-
-        muteButton = Button(this).apply {
-            text = "♫ AUDIO : ON"
+            textSize = 12f
+            gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            setBackgroundTintList(
-                android.content.res.ColorStateList.valueOf(panel)
-            )
+            setBackgroundColor(panel)
         }
 
         muteButton.setOnClickListener {
 
-    muteAudio = !muteAudio
+            muteAudio = !muteAudio
 
-    muteButton.text = if (muteAudio) {
-        "♫ AUDIO : OFF"
-    } else {
-        "♫ AUDIO : ON"
-    }
+            muteButton.text =
+                if (muteAudio) "♫ OFF" else "♫ ON"
 
-    statusLabel.text = if (muteAudio) {
-        "Audio akan dihilangkan saat ekspor"
-    } else {
-        "Audio asli dipertahankan"
-    }
-}
+            currentProject?.muted = muteAudio
 
-        root.addView(muteButton)
+            saveCurrentProject()
+        }
+
+        timelineRow.addView(
+            muteButton,
+            LinearLayout.LayoutParams(dp(58), dp(110))
+        )
+
+        // TIMELINE
+
+        timeline = TimelineView(this) { position ->
+
+            player.seekTo(position)
+
+            updateTime()
+
+            videoSelected = true
+
+            updateToolMenu()
+        }
+
+        timelineRow.addView(
+            timeline,
+            LinearLayout.LayoutParams(0, dp(110), 1f)
+        )
+
+        root.addView(timelineRow)
 
         // STATUS
 
         statusLabel = TextView(this).apply {
-            text = "Pilih video untuk mulai mengedit"
-            textSize = 12f
+
+            text = "Pilih klip untuk mengedit"
+            textSize = 11f
             setTextColor(green)
-            setPadding(0, dp(8), 0, dp(8))
+            setPadding(dp(5), dp(5), 0, dp(5))
         }
 
         root.addView(statusLabel)
 
-        // EDITING TOOLS
+        // TOOLS
 
-        val tools = LinearLayout(this).apply {
-            gravity = Gravity.CENTER
+        toolsContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
         }
 
-        val names = listOf(
-            "✂\nPotong",
-            "♫\nAudio",
-            "T\nTeks",
-            "▧\nOverlay",
-            "☆\nEfek",
-            "▣\nRasio"
+        root.addView(
+            toolsContainer,
+            LinearLayout.LayoutParams(-1, dp(100))
         )
 
-        names.forEachIndexed { index, name ->
+        updateToolMenu()
+
+        setContentView(root)
+
+        // PREVIEW BORDER WHEN VIDEO SELECTED
+
+        playerView.setOnClickListener {
+
+            videoSelected = !videoSelected
+
+            updateToolMenu()
+
+            playerView.foreground =
+                if (videoSelected) {
+
+                    android.graphics.drawable.GradientDrawable().apply {
+                        setColor(Color.TRANSPARENT)
+                        setStroke(dp(1), Color.WHITE)
+                    }
+
+                } else null
+        }
+    }
+
+    // =====================================
+    // LOAD VIDEO
+    // =====================================
+
+    private fun loadVideo(uri: Uri) {
+
+        player.setMediaItem(
+            MediaItem.fromUri(uri)
+        )
+
+        player.prepare()
+
+        player.playWhenReady = false
+
+        player.addListener(object : Player.Listener {
+
+            override fun onPlaybackStateChanged(state: Int) {
+
+                if (state == Player.STATE_READY) {
+
+                    val duration = player.duration.coerceAtLeast(0)
+
+                    trimStart = 0L
+                    trimEnd = duration
+
+                    timeline.setDuration(
+                        duration,
+                        currentProject?.position ?: 0L
+                    )
+
+                    updateTime()
+                }
+            }
+        })
+    }
+
+    // =====================================
+    // TOOL MENUS
+    // =====================================
+
+    private fun updateToolMenu() {
+
+        if (!::toolsContainer.isInitialized) return
+
+        toolsContainer.removeAllViews()
+
+        val names = if (videoSelected) {
+
+            listOf(
+                "✂\nPotong",
+                "♫\nVolume",
+                "⌫\nHapus",
+                "◉\nSesuaikan",
+                "◷\nKecepatan",
+                "✧\nAnimasi",
+                "♫\nPisah Audio",
+                "▣\nGaya",
+                "◎\nTracking",
+                "☆\nFilter",
+                "▧\nOverlay",
+                "◇\nStabilkan",
+                "▤\nDuplikat",
+                "〰\nMotion Blur",
+                "◐\nOpasitas",
+                "♪\nIrama"
+            )
+
+        } else {
+
+            listOf(
+                "♫\nAudio",
+                "T\nText",
+                "▧\nOverlay",
+                "✧\nEffect",
+                "▣\nRasio",
+                "CC\nSubtitles",
+                "☆\nFilter",
+                "◉\nSesuaikan",
+                "☺\nSticker"
+            )
+        }
+
+        val scroll = HorizontalScrollView(this)
+
+        val row = LinearLayout(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+        }
+
+        names.forEach { name ->
 
             val item = TextView(this).apply {
 
                 text = name
-                textSize = 12f
+                textSize = 11f
                 gravity = Gravity.CENTER
                 setTextColor(Color.LTGRAY)
-
-                setOnClickListener {
-
-                    when (index) {
-
-                        0 -> showTrimInfo()
-
-                        1 -> muteButton.performClick()
-
-                        else -> showMessage(
-                            "Fitur ini akan dikembangkan berikutnya."
-                        )
-                    }
-                }
+                setPadding(dp(12), dp(8), dp(12), dp(8))
             }
 
-            tools.addView(
+            item.setOnClickListener {
+
+                statusLabel.text =
+                    "${
+                        name.replace("\n", " ")
+                    } dipilih"
+
+                showMessage(
+                    "Tombol ini akan mendapatkan fungsi pada tahap berikutnya."
+                )
+            }
+
+            row.addView(
                 item,
-                LinearLayout.LayoutParams(0, dp(55), 1f)
+                LinearLayout.LayoutParams(dp(75), dp(75))
             )
         }
 
-        root.addView(tools)
+        scroll.addView(row)
 
-        setContentView(root)
+        toolsContainer.addView(
+            scroll,
+            LinearLayout.LayoutParams(-1, dp(85))
+        )
+
+        val toggle = TextView(this).apply {
+
+            text =
+                if (videoSelected) {
+                    "Kembali ke menu utama"
+                } else {
+                    "Menu utama"
+                }
+
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(green)
+        }
+
+        toggle.setOnClickListener {
+
+            videoSelected = !videoSelected
+
+            updateToolMenu()
+        }
+
+        toolsContainer.addView(
+            toggle,
+            LinearLayout.LayoutParams(-1, dp(20))
+        )
     }
 
-    // TIMELINE UPDATE
+    // =====================================
+    // SAVE CURRENT PROJECT
+    // =====================================
+
+    private fun saveCurrentProject() {
+
+        currentProject?.let {
+
+            it.position = player.currentPosition
+            it.muted = muteAudio
+        }
+
+        saveProjects()
+    }
+
+    override fun onPause() {
+
+        saveCurrentProject()
+
+        super.onPause()
+    }
+
+    // =====================================
+    // TIMELINE TIME
+    // =====================================
 
     private fun updateTime() {
 
@@ -357,34 +907,15 @@ class MainActivity : AppCompatActivity() {
 
         if (::timeline.isInitialized) {
 
-            timeline.updatePlayhead(position)
+            timeline.updatePositionFromPlayer(position)
         }
+
+        currentProject?.position = position
     }
 
-    private val updateRunnable = object : Runnable {
-
-        override fun run() {
-
-            if (player.isPlaying) {
-                updateTime()
-            }
-
-            handler.postDelayed(this, 100)
-        }
-    }
-
-    // TRIM INFORMATION
-
-    private fun showTrimInfo() {
-
-        showMessage(
-            "Geser handle kiri untuk menentukan awal video.\n\n" +
-            "Geser handle kanan untuk menentukan akhir video.\n\n" +
-            "Area terang merupakan bagian video yang akan diekspor."
-        )
-    }
-
-    // EXPORT VIDEO
+    // =====================================
+    // EXPORT
+    // =====================================
 
     private fun exportVideo() {
 
@@ -397,20 +928,12 @@ class MainActivity : AppCompatActivity() {
 
         val duration = player.duration
 
-        if (duration <= 0 || trimEnd <= trimStart) {
-            showMessage("Durasi pemotongan tidak valid.")
+        if (duration <= 0) {
+            showMessage("Video belum siap.")
             return
         }
 
-        val clipping = MediaItem.ClippingConfiguration.Builder()
-            .setStartPositionMs(trimStart)
-            .setEndPositionMs(trimEnd)
-            .build()
-
-        val mediaItem = MediaItem.Builder()
-            .setUri(uri)
-            .setClippingConfiguration(clipping)
-            .build()
+        val mediaItem = MediaItem.fromUri(uri)
 
         val edited = EditedMediaItem.Builder(mediaItem)
             .setRemoveAudio(muteAudio)
@@ -421,7 +944,7 @@ class MainActivity : AppCompatActivity() {
             "CAPCAKE_${System.currentTimeMillis()}.mp4"
         )
 
-        statusLabel.text = "Sedang mengekspor video..."
+        statusLabel.text = "Sedang mengekspor..."
 
         val transformer = Transformer.Builder(this)
 
@@ -438,23 +961,21 @@ class MainActivity : AppCompatActivity() {
 
                         runOnUiThread {
 
-                            statusLabel.text =
-                                "Video berhasil disimpan!"
+                            statusLabel.text = "Ekspor berhasil!"
 
                             Toast.makeText(
                                 this@MainActivity,
-                                "Ekspor berhasil",
+                                "Video tersimpan",
                                 Toast.LENGTH_LONG
                             ).show()
                         }
 
                         output.delete()
 
-                    } catch (e: Exception) {
+                    } catch (_: Exception) {
 
                         runOnUiThread {
-                            statusLabel.text =
-                                "Gagal menyimpan video"
+                            statusLabel.text = "Gagal menyimpan video"
                         }
                     }
                 }
@@ -482,8 +1003,6 @@ class MainActivity : AppCompatActivity() {
 
         transformer.start(edited, output.absolutePath)
     }
-
-    // SAVE VIDEO
 
     private fun saveVideo(file: File) {
 
@@ -528,7 +1047,9 @@ class MainActivity : AppCompatActivity() {
         contentResolver.update(uri, values, null, null)
     }
 
+    // =====================================
     // UTILITIES
+    // =====================================
 
     private fun format(ms: Long): String {
 
@@ -542,11 +1063,11 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
-    private fun button(textValue: String): TextView {
+    private fun button(value: String): TextView {
 
         return TextView(this).apply {
 
-            text = textValue
+            text = value
             textSize = 16f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
@@ -569,7 +1090,9 @@ class MainActivity : AppCompatActivity() {
 
     override fun onDestroy() {
 
-        handler.removeCallbacks(updateRunnable)
+        saveCurrentProject()
+
+        handler.removeCallbacksAndMessages(null)
 
         player.release()
 
@@ -579,12 +1102,12 @@ class MainActivity : AppCompatActivity() {
 
 
 // ========================================
-// CAPCAKE TIMELINE VIEW
+// CAPCAKE TIMELINE
 // ========================================
 
 class TimelineView(
     context: android.content.Context,
-    private val onChange: (Long, Long, Long) -> Unit
+    private val onChange: (Long) -> Unit
 ) : View(context) {
 
     private val density = resources.displayMetrics.density
@@ -592,58 +1115,126 @@ class TimelineView(
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
     private var duration = 0L
-    private var start = 0L
-    private var end = 0L
     private var position = 0L
 
-    private var dragMode = 0
+    private var pixelsPerMs = 0.0005f
+    private var offset = 0f
 
-    private val handleSize = 15f * density
+    private var initialized = false
+
+    private var lastX = 0f
 
     private val green = Color.rgb(24, 213, 138)
 
+    private val scaleDetector = ScaleGestureDetector(
+        context,
+        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+
+            override fun onScale(detector: ScaleGestureDetector): Boolean {
+
+                val centerTime =
+                    (offset + width / 2f) / pixelsPerMs
+
+                pixelsPerMs =
+                    (pixelsPerMs * detector.scaleFactor)
+                        .coerceIn(0.00005f, 0.01f)
+
+                offset =
+                    centerTime * pixelsPerMs - width / 2f
+
+                clampOffset()
+
+                invalidate()
+
+                return true
+            }
+        }
+    )
+
     init {
 
-        setBackgroundColor(Color.rgb(30, 30, 30))
+        setBackgroundColor(Color.rgb(27, 27, 27))
     }
 
-    fun setValues(
+    fun setDuration(
         duration: Long,
-        start: Long,
-        end: Long,
-        position: Long
+        startPosition: Long
     ) {
 
         this.duration = duration
-        this.start = start
-        this.end = end
-        this.position = position
+
+        if (!initialized && duration > 0) {
+
+            val visibleDuration =
+                min(duration, 120000L)
+
+            pixelsPerMs =
+                width.coerceAtLeast(1).toFloat() /
+                visibleDuration.toFloat()
+
+            initialized = true
+        }
+
+        offset =
+            startPosition * pixelsPerMs - width / 2f
+
+        position = startPosition
+
+        clampOffset()
 
         invalidate()
     }
 
-    fun updatePlayhead(position: Long) {
+    override fun onSizeChanged(
+        w: Int,
+        h: Int,
+        oldw: Int,
+        oldh: Int
+    ) {
 
-        this.position = position
+        super.onSizeChanged(w, h, oldw, oldh)
+
+        if (duration > 0 && !initialized) {
+
+            val visibleDuration =
+                min(duration, 120000L)
+
+            pixelsPerMs =
+                w.toFloat() / visibleDuration.toFloat()
+
+            initialized = true
+        }
+    }
+
+    private fun clampOffset() {
+
+        val totalWidth = duration * pixelsPerMs
+
+        offset = offset.coerceIn(
+            0f,
+            max(0f, totalWidth - width)
+        )
+    }
+
+    fun updatePositionFromPlayer(value: Long) {
+
+        position = value
 
         invalidate()
     }
 
     private fun timeToX(time: Long): Float {
 
-        if (duration <= 0) return 0f
-
-        return width.toFloat() *
-            (time.toFloat() / duration.toFloat())
+        return time * pixelsPerMs - offset
     }
 
-    private fun xToTime(x: Float): Long {
+    private fun centerTime(): Long {
 
-        if (width <= 0 || duration <= 0) return 0L
+        if (pixelsPerMs <= 0f) return 0L
 
-        val ratio = (x / width).coerceIn(0f, 1f)
-
-        return (ratio * duration).toLong()
+        return (
+            (offset + width / 2f) / pixelsPerMs
+        ).toLong().coerceIn(0L, duration)
     }
 
     override fun onDraw(canvas: Canvas) {
@@ -653,10 +1244,10 @@ class TimelineView(
         if (duration <= 0) {
 
             paint.color = Color.GRAY
-            paint.textSize = 13f * density
+            paint.textSize = 12f * density
 
             canvas.drawText(
-                "Pilih video untuk menampilkan timeline",
+                "Pilih video",
                 10f,
                 height / 2f,
                 paint
@@ -665,35 +1256,60 @@ class TimelineView(
             return
         }
 
-        val trackTop = 38f * density
-        val trackBottom = 88f * density
+        val center = width / 2f
 
-        // BACKGROUND TRACK
+        // TIME RULER
 
-        paint.color = Color.rgb(65, 65, 65)
+        paint.color = Color.LTGRAY
+        paint.textSize = 10f * density
+        paint.strokeWidth = 1f * density
 
-        canvas.drawRoundRect(
-            0f,
-            trackTop,
-            width.toFloat(),
-            trackBottom,
-            6f,
-            6f,
-            paint
-        )
+        val visibleStart =
+            (offset / pixelsPerMs).toLong().coerceAtLeast(0)
 
-        // SELECTED AREA
+        val interval =
+            max(5000L, (10000f / pixelsPerMs).toLong())
 
-        val startX = timeToX(start)
-        val endX = timeToX(end)
+        var time =
+            (visibleStart / interval) * interval
 
-        paint.color = Color.rgb(45, 105, 85)
+        while (time <= duration) {
+
+            val x = timeToX(time)
+
+            if (x >= 0 && x <= width) {
+
+                canvas.drawLine(
+                    x,
+                    5f * density,
+                    x,
+                    17f * density,
+                    paint
+                )
+
+                canvas.drawText(
+                    formatTime(time),
+                    x + 3f,
+                    12f * density,
+                    paint
+                )
+            }
+
+            time += interval
+        }
+
+        // VIDEO TRACK
+
+        val trackTop = 30f * density
+        val trackBottom = 83f * density
+
+        paint.color = Color.rgb(62, 62, 62)
 
         canvas.drawRoundRect(
             RectF(
-                startX,
+                0f,
                 trackTop,
-                endX,
+                width.toFloat(),
                 trackBottom
             ),
             5f,
@@ -701,123 +1317,86 @@ class TimelineView(
             paint
         )
 
-        // UNSELECTED AREA
+        // VIDEO AREA
 
-        paint.color = Color.argb(170, 0, 0, 0)
+        val left = max(0f, timeToX(0))
+        val right = min(width.toFloat(), timeToX(duration))
 
-        canvas.drawRect(
-            0f,
-            trackTop,
-            startX,
-            trackBottom,
-            paint
-        )
-
-        canvas.drawRect(
-            endX,
-            trackTop,
-            width.toFloat(),
-            trackBottom,
-            paint
-        )
-
-        // TRIM HANDLES
-
-        paint.color = green
+        paint.color = Color.rgb(43, 105, 85)
 
         canvas.drawRoundRect(
-            startX - handleSize / 2,
-            trackTop - 4f,
-            startX + handleSize / 2,
-            trackBottom + 4f,
-            4f,
-            4f,
+            RectF(
+                left,
+                trackTop,
+                max(left, right),
+                trackBottom
+            ),
+            5f,
+            5f,
             paint
         )
 
-        canvas.drawRoundRect(
-            endX - handleSize / 2,
-            trackTop - 4f,
-            endX + handleSize / 2,
-            trackBottom + 4f,
-            4f,
-            4f,
-            paint
-        )
-
-        // PLAYHEAD
-
-        val playX = timeToX(position)
+        // FIXED CENTER PLAYHEAD
 
         paint.color = Color.WHITE
         paint.strokeWidth = 2f * density
 
         canvas.drawLine(
-            playX,
-            15f * density,
-            playX,
-            trackBottom + 12f * density,
+            center,
+            0f,
+            center,
+            height.toFloat(),
             paint
         )
-
-        // PLAYHEAD CIRCLE
-
-        paint.color = Color.WHITE
 
         canvas.drawCircle(
-            playX,
-            15f * density,
-            5f * density,
-            paint
-        )
-
-        // TIME LABEL
-
-        paint.color = Color.LTGRAY
-        paint.textSize = 11f * density
-
-        canvas.drawText(
-            formatTime(position),
-            5f,
-            16f * density,
+            center,
+            24f * density,
+            4f * density,
             paint
         )
     }
 
     override fun onTouchEvent(event: MotionEvent): Boolean {
 
-        if (duration <= 0) return false
+        scaleDetector.onTouchEvent(event)
 
-        val x = event.x
-
-        when (event.action) {
+        when (event.actionMasked) {
 
             MotionEvent.ACTION_DOWN -> {
 
-                val startX = timeToX(start)
-                val endX = timeToX(end)
-
-                dragMode = when {
-
-                    kotlin.math.abs(x - startX) < handleSize * 2 ->
-                        1
-
-                    kotlin.math.abs(x - endX) < handleSize * 2 ->
-                        2
-
-                    else -> 3
-                }
-
-                updatePosition(x)
+                lastX = event.x
 
                 parent?.requestDisallowInterceptTouchEvent(true)
 
                 return true
             }
 
+            MotionEvent.ACTION_POINTER_DOWN -> {
+
+                return true
+            }
+
             MotionEvent.ACTION_MOVE -> {
 
-                updatePosition(x)
+                if (event.pointerCount == 1 &&
+                    !scaleDetector.isInProgress
+                ) {
+
+                    val dx = event.x - lastX
+
+                    offset -= dx
+
+                    clampOffset()
+
+                    lastX = event.x
+
+                    position = centerTime()
+
+                    onChange(position)
+
+                    invalidate()
+                }
 
                 return true
             }
@@ -825,9 +1404,9 @@ class TimelineView(
             MotionEvent.ACTION_UP,
             MotionEvent.ACTION_CANCEL -> {
 
-                updatePosition(x)
+                position = centerTime()
 
-                dragMode = 0
+                onChange(position)
 
                 parent?.requestDisallowInterceptTouchEvent(false)
 
@@ -838,41 +1417,6 @@ class TimelineView(
         }
 
         return true
-    }
-
-    private fun updatePosition(x: Float) {
-
-        val time = xToTime(x)
-
-        when (dragMode) {
-
-            // DRAG START HANDLE
-
-            1 -> {
-
-                start = time.coerceIn(0L, end - 100)
-                position = start
-            }
-
-            // DRAG END HANDLE
-
-            2 -> {
-
-                end = time.coerceIn(start + 100, duration)
-                position = end
-            }
-
-            // DRAG PLAYHEAD
-
-            3 -> {
-
-                position = time
-            }
-        }
-
-        invalidate()
-
-        onChange(position, start, end)
     }
 
     override fun performClick(): Boolean {
