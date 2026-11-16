@@ -30,6 +30,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
@@ -53,6 +54,7 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var timeLabel: TextView
     private lateinit var toolsContainer: LinearLayout
+    private lateinit var playButton: TextView
 
     private val projects = mutableListOf<VideoProject>()
 
@@ -65,9 +67,31 @@ class MainActivity : AppCompatActivity() {
 
     private val handler = Handler(Looper.getMainLooper())
 
+    private var playbackListener: Player.Listener? = null
+
     private val prefs by lazy {
         getSharedPreferences("CAPCAKE_PROJECTS", MODE_PRIVATE)
     }
+
+    // =====================================
+    // PLAYBACK UPDATER
+    // =====================================
+
+    private val playbackUpdater = object : Runnable {
+
+        override fun run() {
+
+            if (::timeLabel.isInitialized) {
+                updateTime()
+            }
+
+            handler.postDelayed(this, 100L)
+        }
+    }
+
+    // =====================================
+    // VIDEO PICKER
+    // =====================================
 
     private val pickVideo =
         registerForActivityResult(
@@ -96,6 +120,8 @@ class MainActivity : AppCompatActivity() {
 
                     projects.add(0, project)
                     currentProject = project
+
+                    muteAudio = false
                     isCreatingProject = false
 
                 } else {
@@ -111,6 +137,10 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    // =====================================
+    // CREATE
+    // =====================================
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
@@ -118,6 +148,8 @@ class MainActivity : AppCompatActivity() {
         window.navigationBarColor = bg
 
         player = ExoPlayer.Builder(this).build()
+
+        handler.post(playbackUpdater)
 
         loadProjects()
         showHome()
@@ -428,10 +460,7 @@ class MainActivity : AppCompatActivity() {
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-
-            // Ruang tambahan agar tombol tidak menempel status bar.
             setPadding(0, dp(27), 0, dp(5))
-
             setBackgroundColor(bg)
         }
 
@@ -478,7 +507,7 @@ class MainActivity : AppCompatActivity() {
 
         root.addView(top)
 
-        // PREVIEW RATIO 1:1
+        // PREVIEW
 
         val previewFrame = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
@@ -491,6 +520,8 @@ class MainActivity : AppCompatActivity() {
 
             resizeMode =
                 androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+
+            setKeepContentOnPlayerReset(true)
         }
 
         previewFrame.addView(
@@ -515,44 +546,101 @@ class MainActivity : AppCompatActivity() {
 
         val controls = LinearLayout(this).apply {
             gravity = Gravity.CENTER
+            orientation = LinearLayout.HORIZONTAL
         }
 
-        val backButton = button("↶")
+        // UNDO
+
+        val undoButton = button("↶").apply {
+            textSize = 27f
+            setPadding(dp(12), dp(5), dp(12), dp(5))
+        }
+
+        undoButton.setOnClickListener {
+            showMessage("Belum ada perubahan yang bisa di-undo.")
+        }
+
+        // BACKWARD 1 MINUTE
+
+        val backButton = button("−1m").apply {
+            textSize = 17f
+            setPadding(dp(15), dp(8), dp(15), dp(8))
+        }
 
         backButton.setOnClickListener {
-            player.seekTo(0)
+
+            val duration = player.duration.coerceAtLeast(0L)
+
+            val target = if (duration < 60000L) {
+                0L
+            } else {
+                (player.currentPosition - 60000L).coerceAtLeast(0L)
+            }
+
+            player.seekTo(target)
             updateTime()
         }
 
-        val playButton = button("▶")
+        // PLAY / PAUSE
+
+        playButton = button("▶").apply {
+            textSize = 30f
+            setPadding(dp(22), dp(5), dp(22), dp(5))
+        }
 
         playButton.setOnClickListener {
 
             if (player.isPlaying) {
                 player.pause()
-                playButton.text = "▶"
             } else {
                 player.play()
-                playButton.text = "Ⅱ"
             }
+
+            updatePlayButton()
         }
 
-        val forwardButton = button("↷")
+        // FORWARD 1 MINUTE
+
+        val forwardButton = button("+1m").apply {
+            textSize = 17f
+            setPadding(dp(15), dp(8), dp(15), dp(8))
+        }
 
         forwardButton.setOnClickListener {
 
-            if (player.duration > 0) {
-                player.seekTo(player.duration)
+            val duration = player.duration.coerceAtLeast(0L)
+
+            val target = if (duration < 60000L) {
+                duration
+            } else {
+                (player.currentPosition + 60000L)
+                    .coerceAtMost(duration)
             }
+
+            player.seekTo(target)
+            updateTime()
         }
 
+        // REDO
+
+        val redoButton = button("↷").apply {
+            textSize = 27f
+            setPadding(dp(12), dp(5), dp(12), dp(5))
+        }
+
+        redoButton.setOnClickListener {
+            showMessage("Belum ada perubahan yang bisa di-redo.")
+        }
+
+        controls.addView(undoButton)
         controls.addView(backButton)
         controls.addView(playButton)
         controls.addView(forwardButton)
+        controls.addView(redoButton)
 
         root.addView(
             controls,
-            LinearLayout.LayoutParams(-1, dp(40))
+            LinearLayout.LayoutParams(-1, dp(58))
         )
 
         // TIME
@@ -571,72 +659,31 @@ class MainActivity : AppCompatActivity() {
 
         // VIDEO TIMELINE
 
-        timeline = TimelineView(this) { position ->
+        timeline = TimelineView(
+            this,
+            onChange = { position ->
 
-            player.seekTo(position)
-            updateTime()
+                player.seekTo(position)
+                updateTime()
+            },
+            onTap = {
 
-            if (!videoSelected) {
-                videoSelected = true
+                videoSelected = !videoSelected
+
+                timeline.setSelected(videoSelected)
+
                 updateToolMenu()
             }
-        }
+        )
+
+        timeline.setSelected(videoSelected)
 
         root.addView(
             timeline,
             LinearLayout.LayoutParams(-1, dp(100))
         )
 
-        // FIXED CENTER PLAYHEAD OVERLAY
-
-        // Garis putih dibuat di luar TimelineView
-        // supaya selalu tepat di tengah layar.
-
-        val lineOverlay = FrameLayout(this).apply {
-            isClickable = false
-            isFocusable = false
-        }
-
-        val centerLine = View(this).apply {
-            setBackgroundColor(Color.WHITE)
-        }
-
-        val centerDot = View(this).apply {
-
-            background = android.graphics.drawable.GradientDrawable().apply {
-                shape = android.graphics.drawable.GradientDrawable.OVAL
-                setColor(Color.WHITE)
-            }
-        }
-
-        lineOverlay.addView(
-            centerLine,
-            FrameLayout.LayoutParams(
-                dp(2),
-                -1,
-                Gravity.CENTER
-            )
-        )
-
-        val dotParams = FrameLayout.LayoutParams(
-            dp(8),
-            dp(8),
-            Gravity.TOP or Gravity.CENTER_HORIZONTAL
-        )
-
-        dotParams.topMargin = dp(24)
-
-        lineOverlay.addView(centerDot, dotParams)
-
-        // Overlay hanya menutupi area timeline.
-        // Touch tetap diteruskan ke timeline.
-
-        lineOverlay.setOnTouchListener { _, _ -> false }
-
-        // Timeline sudah memiliki playhead sendiri
-        // yang presisi di tengah View.
-
-        // AUDIO TRACK SPACE
+        // AUDIO TRACK
 
         val audioTrack = AudioTrackView(this)
 
@@ -661,9 +708,13 @@ class MainActivity : AppCompatActivity() {
 
         setContentView(root)
 
+        // PREVIEW SELECTION
+
         playerView.setOnClickListener {
 
             videoSelected = !videoSelected
+
+            timeline.setSelected(videoSelected)
 
             playerView.foreground =
                 if (videoSelected) {
@@ -687,11 +738,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun loadVideo(uri: Uri) {
 
+        playbackListener?.let {
+            player.removeListener(it)
+        }
+
         player.setMediaItem(MediaItem.fromUri(uri))
         player.prepare()
         player.playWhenReady = false
 
-        player.addListener(object : Player.Listener {
+        val listener = object : Player.Listener {
 
             override fun onPlaybackStateChanged(state: Int) {
 
@@ -707,17 +762,41 @@ class MainActivity : AppCompatActivity() {
 
                     timeline.loadThumbnails(uri, duration)
 
-                    updateTime()
-
                     player.seekTo(
                         currentProject?.position ?: 0L
                     )
 
                     player.volume =
                         if (muteAudio) 0f else 1f
+
+                    updateTime()
+                    updatePlayButton()
                 }
             }
-        })
+
+            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                updatePlayButton()
+            }
+        }
+
+        playbackListener = listener
+
+        player.addListener(listener)
+    }
+
+    // =====================================
+    // PLAY BUTTON
+    // =====================================
+
+    private fun updatePlayButton() {
+
+        if (!::playButton.isInitialized) return
+
+        playButton.text = if (player.isPlaying) {
+            "Ⅱ"
+        } else {
+            "▶"
+        }
     }
 
     // =====================================
@@ -775,10 +854,10 @@ class MainActivity : AppCompatActivity() {
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        // VOLUME ON/OFF MENJADI ITEM MENU
+        // AUDIO ON / OFF
 
         val audioItem = createToolItem(
-            if (muteAudio) "♫" else "♫",
+            "♫",
             if (muteAudio) "Audio OFF" else "Audio ON"
         )
 
@@ -792,7 +871,6 @@ class MainActivity : AppCompatActivity() {
             currentProject?.muted = muteAudio
 
             saveCurrentProject()
-
             updateToolMenu()
         }
 
@@ -813,6 +891,8 @@ class MainActivity : AppCompatActivity() {
 
                     player.volume =
                         if (muteAudio) 0f else 1f
+
+                    currentProject?.muted = muteAudio
 
                     saveCurrentProject()
                     updateToolMenu()
@@ -855,6 +935,8 @@ class MainActivity : AppCompatActivity() {
         toggle.setOnClickListener {
 
             videoSelected = !videoSelected
+
+            timeline.setSelected(videoSelected)
 
             updateToolMenu()
         }
@@ -1117,6 +1199,10 @@ class MainActivity : AppCompatActivity() {
 
         handler.removeCallbacksAndMessages(null)
 
+        playbackListener?.let {
+            player.removeListener(it)
+        }
+
         player.release()
 
         super.onDestroy()
@@ -1130,7 +1216,8 @@ class MainActivity : AppCompatActivity() {
 
 class TimelineView(
     context: android.content.Context,
-    private val onChange: (Long) -> Unit
+    private val onChange: (Long) -> Unit,
+    private val onTap: () -> Unit
 ) : View(context) {
 
     private val density = resources.displayMetrics.density
@@ -1143,15 +1230,22 @@ class TimelineView(
     private var offset = 0f
 
     private var initialized = false
+
     private var lastX = 0f
     private var downX = 0f
+
     private var moved = false
+    private var isSelected = false
 
     private var frames = mutableListOf<Bitmap>()
 
     private val green = Color.rgb(24, 213, 138)
 
     private val executor = Executors.newSingleThreadExecutor()
+
+    // =====================================
+    // PINCH ZOOM
+    // =====================================
 
     private val scaleDetector = ScaleGestureDetector(
         context,
@@ -1161,15 +1255,17 @@ class TimelineView(
 
                 if (pixelsPerMs <= 0f) return false
 
-                val centerTime =
-                    (offset + width / 2f) / pixelsPerMs
+                val focusX = detector.focusX
+
+                val focusTime =
+                    (offset + focusX) / pixelsPerMs
 
                 pixelsPerMs =
                     (pixelsPerMs * detector.scaleFactor)
                         .coerceIn(0.00005f, 0.01f)
 
                 offset =
-                    centerTime * pixelsPerMs - width / 2f
+                    focusTime * pixelsPerMs - focusX
 
                 clampOffset()
 
@@ -1185,6 +1281,17 @@ class TimelineView(
     }
 
     // =====================================
+    // SELECTED STATE
+    // =====================================
+
+    fun setSelected(selected: Boolean) {
+
+        isSelected = selected
+
+        invalidate()
+    }
+
+    // =====================================
     // DURATION
     // =====================================
 
@@ -1197,11 +1304,14 @@ class TimelineView(
 
         initialized = false
 
+        position = startPosition.coerceIn(
+            0L,
+            duration.coerceAtLeast(0L)
+        )
+
         if (width > 0 && duration > 0) {
 
             initializeScale()
-
-            position = startPosition.coerceIn(0L, duration)
 
             offset =
                 position * pixelsPerMs - width / 2f
@@ -1366,7 +1476,10 @@ class TimelineView(
 
     fun updatePositionFromPlayer(value: Long) {
 
-        position = value.coerceIn(0L, duration)
+        position = value.coerceIn(
+            0L,
+            duration.coerceAtLeast(0L)
+        )
 
         invalidate()
     }
@@ -1467,7 +1580,7 @@ class TimelineView(
             paint
         )
 
-        // THUMBNAIL TRACK
+        // THUMBNAILS
 
         val clip = canvas.save()
 
@@ -1489,7 +1602,7 @@ class TimelineView(
             frames.forEachIndexed { index, bitmap ->
 
                 val frameLeft =
-                    timeToX((duration * index / frames.size))
+                    timeToX(duration * index / frames.size)
 
                 val frameRight =
                     frameLeft + frameWidth
@@ -1530,9 +1643,14 @@ class TimelineView(
 
         canvas.restoreToCount(clip)
 
-        // SELECTED BORDER
+        // TIMELINE BORDER
 
-        paint.color = green
+        paint.color = if (isSelected) {
+            green
+        } else {
+            Color.BLACK
+        }
+
         paint.style = Paint.Style.STROKE
         paint.strokeWidth = 2f * density
 
@@ -1596,6 +1714,8 @@ class TimelineView(
 
                 moved = true
 
+                parent?.requestDisallowInterceptTouchEvent(true)
+
                 return true
             }
 
@@ -1607,7 +1727,7 @@ class TimelineView(
 
                     val dx = event.x - lastX
 
-                    if (kotlin.math.abs(event.x - downX) > dp(3)) {
+                    if (abs(event.x - downX) > dp(3)) {
                         moved = true
                     }
 
@@ -1630,16 +1750,24 @@ class TimelineView(
                 return true
             }
 
+            MotionEvent.ACTION_POINTER_UP -> {
+
+                if (event.pointerCount > 2) {
+                    moved = true
+                }
+
+                return true
+            }
+
             MotionEvent.ACTION_UP -> {
 
-                if (!moved) {
-
-                    // Ketukan pada timeline:
-                    // posisi video mengikuti garis putih.
+                if (!moved && !scaleDetector.isInProgress) {
 
                     position = centerTime()
 
                     onChange(position)
+
+                    onTap()
                 }
 
                 parent?.requestDisallowInterceptTouchEvent(false)
@@ -1682,7 +1810,7 @@ class TimelineView(
 
 
 // ========================================
-// AUDIO TRACK PLACEHOLDER
+// AUDIO TRACK
 // ========================================
 
 class AudioTrackView(
@@ -1707,7 +1835,10 @@ class AudioTrackView(
         paint.color = Color.rgb(34, 48, 43)
 
         canvas.drawRoundRect(
-            RectF(left, top, right, bottom),
+            left,
+            top,
+            right,
+            bottom,
             5f * density,
             5f * density,
             paint
