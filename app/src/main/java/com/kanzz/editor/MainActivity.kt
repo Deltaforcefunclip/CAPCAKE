@@ -751,19 +751,19 @@ class MainActivity : AppCompatActivity() {
 
         timelineController = SharedTimelineController()
 
-        // AUDIO TRACK
+    // AUDIO TRACK
 
-        audioTrack = AudioTrackView(
-            this,
-            timelineController,
-            audioClipManager.clips
-        )
+val audioTrack = AudioTrackView(
+    this,
+    timelineController,
+    audioClipManager.clips
+)
 
-        audioTrack.setOnClickListener {
-            openAudioPicker()
-        }
+audioTrack.setOnClickListener {
+    openAudioPicker()
+}
 
-        // VIDEO TIMELINE
+// VIDEO TIMELINE
 
         timeline = TimelineView(
             this,
@@ -1944,126 +1944,3 @@ class TimelineView(
 // AUDIO TRACK
 // ========================================
 
-class AudioTrackView(
-    context: android.content.Context,
-    private val controller: SharedTimelineController,
-    private val clips: List<AudioClip>
-) : View(context) {
-
-    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-
-    private val density =
-        resources.displayMetrics.density
-
-    override fun onDraw(canvas: Canvas) {
-
-        super.onDraw(canvas)
-
-        val top = 5f * density
-        val bottom = height - 5f * density
-
-        // BACKGROUND
-
-        paint.color = Color.rgb(34, 34, 34)
-
-        canvas.drawRect(
-            0f,
-            top,
-            width.toFloat(),
-            bottom,
-            paint
-        )
-
-        // EMPTY AUDIO TRACK
-
-        if (clips.isEmpty()) {
-
-            paint.color = Color.GRAY
-            paint.textSize = 11f * density
-
-            canvas.drawText(
-                "+ Tambahkan audio",
-                12f * density,
-                height / 2f + 4f * density,
-                paint
-            )
-
-            return
-        }
-
-        // CLIP AUDIO
-
-        canvas.save()
-
-        canvas.clipRect(
-            0f,
-            top,
-            width.toFloat(),
-            bottom
-        )
-
-        clips.forEach { clip ->
-
-            val left = controller.timeToX(
-                clip.startTimeMs
-            )
-
-            val right = controller.timeToX(
-                clip.endTimeMs
-            )
-
-            if (right < 0f || left > width.toFloat()) {
-                return@forEach
-            }
-
-            // CLIP BACKGROUND
-
-            paint.color = Color.rgb(24, 105, 75)
-
-            canvas.drawRoundRect(
-                left,
-                top,
-                max(left + 4f * density, right),
-                bottom,
-                5f * density,
-                5f * density,
-                paint
-            )
-
-            // CLIP BORDER
-
-            paint.color = Color.rgb(65, 220, 155)
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 1f * density
-
-            canvas.drawRoundRect(
-                left,
-                top,
-                max(left + 4f * density, right),
-                bottom,
-                5f * density,
-                5f * density,
-                paint
-            )
-
-            paint.style = Paint.Style.FILL
-
-            // AUDIO LABEL
-
-            paint.color = Color.WHITE
-            paint.textSize = 11f * density
-
-            if (right - left > 45f * density) {
-
-                canvas.drawText(
-                    "♫ Audio",
-                    left + 8f * density,
-                    height / 2f + 4f * density,
-                    paint
-                )
-            }
-        }
-
-        canvas.restore()
-    }
-}
