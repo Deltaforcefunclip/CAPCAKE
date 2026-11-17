@@ -850,6 +850,18 @@ class MainActivity : AppCompatActivity() {
             },
             onViewportChanged = {
                 audioTrackViews.values.forEach { it.invalidate() }
+            },
+            onMoveClip = { clipId, targetStartMs ->
+                val current = videoClipManager.find(clipId)
+                if (current != null && current.timelineStartMs != targetStartMs) {
+                    pushUndoSnapshot()
+                    videoClipManager.moveToTimelinePosition(clipId, targetStartMs)
+                    selectedVideoClipId = clipId
+                    timeline.selectClip(clipId)
+                    refreshEditedPreview(videoClipManager.find(clipId)?.timelineStartMs ?: 0L)
+                    saveCurrentProject()
+                    updateToolMenu()
+                }
             }
         )
 
@@ -2062,7 +2074,8 @@ class TimelineView(
     private val onTransitionClick: (VideoTransition) -> Unit,
     private val onChange: (Long) -> Unit,
     private val onTap: (VideoClip?) -> Unit,
-    private val onViewportChanged: () -> Unit
+    private val onViewportChanged: () -> Unit,
+    private val onMoveClip: (String, Long) -> Unit
 ) : View(context) {
 
     private val density = resources.displayMetrics.density
@@ -2100,6 +2113,22 @@ class TimelineView(
     private var moved = false
     private var isSelected = false
     private var selectedClipId: String? = null
+
+    // Drag klip memakai long-press agar geser biasa tetap berfungsi untuk scrub/scroll.
+    private var pressedClip: VideoClip? = null
+    private var pointerDown = false
+    private var isDraggingClip = false
+    private var dragOffsetMs = 0L
+    private var dragTargetStartMs = 0L
+    private var dragSnapTargetMs: Long? = null
+    private val dragLongPress = Runnable {
+        if (pointerDown && pressedClip != null) {
+            isDraggingClip = true
+            moved = true
+            dragTargetStartMs = pressedClip!!.timelineStartMs
+            invalidate()
+        }
+    }
 
     private var frames = mutableListOf<Bitmap>()
     private val transitionHitBoxes = mutableListOf<Pair<RectF, VideoTransition>>()
@@ -2508,8 +2537,27 @@ class TimelineView(
             }
         }
 
-        // Stroke hijau hanya ditampilkan pada klip yang dipilih.
+        // Preview posisi saat klip sedang di-drag.
+        if (isDraggingClip && pressedClip != null) {
+            val ghostLeft = timeToX(dragTargetStartMs)
+            val ghostRight = timeToX(dragTargetStartMs + pressedClip!!.timelineDurationMs)
+            paint.color = green
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 3f * density
+            canvas.drawRect(
+                RectF(ghostLeft, trackTop, ghostRight, trackBottom),
+                paint
+            )
+            paint.style = Paint.Style.FILL
+            dragSnapTargetMs?.let { snapTime ->
+                val snapX = timeToX(snapTime)
+                paint.color = Color.YELLOW
+                paint.strokeWidth = 1.5f * density
+                canvas.drawLine(snapX, trackTop, snapX, trackBottom, paint)
+            }
+        }
 
+        // Stroke hijau hanya ditampilkan pada klip yang dipilih.
 
         // FIXED CENTER PLAYHEAD
 
@@ -2543,71 +2591,105 @@ class TimelineView(
         scaleDetector.onTouchEvent(event)
 
         when (event.actionMasked) {
-
             MotionEvent.ACTION_DOWN -> {
-
                 downX = event.x
                 lastX = event.x
                 moved = false
+                pointerDown = true
+                isDraggingClip = false
+                dragSnapTargetMs = null
+
+                val trackTop = 27f * density
+                val trackBottom = 92f * density
+                val tappedTime = controller.xToTime(event.x)
+                pressedClip = if (event.y in trackTop..trackBottom) {
+                    videoClips.clips.firstOrNull { tappedTime >= it.timelineStartMs && tappedTime < it.timelineEndMs }
+                } else null
+                pressedClip?.let { clip ->
+                    dragOffsetMs = (tappedTime - clip.timelineStartMs).coerceIn(0L, clip.timelineDurationMs)
+                    postDelayed(dragLongPress, 350L)
+                }
 
                 parent?.requestDisallowInterceptTouchEvent(true)
-
                 return true
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
-
+                removeCallbacks(dragLongPress)
+                pressedClip = null
                 moved = true
-
                 parent?.requestDisallowInterceptTouchEvent(true)
-
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
-
-                if (event.pointerCount == 1 &&
-                    !scaleDetector.isInProgress
-                ) {
-
-                    val dx = event.x - lastX
-
-                    if (abs(event.x - downX) > dp(3)) {
-                        moved = true
+                if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
+                    if (!isDraggingClip && abs(event.x - downX) > dp(3)) {
+                        removeCallbacks(dragLongPress)
+                        pressedClip = null
                     }
 
-                    if (moved) {
-
-                        offset -= dx
-
-                        clampOffset()
-
-                        lastX = event.x
-
-                        position = centerTime()
-
-                        onChange(position)
-
+                    if (isDraggingClip && pressedClip != null) {
+                        moved = true
+                        val clip = pressedClip!!
+                        val proposed = (controller.xToTime(event.x) - dragOffsetMs).coerceAtLeast(0L)
+                        val snapState = TimelineState(
+                            clips = videoClips.clips.map { item ->
+                                EditorClip(
+                                    id = item.id,
+                                    mediaUri = item.sourceUri,
+                                    trackIndex = 0,
+                                    startTime = item.timelineStartMs,
+                                    duration = item.timelineDurationMs,
+                                    sourceDuration = item.timelineDurationMs
+                                )
+                            },
+                            playheadMs = position
+                        )
+                        val snapped = TimelineSnapEngine.snap(
+                            proposedTimeMs = proposed,
+                            movingClipId = clip.id,
+                            state = snapState,
+                            pixelsPerMs = pixelsPerMs
+                        )
+                        dragTargetStartMs = snapped.timeMs.coerceAtLeast(0L)
+                        dragSnapTargetMs = snapped.targetTimeMs
                         invalidate()
-                        onViewportChanged()
+                    } else {
+                        val dx = event.x - lastX
+                        if (abs(event.x - downX) > dp(3)) moved = true
+                        if (moved) {
+                            offset -= dx
+                            clampOffset()
+                            lastX = event.x
+                            position = centerTime()
+                            onChange(position)
+                            invalidate()
+                            onViewportChanged()
+                        }
                     }
                 }
-
                 return true
             }
 
             MotionEvent.ACTION_POINTER_UP -> {
-
-                if (event.pointerCount > 2) {
-                    moved = true
-                }
-
+                removeCallbacks(dragLongPress)
                 return true
             }
 
             MotionEvent.ACTION_UP -> {
+                pointerDown = false
+                removeCallbacks(dragLongPress)
 
-                if (!moved && !scaleDetector.isInProgress) {
+                if (isDraggingClip && pressedClip != null) {
+                    val clipId = pressedClip!!.id
+                    val target = dragTargetStartMs
+                    isDraggingClip = false
+                    pressedClip = null
+                    dragSnapTargetMs = null
+                    onMoveClip(clipId, target)
+                    invalidate()
+                } else if (!moved && !scaleDetector.isInProgress) {
                     val transition = transitionHitBoxes.firstOrNull { (rect, _) ->
                         rect.contains(event.x, event.y)
                     }?.second
@@ -2622,22 +2704,25 @@ class TimelineView(
                                 tappedTime >= clip.timelineStartMs && tappedTime < clip.timelineEndMs
                             }
                         } else null
-                        // Ketukan di luar area klip video membatalkan pilihan klip.
                         onTap(tappedClip)
                     }
                 }
 
+                isDraggingClip = false
+                pressedClip = null
                 parent?.requestDisallowInterceptTouchEvent(false)
-
                 performClick()
-
                 return true
             }
 
             MotionEvent.ACTION_CANCEL -> {
-
+                pointerDown = false
+                removeCallbacks(dragLongPress)
+                isDraggingClip = false
+                pressedClip = null
+                dragSnapTargetMs = null
                 parent?.requestDisallowInterceptTouchEvent(false)
-
+                invalidate()
                 return true
             }
         }
