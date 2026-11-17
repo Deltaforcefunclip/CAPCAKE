@@ -13,7 +13,8 @@ class AudioTrackView(
     private val controller: SharedTimelineController,
     private val lane: AudioLane,
     private val onClipSelected: (AudioClip?) -> Unit,
-    private val onClipMoved: () -> Unit
+    private val onClipMoved: () -> Unit,
+    private val onClipDropped: (AudioClip, Float) -> Unit
 ) : View(context) {
 
     private val density = resources.displayMetrics.density
@@ -39,6 +40,12 @@ class AudioTrackView(
     private var downX = 0f
     private var downY = 0f
     private var isDragging = false
+    private val waveforms = mutableMapOf<String, FloatArray>()
+
+    fun setWaveform(clipId: String, values: FloatArray) {
+        waveforms[clipId] = values
+        invalidate()
+    }
 
     fun selectClip(clipId: String?) {
         selectedClipId = clipId
@@ -69,6 +76,26 @@ class AudioTrackView(
                 height - 3f * density
             )
             canvas.drawRoundRect(rect, 4f * density, 4f * density, clipPaint)
+
+            // Bentuk gelombang audio berdasarkan amplitudo asli file.
+            val waveform = waveforms[clip.id]
+            if (waveform != null && waveform.isNotEmpty()) {
+                val centerY = rect.centerY()
+                val halfHeight = (rect.height() * 0.40f).coerceAtLeast(2f * density)
+                val step = (rect.width() / waveform.size).coerceAtLeast(1f)
+                val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                    color = 0xFF8FE8C5.toInt()
+                    strokeWidth = maxOf(1f * density, step * 0.55f)
+                    strokeCap = Paint.Cap.ROUND
+                }
+                waveform.forEachIndexed { index, amplitude ->
+                    val x = rect.left + index * step + step / 2f
+                    if (x >= rect.left && x <= rect.right) {
+                        val h = (amplitude.coerceIn(0.04f, 1f) * halfHeight)
+                        canvas.drawLine(x, centerY - h, x, centerY + h, wavePaint)
+                    }
+                }
+            }
 
             if (clip.id == selectedClipId) {
                 canvas.drawRoundRect(rect, 4f * density, 4f * density, selectedPaint)
@@ -149,7 +176,9 @@ class AudioTrackView(
 
             MotionEvent.ACTION_UP -> {
                 parent?.requestDisallowInterceptTouchEvent(false)
+                if (isDragging) touchedClip?.let { onClipDropped(it, event.rawY) }
                 touchedClip = null
+                isDragging = false
                 performClick()
                 return true
             }
