@@ -1476,24 +1476,40 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showVideoClipOpacity(clip: VideoClip) {
+        // Tampilkan klip yang sedang diatur agar perubahan langsung terlihat di preview.
+        seekTimelinePosition(clip.timelineStartMs)
+        updateTime()
+        val originalOpacity = clip.opacity
         val seek = SeekBar(this).apply {
             max = 100
             progress = (clip.opacity * 100f).toInt().coerceIn(0, 100)
         }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                clip.opacity = value / 100f
+                playerView.videoSurfaceView?.alpha = clip.opacity
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Opasitas klip")
-            .setMessage("Atur tingkat transparansi klip yang dipilih.")
+            .setMessage("Geser untuk melihat perubahan transparansi secara langsung.")
             .setView(seek)
-            .setNegativeButton("Batal", null)
+            .setNegativeButton("Batal") { _, _ ->
+                clip.opacity = originalOpacity
+                playerView.videoSurfaceView?.alpha = originalOpacity
+            }
             .setPositiveButton("Terapkan") { _, _ ->
                 pushUndoSnapshot()
                 clip.opacity = seek.progress / 100f
-                if (::playerView.isInitialized &&
-                    player.currentMediaItemIndex == videoClipManager.clips.indexOf(clip)) {
-                    playerView.videoSurfaceView?.alpha = clip.opacity
-                }
+                playerView.videoSurfaceView?.alpha = clip.opacity
                 saveCurrentProject()
                 playerView.invalidate()
+            }
+            .setOnCancelListener {
+                clip.opacity = originalOpacity
+                playerView.videoSurfaceView?.alpha = originalOpacity
             }
             .show()
     }
