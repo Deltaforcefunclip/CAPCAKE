@@ -1499,14 +1499,22 @@ class TimelineView(
 
     fun updatePositionFromPlayer(value: Long) {
 
-        position = value.coerceIn(
-            0L,
-            duration.coerceAtLeast(0L)
-        )
+    position = value.coerceIn(
+        0L,
+        duration.coerceAtLeast(0L)
+    )
 
-        invalidate()
+    // Geser timeline mengikuti posisi preview
+    if (width > 0 && pixelsPerMs > 0f) {
+
+        offset =
+            position * pixelsPerMs - width / 2f
+
+        clampOffset()
     }
 
+    invalidate()
+}
     private fun timeToX(time: Long): Float {
         return time * pixelsPerMs - offset
     }
