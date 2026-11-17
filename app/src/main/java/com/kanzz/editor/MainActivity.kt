@@ -821,7 +821,7 @@ class MainActivity : AppCompatActivity() {
             isVerticalScrollBarEnabled = true
             isFillViewport = false
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
-            addView(audioTracksContainer, ScrollView.LayoutParams(-1, -2))
+            addView(audioTracksContainer, android.view.ViewGroup.LayoutParams(-1, -2))
         }
 
         // VIDEO TIMELINE
