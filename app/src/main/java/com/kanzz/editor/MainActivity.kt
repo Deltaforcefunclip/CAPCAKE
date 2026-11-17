@@ -732,58 +732,81 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // =====================================
-    // LOAD VIDEO
-    // =====================================
+// =====================================
+// LOAD VIDEO - FIX PREVIEW PLAYBACK
+// =====================================
 
-    private fun loadVideo(uri: Uri) {
+private fun loadVideo(uri: Uri) {
 
-        playbackListener?.let {
-            player.removeListener(it)
-        }
+    // Hentikan pemutaran video sebelumnya
+    player.pause()
 
-        player.setMediaItem(MediaItem.fromUri(uri))
-        player.prepare()
-        player.playWhenReady = false
+    // Lepaskan listener sebelumnya
+    playbackListener?.let {
+        player.removeListener(it)
+    }
 
-        val listener = object : Player.Listener {
+    // Posisi awal project
+    val savedPosition = currentProject?.position ?: 0L
 
-            override fun onPlaybackStateChanged(state: Int) {
+    // Penanda agar posisi awal hanya diterapkan sekali
+    var initialPositionApplied = false
 
-                if (state == Player.STATE_READY) {
+    // Atur audio
+    player.volume = if (muteAudio) 0f else 1f
 
-                    val duration =
-                        player.duration.coerceAtLeast(0)
+    // Siapkan media
+    player.setMediaItem(MediaItem.fromUri(uri))
+    player.playWhenReady = false
 
-                    timeline.setDuration(
-                        duration,
-                        currentProject?.position ?: 0L
-                    )
+    val listener = object : Player.Listener {
 
-                    timeline.loadThumbnails(uri, duration)
+        override fun onPlaybackStateChanged(state: Int) {
 
-                    player.seekTo(
-                        currentProject?.position ?: 0L
-                    )
+            if (state == Player.STATE_READY &&
+                !initialPositionApplied
+            ) {
 
-                    player.volume =
-                        if (muteAudio) 0f else 1f
+                // Pastikan hanya dijalankan sekali
+                initialPositionApplied = true
 
-                    updateTime()
-                    updatePlayButton()
-                }
-            }
+                val duration = player.duration.coerceAtLeast(0L)
 
-            override fun onIsPlayingChanged(isPlaying: Boolean) {
+                val startPosition = savedPosition.coerceIn(
+                    0L,
+                    duration
+                )
+
+                // Atur timeline
+                timeline.setDuration(
+                    duration,
+                    startPosition
+                )
+
+                // Ambil thumbnail
+                timeline.loadThumbnails(uri, duration)
+
+                // Kembalikan posisi project
+                player.seekTo(startPosition)
+
+                updateTime()
                 updatePlayButton()
             }
         }
 
-        playbackListener = listener
-
-        player.addListener(listener)
+        override fun onIsPlayingChanged(isPlaying: Boolean) {
+            updatePlayButton()
+        }
     }
 
+    playbackListener = listener
+
+    // Pasang listener sebelum prepare
+    player.addListener(listener)
+
+    // Mulai persiapan video
+    player.prepare()
+}
     // =====================================
     // PLAY BUTTON
     // =====================================
