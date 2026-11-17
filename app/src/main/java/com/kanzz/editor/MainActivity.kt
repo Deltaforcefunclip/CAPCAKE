@@ -31,6 +31,8 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ProgressHolder
+import androidx.media3.effect.SpeedChangeEffect
+import androidx.media3.transformer.Effects
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -696,6 +698,7 @@ class MainActivity : AppCompatActivity() {
                 androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
 
             setKeepContentOnPlayerReset(true)
+            setSurfaceType(PlayerView.SURFACE_TYPE_TEXTURE_VIEW)
         }
 
         previewFrame.addView(
@@ -875,16 +878,13 @@ class MainActivity : AppCompatActivity() {
         // PREVIEW SELECTION
 
         playerView.setOnClickListener {
-
-            if (selectedAudioClipId != null) {
-                selectedAudioClipId = null
-                clearAudioTrackSelection()
-                videoSelected = true
-            } else {
-                videoSelected = !videoSelected
-            }
-
-            timeline.updateSelection(videoSelected)
+            selectedAudioClipId = null
+            clearAudioTrackSelection()
+            val currentIndex = player.currentMediaItemIndex
+            selectedVideoClipId = videoClipManager.clips.getOrNull(currentIndex)?.id
+            videoSelected = selectedVideoClipId != null
+            timeline.selectClip(selectedVideoClipId)
+            timeline.updateSelection(false)
 
             playerView.foreground =
                 if (videoSelected) {
@@ -991,8 +991,11 @@ class MainActivity : AppCompatActivity() {
         if (videoClipManager.clips.isEmpty()) return player.currentPosition.coerceAtLeast(0L)
         val index = player.currentMediaItemIndex
         if (index !in videoClipManager.clips.indices) return timelineController.positionMs
-        val before = videoClipManager.clips.take(index).sumOf { it.durationMs }
-        return (before + player.currentPosition.coerceAtLeast(0L))
+        val before = videoClipManager.clips.take(index).sumOf { it.timelineDurationMs }
+        val clip = videoClipManager.clips[index]
+        val localTimelinePosition = (player.currentPosition.coerceAtLeast(0L) /
+            clip.speed.coerceIn(0.25f, 3f)).toLong()
+        return (before + localTimelinePosition)
             .coerceIn(0L, videoClipManager.durationMs)
     }
 
@@ -1010,10 +1013,12 @@ class MainActivity : AppCompatActivity() {
 
         for (index in videoClipManager.clips.indices) {
             val clip = videoClipManager.clips[index]
-            val end = accumulated + clip.durationMs
+            val end = accumulated + clip.timelineDurationMs
             if (target < end || index == videoClipManager.clips.lastIndex) {
                 targetIndex = index
-                localPosition = (target - accumulated).coerceIn(0L, clip.durationMs)
+                val localTimelineMs = (target - accumulated).coerceIn(0L, clip.timelineDurationMs)
+                localPosition = (localTimelineMs * clip.speed.coerceIn(0.25f, 3f))
+                    .toLong().coerceIn(0L, clip.durationMs)
                 break
             }
             accumulated = end
@@ -1386,10 +1391,15 @@ class MainActivity : AppCompatActivity() {
         val index = player.currentMediaItemIndex
         val clip = videoClipManager.clips.getOrNull(index) ?: return
         player.volume = if (muteAudio) 0f else clip.volume.coerceIn(0f, 1f)
-        if (::playerView.isInitialized) playerView.alpha = clip.opacity.coerceIn(0f, 1f)
+        if (::playerView.isInitialized) {
+            playerView.videoSurfaceView?.alpha = clip.opacity.coerceIn(0f, 1f)
+        }
         val speed = clip.speed.coerceIn(0.25f, 3f)
         if (kotlin.math.abs(player.playbackParameters.speed - speed) > 0.01f) {
             player.playbackParameters = PlaybackParameters(speed)
+        }
+        if (::timeline.isInitialized) {
+            timeline.selectClip(clip.id)
         }
     }
 
@@ -1442,7 +1452,23 @@ class MainActivity : AppCompatActivity() {
             .setView(content)
             .setNegativeButton("Batal", null)
             .setPositiveButton("Terapkan") { _, _ ->
-                clip.speed = 0.25f + seek.progress / 100f
+                val oldSpeed = clip.speed.coerceIn(0.25f, 3f)
+                val oldDuration = clip.timelineDurationMs
+                val oldStart = clip.timelineStartMs
+                val oldPosition = currentTimelinePosition()
+                val sourceOffset = ((oldPosition - oldStart).coerceAtLeast(0L) * oldSpeed)
+                    .toLong().coerceAtMost(clip.durationMs)
+                pushUndoSnapshot()
+                clip.speed = (0.25f + seek.progress / 100f).coerceIn(0.25f, 3f)
+                videoClipManager.recalculateTimeline()
+                val newPosition = when {
+                    oldPosition < oldStart -> oldPosition
+                    oldPosition <= oldStart + oldDuration ->
+                        clip.timelineStartMs + (sourceOffset / clip.speed).toLong()
+                    else -> oldPosition + clip.timelineDurationMs - oldDuration
+                }.coerceIn(0L, videoClipManager.durationMs)
+                timeline.setDuration(videoClipManager.durationMs, newPosition)
+                refreshEditedPreview(newPosition)
                 syncVideoClipProperties()
                 saveCurrentProject()
             }
@@ -1460,12 +1486,14 @@ class MainActivity : AppCompatActivity() {
             .setView(seek)
             .setNegativeButton("Batal", null)
             .setPositiveButton("Terapkan") { _, _ ->
+                pushUndoSnapshot()
                 clip.opacity = seek.progress / 100f
                 if (::playerView.isInitialized &&
                     player.currentMediaItemIndex == videoClipManager.clips.indexOf(clip)) {
-                    playerView.alpha = clip.opacity
+                    playerView.videoSurfaceView?.alpha = clip.opacity
                 }
                 saveCurrentProject()
+                playerView.invalidate()
             }
             .show()
     }
@@ -1488,6 +1516,13 @@ class MainActivity : AppCompatActivity() {
             }
 
             val instance = audioPlayer ?: ExoPlayer.Builder(this).build().also { created ->
+                created.setAudioAttributes(
+                    androidx.media3.common.AudioAttributes.Builder()
+                        .setUsage(C.USAGE_MEDIA)
+                        .setContentType(C.AUDIO_CONTENT_TYPE_MUSIC)
+                        .build(),
+                    false
+                )
                 created.volume = clip.volume
                 val audioItem = MediaItem.Builder()
                     .setUri(Uri.parse(clip.filePath))
@@ -1505,11 +1540,15 @@ class MainActivity : AppCompatActivity() {
 
             instance.volume = clip.volume
 
-            if (instance.playbackState == Player.STATE_READY && !instance.isPlaying) {
-                // Sinkronkan hanya saat mulai/resume, bukan seek terus-menerus setiap 100 ms.
-                val desiredPosition = timelinePosition - clip.startTimeMs
-                instance.seekTo(desiredPosition.coerceAtLeast(0L))
-                instance.play()
+            if (instance.playbackState == Player.STATE_READY) {
+                val desiredPosition = (timelinePosition - clip.startTimeMs).coerceAtLeast(0L)
+                if (!instance.isPlaying) {
+                    instance.seekTo(desiredPosition)
+                    instance.playWhenReady = true
+                } else if (kotlin.math.abs(instance.currentPosition - desiredPosition) > 350L) {
+                    // Koreksi drift sesekali agar audio tetap sinkron tanpa tersendat tiap frame.
+                    instance.seekTo(desiredPosition)
+                }
             }
         }
 
@@ -1706,6 +1745,12 @@ class MainActivity : AppCompatActivity() {
                     .build()
                 EditedMediaItem.Builder(mediaItem)
                     .setRemoveAudio(muteAudio)
+                    .setEffects(
+                        Effects(
+                            emptyList(),
+                            listOf(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3f)))
+                        )
+                    )
                     .build()
             }
         } catch (error: Exception) {
