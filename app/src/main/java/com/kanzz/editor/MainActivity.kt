@@ -853,13 +853,18 @@ class MainActivity : AppCompatActivity() {
             },
             onMoveClip = { clipId, targetStartMs ->
                 val current = videoClipManager.find(clipId)
-                if (current != null && current.timelineStartMs != targetStartMs) {
-                    pushUndoSnapshot()
-                    videoClipManager.moveToTimelinePosition(clipId, targetStartMs)
+                if (current != null) {
                     selectedVideoClipId = clipId
+                    selectedAudioClipId = null
+                    videoSelected = true
                     timeline.selectClip(clipId)
-                    refreshEditedPreview(videoClipManager.find(clipId)?.timelineStartMs ?: 0L)
-                    saveCurrentProject()
+                    timeline.updateSelection(false)
+                    if (current.timelineStartMs != targetStartMs) {
+                        pushUndoSnapshot()
+                        videoClipManager.moveToTimelinePosition(clipId, targetStartMs)
+                        refreshEditedPreview(videoClipManager.find(clipId)?.timelineStartMs ?: 0L)
+                        saveCurrentProject()
+                    }
                     updateToolMenu()
                 }
             }
