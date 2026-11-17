@@ -1480,6 +1480,7 @@ class MainActivity : AppCompatActivity() {
         seekTimelinePosition(clip.timelineStartMs)
         updateTime()
         val originalOpacity = clip.opacity
+        var opacitySnapshotSaved = false
         val seek = SeekBar(this).apply {
             max = 100
             progress = (clip.opacity * 100f).toInt().coerceIn(0, 100)
@@ -1489,7 +1490,12 @@ class MainActivity : AppCompatActivity() {
                 clip.opacity = value / 100f
                 playerView.videoSurfaceView?.alpha = clip.opacity
             }
-            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStartTrackingTouch(bar: SeekBar?) {
+                if (!opacitySnapshotSaved) {
+                    pushUndoSnapshot()
+                    opacitySnapshotSaved = true
+                }
+            }
             override fun onStopTrackingTouch(bar: SeekBar?) {}
         })
         androidx.appcompat.app.AlertDialog.Builder(this)
@@ -1501,7 +1507,6 @@ class MainActivity : AppCompatActivity() {
                 playerView.videoSurfaceView?.alpha = originalOpacity
             }
             .setPositiveButton("Terapkan") { _, _ ->
-                pushUndoSnapshot()
                 clip.opacity = seek.progress / 100f
                 playerView.videoSurfaceView?.alpha = clip.opacity
                 saveCurrentProject()
