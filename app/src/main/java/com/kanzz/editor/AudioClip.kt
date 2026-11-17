@@ -83,7 +83,8 @@ class AudioClipManager {
             filePath = clip.filePath,
             sourceStartMs = clip.sourceStartMs + firstDuration,
             name = clip.name,
-            volume = clip.volume
+            volume = clip.volume,
+            speed = clip.speed
         )
 
         clip.durationMs = firstDuration
