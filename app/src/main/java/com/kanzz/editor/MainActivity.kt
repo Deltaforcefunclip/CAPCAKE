@@ -710,15 +710,8 @@ class MainActivity : AppCompatActivity() {
 
         backButton.setOnClickListener {
 
-            val duration = player.duration.coerceAtLeast(0L)
-
-            val target = if (duration < 60000L) {
-                0L
-            } else {
-                (player.currentPosition - 60000L).coerceAtLeast(0L)
-            }
-
-            player.seekTo(target)
+            val target = (currentTimelinePosition() - 60000L).coerceAtLeast(0L)
+            seekTimelinePosition(target)
             updateTime()
         }
 
@@ -745,16 +738,9 @@ class MainActivity : AppCompatActivity() {
 
         forwardButton.setOnClickListener {
 
-            val duration = player.duration.coerceAtLeast(0L)
-
-            val target = if (duration < 60000L) {
-                duration
-            } else {
-                (player.currentPosition + 60000L)
-                    .coerceAtMost(duration)
-            }
-
-            player.seekTo(target)
+            val duration = videoClipManager.durationMs
+            val target = (currentTimelinePosition() + 60000L).coerceAtMost(duration)
+            seekTimelinePosition(target)
             updateTime()
         }
 
@@ -813,7 +799,7 @@ class MainActivity : AppCompatActivity() {
             onTransitionClick = { transition -> showTransitionPicker(transition) },
             onChange = { position ->
 
-                player.seekTo(position)
+                seekTimelinePosition(position)
                 updateTime()
             },
             onTap = {
@@ -906,60 +892,59 @@ class MainActivity : AppCompatActivity() {
     // =====================================
 
     private fun loadVideo(uri: Uri) {
-
         player.pause()
-
-        playbackListener?.let {
-            player.removeListener(it)
-        }
+        playbackListener?.let { player.removeListener(it) }
 
         val savedPosition = currentProject?.position ?: 0L
-
+        var playlistInstalled = false
         var initialPositionApplied = false
 
         player.volume = if (muteAudio) 0f else 1f
-
         player.setMediaItem(MediaItem.fromUri(uri))
         player.playWhenReady = false
 
         val listener = object : Player.Listener {
-
             override fun onPlaybackStateChanged(state: Int) {
+                if (state != Player.STATE_READY) return
 
-                if (state == Player.STATE_READY &&
-                    !initialPositionApplied
-                ) {
-
-                    initialPositionApplied = true
-
-                    val duration = player.duration.coerceAtLeast(0L)
-
-                    val startPosition = savedPosition.coerceIn(
-                        0L,
-                        duration
-                    )
-
+                // First prepare the source once so its real duration is known.
+                if (!playlistInstalled) {
+                    val sourceDuration = player.duration.coerceAtLeast(0L)
                     if (videoClipManager.clips.isEmpty()) {
-                        videoClipManager.setSource(uri.toString(), duration)
+                        videoClipManager.setSource(uri.toString(), sourceDuration)
                     }
+                    if (videoClipManager.clips.isEmpty()) {
+                        showMessage("Klip video tidak memiliki durasi yang valid.")
+                        return
+                    }
+
+                    playlistInstalled = true
                     selectedVideoClipId = selectedVideoClipId
                         ?.takeIf { id -> videoClipManager.find(id) != null }
                         ?: videoClipManager.clips.firstOrNull()?.id
-                    val timelineDuration = videoClipManager.durationMs
-                        .coerceAtLeast(duration)
+
                     timeline.setDuration(
-                        timelineDuration,
-                        startPosition.coerceAtMost(timelineDuration)
+                        videoClipManager.durationMs,
+                        savedPosition.coerceIn(0L, videoClipManager.durationMs)
                     )
-                    timeline.invalidate()
+                    timeline.loadThumbnails(uri, sourceDuration)
 
-                    timeline.loadThumbnails(uri, duration)
+                    // Replace the original full-length source with the edited clip sequence.
+                    player.setMediaItems(buildEditedVideoItems())
+                    player.prepare()
+                    return
+                }
 
-                    player.seekTo(startPosition)
-
+                if (!initialPositionApplied) {
+                    initialPositionApplied = true
+                    seekTimelinePosition(savedPosition)
                     updateTime()
                     updatePlayButton()
                 }
+            }
+
+            override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                updateTime()
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -968,10 +953,80 @@ class MainActivity : AppCompatActivity() {
         }
 
         playbackListener = listener
-
         player.addListener(listener)
-
         player.prepare()
+    }
+
+    private fun buildEditedVideoItems(): List<MediaItem> {
+        return videoClipManager.clips.map { clip ->
+            MediaItem.Builder()
+                .setUri(Uri.parse(clip.sourceUri))
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                        .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(1L))
+                        .build()
+                )
+                .build()
+        }
+    }
+
+    /** Posisi player dalam timeline hasil edit, bukan posisi file sumber. */
+    private fun currentTimelinePosition(): Long {
+        if (videoClipManager.clips.isEmpty()) return player.currentPosition.coerceAtLeast(0L)
+        val index = player.currentMediaItemIndex
+        if (index !in videoClipManager.clips.indices) return timelineController.positionMs
+        val before = videoClipManager.clips.take(index).sumOf { it.durationMs }
+        return (before + player.currentPosition.coerceAtLeast(0L))
+            .coerceIn(0L, videoClipManager.durationMs)
+    }
+
+    /** Memetakan waktu timeline ke item dan offset sumber yang benar. */
+    private fun seekTimelinePosition(positionMs: Long) {
+        if (videoClipManager.clips.isEmpty()) {
+            player.seekTo(positionMs.coerceAtLeast(0L))
+            return
+        }
+
+        val target = positionMs.coerceIn(0L, videoClipManager.durationMs)
+        var accumulated = 0L
+        var targetIndex = videoClipManager.clips.lastIndex
+        var localPosition = videoClipManager.clips.last().durationMs
+
+        for (index in videoClipManager.clips.indices) {
+            val clip = videoClipManager.clips[index]
+            val end = accumulated + clip.durationMs
+            if (target < end || index == videoClipManager.clips.lastIndex) {
+                targetIndex = index
+                localPosition = (target - accumulated).coerceIn(0L, clip.durationMs)
+                break
+            }
+            accumulated = end
+        }
+        player.seekTo(targetIndex, localPosition)
+    }
+
+    /** Rebuild playlist after split/delete/duplicate while keeping the preview at the same edit time. */
+    private fun refreshEditedPreview(positionMs: Long = currentTimelinePosition()) {
+        if (videoClipManager.clips.isEmpty()) {
+            player.pause()
+            timelineController.setDuration(0L)
+            timeline.invalidate()
+            updateTime()
+            return
+        }
+
+        val wasPlaying = player.isPlaying
+        player.pause()
+        player.setMediaItems(buildEditedVideoItems())
+        player.prepare()
+        val safePosition = positionMs.coerceIn(0L, videoClipManager.durationMs)
+        seekTimelinePosition(safePosition)
+        timelineController.setDuration(videoClipManager.durationMs)
+        timelineController.setPosition(safePosition)
+        timeline.invalidate()
+        if (wasPlaying) player.play()
+        updateTime()
     }
 
     // =====================================
@@ -1082,12 +1137,14 @@ class MainActivity : AppCompatActivity() {
 
                     "Potong" -> {
                         val clip = videoClipManager.find(selectedVideoClipId)
-                        val second = videoClipManager.split(clip?.id, timelineController.positionMs)
+                        val editPosition = currentTimelinePosition()
+                        val second = videoClipManager.split(clip?.id, editPosition)
                         if (second != null) {
                             selectedVideoClipId = second.id
-                            timeline.invalidate()
+                            refreshEditedPreview(editPosition)
                             saveCurrentProject()
-                            showMessage("Klip berhasil dipotong.")
+                            updateToolMenu()
+                            showMessage("Klip dipotong. Preview sekarang mengikuti hasil potongan.")
                         } else {
                             showMessage("Geser playhead ke bagian dalam klip video yang dipilih.")
                         }
@@ -1102,14 +1159,16 @@ class MainActivity : AppCompatActivity() {
                             saveCurrentProject()
                             refreshAudioTracks()
                         } else if (videoSelected) {
+                            val removedClip = videoClipManager.find(selectedVideoClipId)
                             if (videoClipManager.remove(selectedVideoClipId)) {
-                                selectedVideoClipId = videoClipManager.clips
-                                    .getOrNull((videoClipManager.clips.size - 1).coerceAtLeast(0))?.id
-                                timeline.invalidate()
-                                timelineController.setDuration(videoClipManager.durationMs)
+                                val nextClip = videoClipManager.clips.firstOrNull {
+                                    it.timelineStartMs >= (removedClip?.timelineStartMs ?: 0L)
+                                } ?: videoClipManager.clips.lastOrNull()
+                                selectedVideoClipId = nextClip?.id
+                                val newPosition = nextClip?.timelineStartMs ?: 0L
+                                refreshEditedPreview(newPosition)
                                 saveCurrentProject()
-                                player.seekTo(0L)
-                                showMessage("Klip dihapus. Klip setelahnya otomatis merapat.")
+                                showMessage("Klip dihapus dari preview. Bagian setelahnya otomatis merapat.")
                             } else showMessage("Pilih klip video yang ingin dihapus.")
                         }
                         updateToolMenu()
@@ -1119,9 +1178,9 @@ class MainActivity : AppCompatActivity() {
                         val copy = videoClipManager.duplicate(selectedVideoClipId)
                         if (copy != null) {
                             selectedVideoClipId = copy.id
-                            timeline.invalidate()
+                            refreshEditedPreview(copy.timelineStartMs)
                             saveCurrentProject()
-                            showMessage("Klip berhasil diduplikat.")
+                            showMessage("Klip berhasil diduplikat dan masuk ke preview.")
                         } else showMessage("Pilih klip video terlebih dahulu.")
                     }
 
@@ -1290,7 +1349,7 @@ class MainActivity : AppCompatActivity() {
     private fun syncAudioPlayback() {
         if (!::player.isInitialized) return
 
-        val timelinePosition = player.currentPosition.coerceAtLeast(0L)
+        val timelinePosition = currentTimelinePosition()
         val videoIsPlaying = player.isPlaying
 
         audioClipManager.clips.forEach { clip ->
@@ -1412,8 +1471,12 @@ class MainActivity : AppCompatActivity() {
 
         if (!::timeLabel.isInitialized) return
 
-        val position = player.currentPosition
-        val duration = player.duration.coerceAtLeast(0)
+        val position = currentTimelinePosition()
+        val duration = if (videoClipManager.clips.isNotEmpty()) {
+            videoClipManager.durationMs
+        } else {
+            player.duration.coerceAtLeast(0L)
+        }
 
         timeLabel.text =
             "${format(position)} / ${format(duration)}"
