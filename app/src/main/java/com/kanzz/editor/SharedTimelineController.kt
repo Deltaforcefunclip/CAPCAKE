@@ -2,34 +2,28 @@ package com.kanzz.editor
 
 // =====================================
 // SHARED TIMELINE CONTROLLER
-// Pengendali seluruh timeline CAPCAKE
 // =====================================
 
 class SharedTimelineController {
 
-    // Total durasi proyek
-    var durationMs: Long = 0L
-        private set
+    // Durasi proyek
+    var durationMs = 0L
 
     // Posisi playhead
-    var positionMs: Long = 0L
-        private set
+    var positionMs = 0L
 
-    // Tingkat zoom timeline
-    var pixelsPerMs: Float = 0.001f
-        private set
+    // Tingkat zoom
+    var pixelsPerMs = 0.0005f
 
-    // Posisi scroll timeline
-    var offsetPx: Float = 0f
-        private set
+    // Posisi scroll
+    var offsetPx = 0f
 
     // Lebar area timeline
-    var viewportWidthPx: Float = 0f
-        private set
+    var viewportWidthPx = 0f
 
 
     // =================================
-    // MENGATUR DURASI PROYEK
+    // DURASI
     // =================================
 
     fun setDuration(duration: Long) {
@@ -40,11 +34,13 @@ class SharedTimelineController {
             0L,
             durationMs
         )
+
+        clampOffset()
     }
 
 
     // =================================
-    // MENGATUR POSISI PLAYHEAD
+    // POSISI PLAYHEAD
     // =================================
 
     fun setPosition(position: Long) {
@@ -54,36 +50,28 @@ class SharedTimelineController {
             durationMs
         )
 
-        updateOffsetFromPosition()
+        centerPlayhead()
     }
 
 
     // =================================
-    // MENGATUR LEBAR TIMELINE
+    // MEMUSATKAN PLAYHEAD
     // =================================
 
-    fun setViewportWidth(width: Float) {
+    fun centerPlayhead() {
 
-        viewportWidthPx = width.coerceAtLeast(0f)
+        if (viewportWidthPx <= 0f) return
 
-        updateOffsetFromPosition()
-    }
-
-
-    // =================================
-    // MENGGESER TIMELINE
-    // =================================
-
-    fun scrollBy(distancePx: Float) {
-
-        offsetPx += distancePx
+        offsetPx =
+            positionMs * pixelsPerMs -
+            viewportWidthPx / 2f
 
         clampOffset()
     }
 
 
     // =================================
-    // MENGATUR ZOOM
+    // ZOOM
     // =================================
 
     fun zoomAt(
@@ -93,16 +81,13 @@ class SharedTimelineController {
 
         if (pixelsPerMs <= 0f) return
 
-        // Waktu yang berada di titik fokus
         val focusTime =
             (offsetPx + focusX) / pixelsPerMs
 
-        // Skala baru
         pixelsPerMs =
             (pixelsPerMs * scaleFactor)
                 .coerceIn(0.00005f, 0.05f)
 
-        // Pertahankan titik fokus
         offsetPx =
             focusTime * pixelsPerMs - focusX
 
@@ -126,6 +111,8 @@ class SharedTimelineController {
 
     fun xToTime(x: Float): Long {
 
+        if (pixelsPerMs <= 0f) return 0L
+
         return (
             (offsetPx + x) / pixelsPerMs
         ).toLong().coerceIn(
@@ -136,35 +123,22 @@ class SharedTimelineController {
 
 
     // =================================
-    // MEMUSATKAN PLAYHEAD
-    // =================================
-
-    fun updateOffsetFromPosition() {
-
-        if (viewportWidthPx <= 0f) return
-
-        offsetPx =
-            positionMs * pixelsPerMs -
-            viewportWidthPx / 2f
-
-        clampOffset()
-    }
-
-
-    // =================================
-    // MEMBATASI SCROLL
+    // BATAS SCROLL
     // =================================
 
     fun clampOffset() {
 
-        val maxOffset = (
+        if (durationMs <= 0L || pixelsPerMs <= 0f) return
+
+        val minimumOffset = -viewportWidthPx / 2f
+
+        val maximumOffset =
             durationMs * pixelsPerMs -
-            viewportWidthPx
-        ).coerceAtLeast(0f)
+            viewportWidthPx / 2f
 
         offsetPx = offsetPx.coerceIn(
-            0f,
-            maxOffset
+            minimumOffset,
+            maximumOffset.coerceAtLeast(minimumOffset)
         )
     }
 }
