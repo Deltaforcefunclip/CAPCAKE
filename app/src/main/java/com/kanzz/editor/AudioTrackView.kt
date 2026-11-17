@@ -30,13 +30,14 @@ class AudioTrackView(
     }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt()
-        textSize = 12f * density
+        textSize = 10f * density
     }
 
     private var selectedClipId: String? = null
     private var touchedClip: AudioClip? = null
     private var lastTouchX = 0f
     private var downX = 0f
+    private var downY = 0f
     private var isDragging = false
 
     fun selectClip(clipId: String?) {
@@ -63,14 +64,14 @@ class AudioTrackView(
 
             val rect = RectF(
                 startX,
-                5f * density,
+                3f * density,
                 endX.coerceAtLeast(startX + 4f),
-                height - 5f * density
+                height - 3f * density
             )
-            canvas.drawRoundRect(rect, 6f * density, 6f * density, clipPaint)
+            canvas.drawRoundRect(rect, 4f * density, 4f * density, clipPaint)
 
             if (clip.id == selectedClipId) {
-                canvas.drawRoundRect(rect, 6f * density, 6f * density, selectedPaint)
+                canvas.drawRoundRect(rect, 4f * density, 4f * density, selectedPaint)
             }
 
             canvas.save()
@@ -92,7 +93,7 @@ class AudioTrackView(
                 canvas.drawText(
                     label,
                     startX + 8f * density,
-                    height / 2f + 4f * density,
+                    height / 2f + 3.5f * density,
                     textPaint
                 )
             }
@@ -104,19 +105,25 @@ class AudioTrackView(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x
+                downY = event.y
                 lastTouchX = event.x
                 isDragging = false
                 touchedClip = clipAt(event.x)
                 selectedClipId = touchedClip?.id
                 onClipSelected(touchedClip)
                 invalidate()
-                parent?.requestDisallowInterceptTouchEvent(true)
+                // Biarkan ScrollView menangkap geseran vertikal untuk menggulir layer.
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
                 val clip = touchedClip ?: return true
-                if (abs(event.x - downX) > 3f * density) isDragging = true
+                val dxFromDown = abs(event.x - downX)
+                val dyFromDown = abs(event.y - downY)
+                if (dxFromDown > 5f * density && dxFromDown > dyFromDown) {
+                    isDragging = true
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                }
 
                 if (isDragging && controller.pixelsPerMs > 0f) {
                     val deltaX = event.x - lastTouchX
