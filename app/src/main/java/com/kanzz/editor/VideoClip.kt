@@ -20,8 +20,11 @@ data class VideoClip(
     var contrast: Float = 1f,
     var saturation: Float = 1f
 ) {
+    // Durasi pada timeline mengikuti kecepatan: 0.5x membuat klip 2 kali lebih panjang.
+    val timelineDurationMs: Long
+        get() = (durationMs / speed.coerceIn(0.25f, 3f)).toLong().coerceAtLeast(1L)
     val sourceEndMs: Long get() = sourceStartMs + durationMs
-    val timelineEndMs: Long get() = timelineStartMs + durationMs
+    val timelineEndMs: Long get() = timelineStartMs + timelineDurationMs
 }
 
 data class VideoTransition(
@@ -68,7 +71,9 @@ class VideoClipManager {
         if (index < 0) return null
 
         val original = clips[index]
-        val firstDuration = playheadMs - original.timelineStartMs
+        val timelineOffset = playheadMs - original.timelineStartMs
+        val firstDuration = (timelineOffset * original.speed).toLong()
+            .coerceIn(1L, original.durationMs - 1L)
         val secondDuration = original.durationMs - firstDuration
         original.durationMs = firstDuration
 
@@ -144,7 +149,7 @@ class VideoClipManager {
         var cursor = 0L
         clips.forEach { clip ->
             clip.timelineStartMs = cursor
-            cursor += clip.durationMs.coerceAtLeast(0L)
+            cursor += clip.timelineDurationMs
         }
         transitions.removeAll { transition ->
             val left = clips.indexOfFirst { it.id == transition.leftClipId }
