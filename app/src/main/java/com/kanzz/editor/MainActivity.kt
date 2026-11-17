@@ -1487,8 +1487,7 @@ class MainActivity : AppCompatActivity() {
 
             if (instance.playbackState == Player.STATE_READY && !instance.isPlaying) {
                 // Sinkronkan hanya saat mulai/resume, bukan seek terus-menerus setiap 100 ms.
-                val desiredPosition = clip.sourceStartMs +
-                    (timelinePosition - clip.startTimeMs)
+                val desiredPosition = timelinePosition - clip.startTimeMs
                 instance.seekTo(desiredPosition.coerceAtLeast(0L))
                 instance.play()
             }
@@ -1762,7 +1761,7 @@ class MainActivity : AppCompatActivity() {
 
         try {
             val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(editedItems)
-            val composition = Composition.Builder(sequence).build()
+            val composition = Composition.Builder(listOf(sequence)).build()
             val transformer = Transformer.Builder(this).addListener(listener).build()
             exportTransformer = transformer
             transformer.start(composition, output.absolutePath)
