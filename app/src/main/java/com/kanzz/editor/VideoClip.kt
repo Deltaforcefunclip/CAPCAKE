@@ -113,6 +113,26 @@ class VideoClipManager {
         return copy
     }
 
+    /**
+     * Memindahkan klip pada main track dengan perilaku magnetic/ripple.
+     * Klip lain otomatis bergeser dan tidak pernah menyisakan celah.
+     */
+    fun moveToTimelinePosition(clipId: String, targetStartMs: Long): Boolean {
+        val oldIndex = clips.indexOfFirst { it.id == clipId }
+        if (oldIndex < 0 || clips.size < 2) return false
+
+        val moving = clips.removeAt(oldIndex)
+        recalculateTimeline()
+
+        val target = targetStartMs.coerceAtLeast(0L)
+        val insertIndex = clips.indexOfFirst { it.timelineStartMs >= target }
+            .let { if (it < 0) clips.size else it }
+
+        clips.add(insertIndex, moving)
+        recalculateTimeline()
+        return clips.getOrNull(insertIndex)?.id == clipId
+    }
+
     fun transitionBetween(leftClipId: String, rightClipId: String): VideoTransition? =
         transitions.firstOrNull {
             it.leftClipId == leftClipId && it.rightClipId == rightClipId
