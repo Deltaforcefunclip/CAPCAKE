@@ -1078,7 +1078,7 @@ class MainActivity : AppCompatActivity() {
 
                     "Hapus" -> {
                         if (selectedAudioClipId != null) {
-                            val id = selectedAudioClipId
+                            val id = selectedAudioClipId ?: return@setOnClickListener
                             audioClipManager.removeClip(id)
                             audioPlayers.remove(id)?.release()
                             selectedAudioClipId = null
