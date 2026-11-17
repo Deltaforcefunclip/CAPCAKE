@@ -473,6 +473,15 @@ class MainActivity : AppCompatActivity() {
         audioPlayers.values.forEach { it.release() }
         audioPlayers.clear()
 
+        TimelineStateCodec.restoreVideo(
+            prefs.getString("video_timeline_${project.id}", null),
+            videoClipManager
+        )
+        TimelineStateCodec.restoreAudio(
+            prefs.getString("audio_timeline_${project.id}", null),
+            audioClipManager
+        )
+
         try {
 
             val uri = Uri.parse(project.uri)
@@ -572,6 +581,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         audioClipManager.addClip(clip)
+        saveCurrentProject()
         selectedAudioClipId = clip.id
         videoSelected = false
         if (::timeline.isInitialized) timeline.updateSelection(false)
@@ -929,11 +939,17 @@ class MainActivity : AppCompatActivity() {
                         duration
                     )
 
-                    videoClipManager.setSource(uri.toString(), duration)
-                    selectedVideoClipId = videoClipManager.clips.firstOrNull()?.id
+                    if (videoClipManager.clips.isEmpty()) {
+                        videoClipManager.setSource(uri.toString(), duration)
+                    }
+                    selectedVideoClipId = selectedVideoClipId
+                        ?.takeIf { id -> videoClipManager.find(id) != null }
+                        ?: videoClipManager.clips.firstOrNull()?.id
+                    val timelineDuration = videoClipManager.durationMs
+                        .coerceAtLeast(duration)
                     timeline.setDuration(
-                        duration,
-                        startPosition
+                        timelineDuration,
+                        startPosition.coerceAtMost(timelineDuration)
                     )
                     timeline.invalidate()
 
@@ -1070,6 +1086,7 @@ class MainActivity : AppCompatActivity() {
                         if (second != null) {
                             selectedVideoClipId = second.id
                             timeline.invalidate()
+                            saveCurrentProject()
                             showMessage("Klip berhasil dipotong.")
                         } else {
                             showMessage("Geser playhead ke bagian dalam klip video yang dipilih.")
@@ -1082,6 +1099,7 @@ class MainActivity : AppCompatActivity() {
                             audioClipManager.removeClip(id)
                             audioPlayers.remove(id)?.release()
                             selectedAudioClipId = null
+                            saveCurrentProject()
                             refreshAudioTracks()
                         } else if (videoSelected) {
                             if (videoClipManager.remove(selectedVideoClipId)) {
@@ -1089,6 +1107,7 @@ class MainActivity : AppCompatActivity() {
                                     .getOrNull((videoClipManager.clips.size - 1).coerceAtLeast(0))?.id
                                 timeline.invalidate()
                                 timelineController.setDuration(videoClipManager.durationMs)
+                                saveCurrentProject()
                                 player.seekTo(0L)
                                 showMessage("Klip dihapus. Klip setelahnya otomatis merapat.")
                             } else showMessage("Pilih klip video yang ingin dihapus.")
@@ -1101,6 +1120,7 @@ class MainActivity : AppCompatActivity() {
                         if (copy != null) {
                             selectedVideoClipId = copy.id
                             timeline.invalidate()
+                            saveCurrentProject()
                             showMessage("Klip berhasil diduplikat.")
                         } else showMessage("Pilih klip video terlebih dahulu.")
                     }
@@ -1191,6 +1211,7 @@ class MainActivity : AppCompatActivity() {
             .setSingleChoiceItems(options, current) { dialog, which ->
                 transition.type = types[which]
                 timeline.invalidate()
+                saveCurrentProject()
                 dialog.dismiss()
             }
             .setNegativeButton("Batal", null)
@@ -1261,6 +1282,7 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Simpan") { _, _ ->
                 clip.volume = seek.progress / 100f
                 audioPlayers[clip.id]?.volume = clip.volume
+                saveCurrentProject()
             }
             .show()
     }
@@ -1353,8 +1375,23 @@ class MainActivity : AppCompatActivity() {
 
         currentProject?.let {
 
-            it.position = player.currentPosition
+            it.position = if (::timelineController.isInitialized) {
+                timelineController.positionMs
+            } else {
+                player.currentPosition
+            }
             it.muted = muteAudio
+
+            prefs.edit()
+                .putString(
+                    "video_timeline_${it.id}",
+                    TimelineStateCodec.encodeVideo(videoClipManager)
+                )
+                .putString(
+                    "audio_timeline_${it.id}",
+                    TimelineStateCodec.encodeAudio(audioClipManager)
+                )
+                .apply()
         }
 
         saveProjects()
