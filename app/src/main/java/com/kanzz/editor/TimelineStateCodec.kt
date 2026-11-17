@@ -11,9 +11,7 @@ object TimelineStateCodec {
         val root = JSONObject().put("version", VERSION)
         val clips = JSONArray()
         manager.clips.forEach { clip ->
-            val laneIndex = manager.lanes.indexOfFirst { lane -> lane.clips.any { it.id == clip.id } }
             clips.put(JSONObject().apply {
-                put("laneIndex", laneIndex)
                 put("id", clip.id)
                 put("sourceUri", clip.sourceUri)
                 put("sourceStartMs", clip.sourceStartMs)
@@ -90,7 +88,9 @@ object TimelineStateCodec {
         val root = JSONObject().put("version", VERSION)
         val clips = JSONArray()
         manager.clips.forEach { clip ->
+            val laneIndex = manager.lanes.indexOfFirst { lane -> lane.clips.any { it.id == clip.id } }
             clips.put(JSONObject().apply {
+                put("laneIndex", laneIndex)
                 put("id", clip.id)
                 put("startTimeMs", clip.startTimeMs)
                 put("durationMs", clip.durationMs)
