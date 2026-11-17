@@ -10,6 +10,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.provider.MediaStore
+import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
@@ -53,7 +54,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playerView: PlayerView
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
-    private lateinit var audioTrack: AudioTrackView
+    private lateinit var audioTracksContainer: LinearLayout
+    private val audioTrackViews = mutableMapOf<String, AudioTrackView>()
+    private val audioPlayers = mutableMapOf<String, ExoPlayer>()
 
     private lateinit var timeLabel: TextView
     private lateinit var toolsContainer: LinearLayout
@@ -90,6 +93,7 @@ class MainActivity : AppCompatActivity() {
 
             if (::timeLabel.isInitialized) {
                 updateTime()
+                syncAudioPlayback()
             }
 
             handler.postDelayed(this, 100L)
@@ -120,7 +124,7 @@ class MainActivity : AppCompatActivity() {
                 if (isCreatingProject) {
 
                     // Project baru dimulai tanpa audio clip lama.
-                    audioClipManager.clips.clear()
+                    audioClipManager.clear()
                     selectedAudioClipId = null
 
                     val project = VideoProject(
@@ -529,25 +533,40 @@ class MainActivity : AppCompatActivity() {
         }
 
         if (!::timelineController.isInitialized ||
-            !::audioTrack.isInitialized
+            !::audioTracksContainer.isInitialized
         ) {
             showMessage("Timeline belum siap.")
             return
         }
 
+        val displayName = contentResolver.query(
+            uri,
+            arrayOf(OpenableColumns.DISPLAY_NAME),
+            null,
+            null,
+            null
+        )?.use { cursor ->
+            if (cursor.moveToFirst()) {
+                cursor.getString(0)
+            } else null
+        } ?: "Audio"
+
         val clip = AudioClip(
             startTimeMs = timelineController.positionMs,
             durationMs = durationMs,
             filePath = uri.toString(),
-            sourceStartMs = 0L
+            sourceStartMs = 0L,
+            name = displayName
         )
 
-        audioClipManager.clips.add(clip)
+        audioClipManager.addClip(clip)
         selectedAudioClipId = clip.id
-
-        audioTrack.visibility = View.VISIBLE
-        audioTrack.selectClip(clip.id)
-        audioTrack.invalidate()
+        videoSelected = false
+        if (::timeline.isInitialized) timeline.updateSelection(false)
+        if (::playerView.isInitialized) playerView.foreground = null
+        refreshAudioTracks()
+        selectAudioClip(clip.id)
+        updateToolMenu()
 
         Toast.makeText(
             this,
@@ -757,29 +776,13 @@ class MainActivity : AppCompatActivity() {
 
         timelineController = SharedTimelineController()
 
-   // AUDIO TRACK
+        // DYNAMIC AUDIO TRACKS CONTAINER
+        audioTracksContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+        }
 
-audioTrack = AudioTrackView(
-    this,
-    timelineController,
-    audioClipManager.clips
-) { selectedClip ->
-    selectedAudioClipId = selectedClip?.id
-    if (selectedClip != null) {
-        videoSelected = false
-        timeline.updateSelection(false)
-        playerView.foreground = null
-    }
-    updateToolMenu()
-}
-
-audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
-    View.GONE
-} else {
-    View.VISIBLE
-}
-
-// VIDEO TIMELINE
+        // VIDEO TIMELINE
 
         timeline = TimelineView(
             this,
@@ -791,15 +794,19 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
             },
             onTap = {
 
-                videoSelected = !videoSelected
+                if (selectedAudioClipId != null) {
+                    selectedAudioClipId = null
+                    clearAudioTrackSelection()
+                    videoSelected = true
+                } else {
+                    videoSelected = !videoSelected
+                }
 
                 timeline.updateSelection(videoSelected)
-
                 updateToolMenu()
             },
             onViewportChanged = {
-
-                audioTrack.invalidate()
+                audioTrackViews.values.forEach { it.invalidate() }
             }
         )
 
@@ -811,9 +818,11 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
         )
 
         root.addView(
-            audioTrack,
-            LinearLayout.LayoutParams(-1, dp(48))
+            audioTracksContainer,
+            LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT)
         )
+
+        refreshAudioTracks()
 
         // BOTTOM TOOLS
 
@@ -835,7 +844,13 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
 
         playerView.setOnClickListener {
 
-            videoSelected = !videoSelected
+            if (selectedAudioClipId != null) {
+                selectedAudioClipId = null
+                clearAudioTrackSelection()
+                videoSelected = true
+            } else {
+                videoSelected = !videoSelected
+            }
 
             timeline.updateSelection(videoSelected)
 
@@ -997,28 +1012,25 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
             gravity = Gravity.CENTER_VERTICAL
         }
 
-        val audioItem = createToolItem(
-            "♫",
-            if (muteAudio) "Audio OFF" else "Audio ON"
-        )
+        if (videoSelected && selectedAudioClipId == null) {
+            val audioItem = createToolItem(
+                "♫",
+                if (muteAudio) "Audio OFF" else "Audio ON"
+            )
 
-        audioItem.setOnClickListener {
+            audioItem.setOnClickListener {
+                muteAudio = !muteAudio
+                player.volume = if (muteAudio) 0f else 1f
+                currentProject?.muted = muteAudio
+                saveCurrentProject()
+                updateToolMenu()
+            }
 
-            muteAudio = !muteAudio
-
-            player.volume =
-                if (muteAudio) 0f else 1f
-
-            currentProject?.muted = muteAudio
-
-            saveCurrentProject()
-            updateToolMenu()
+            row.addView(
+                audioItem,
+                LinearLayout.LayoutParams(dp(78), dp(82))
+            )
         }
-
-        row.addView(
-            audioItem,
-            LinearLayout.LayoutParams(dp(78), dp(82))
-        )
 
         names.forEach { pair ->
 
@@ -1033,45 +1045,33 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
                     }
 
                     "Hapus" -> {
-                        val selectedClip = audioClipManager.clips
-                            .firstOrNull { it.id == selectedAudioClipId }
-
-                        if (selectedClip != null) {
-                            audioClipManager.clips.remove(selectedClip)
+                        selectedAudioClipId?.let { id ->
+                            audioClipManager.removeClip(id)
+                            audioPlayers.remove(id)?.release()
                         }
-
                         selectedAudioClipId = null
-                        audioTrack.selectClip(null)
-
-                        if (audioClipManager.clips.isEmpty()) {
-                            audioTrack.visibility = View.GONE
-                        }
-
+                        refreshAudioTracks()
                         updateToolMenu()
                     }
 
                     "Pisah" -> {
-                        if (audioClipManager.splitAudio(timelineController.positionMs)) {
-                            audioTrack.invalidate()
+                        val second = audioClipManager.splitAudio(
+                            timelineController.positionMs,
+                            selectedAudioClipId
+                        )
+                        if (second != null) {
+                            refreshAudioTracks()
+                            selectAudioClip(selectedAudioClipId)
                         } else {
-                            showMessage("Geser playhead ke dalam klip audio untuk memisahkannya.")
+                            showMessage("Geser playhead ke dalam klip audio terpilih untuk memisahkannya.")
                         }
                     }
 
                     "Volume" -> {
-                        if (selectedAudioClipId != null) {
-                            showMessage("Pengaturan volume klip audio akan dibuat pada tahap berikutnya.")
-                        } else {
-
-                        muteAudio = !muteAudio
-
-                        player.volume =
-                            if (muteAudio) 0f else 1f
-
-                        currentProject?.muted = muteAudio
-
-                        saveCurrentProject()
-                        updateToolMenu()
+                        val clip = audioClipManager.clips
+                            .firstOrNull { it.id == selectedAudioClipId }
+                        if (clip != null) {
+                            showAudioClipVolume(clip)
                         }
                     }
 
@@ -1099,12 +1099,11 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
 
         val toggle = TextView(this).apply {
 
-            text =
-                if (videoSelected) {
-                    "KEMBALI KE MENU UTAMA"
-                } else {
-                    "MENU VIDEO"
-                }
+            text = when {
+                selectedAudioClipId != null -> "KEMBALI KE MENU UTAMA"
+                videoSelected -> "KEMBALI KE MENU UTAMA"
+                else -> "MENU VIDEO"
+            }
 
             textSize = 10f
             gravity = Gravity.CENTER
@@ -1112,11 +1111,13 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
         }
 
         toggle.setOnClickListener {
-
-            videoSelected = !videoSelected
-
+            if (selectedAudioClipId != null) {
+                selectedAudioClipId = null
+                clearAudioTrackSelection()
+            } else {
+                videoSelected = !videoSelected
+            }
             timeline.updateSelection(videoSelected)
-
             updateToolMenu()
         }
 
@@ -1124,6 +1125,115 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
             toggle,
             LinearLayout.LayoutParams(-1, dp(22))
         )
+    }
+
+    private fun refreshAudioTracks() {
+        if (!::audioTracksContainer.isInitialized) return
+
+        audioTracksContainer.removeAllViews()
+        audioTrackViews.clear()
+
+        audioClipManager.lanes.forEach { lane ->
+            val trackView = AudioTrackView(
+                this,
+                timelineController,
+                lane,
+                onClipSelected = { clip ->
+                    selectedAudioClipId = clip?.id
+                    if (clip != null) {
+                        videoSelected = false
+                        timeline.updateSelection(false)
+                        playerView.foreground = null
+                    }
+                    audioTrackViews.values.forEach { it.selectClip(clip?.id) }
+                    updateToolMenu()
+                },
+                onClipMoved = {
+                    syncAudioPlayback()
+                }
+            )
+
+            audioTrackViews[lane.id] = trackView
+            trackView.selectClip(selectedAudioClipId)
+            audioTracksContainer.addView(
+                trackView,
+                LinearLayout.LayoutParams(-1, dp(48))
+            )
+        }
+        audioTracksContainer.visibility =
+            if (audioClipManager.lanes.isEmpty()) View.GONE else View.VISIBLE
+    }
+
+    private fun clearAudioTrackSelection() {
+        audioTrackViews.values.forEach { it.selectClip(null) }
+    }
+
+    private fun selectAudioClip(clipId: String?) {
+        selectedAudioClipId = clipId
+        audioTrackViews.values.forEach { it.selectClip(clipId) }
+    }
+
+    private fun showAudioClipVolume(clip: AudioClip) {
+        val seek = SeekBar(this).apply {
+            max = 100
+            progress = (clip.volume * 100f).toInt().coerceIn(0, 100)
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(4))
+            addView(seek, LinearLayout.LayoutParams(-1, dp(48)))
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Volume: ${clip.name}")
+            .setView(content)
+            .setNegativeButton("Batal", null)
+            .setPositiveButton("Simpan") { _, _ ->
+                clip.volume = seek.progress / 100f
+                audioPlayers[clip.id]?.volume = clip.volume
+            }
+            .show()
+    }
+
+    private fun syncAudioPlayback() {
+        if (!::player.isInitialized) return
+
+        val timelinePosition = player.currentPosition.coerceAtLeast(0L)
+        val videoIsPlaying = player.isPlaying
+
+        audioClipManager.clips.forEach { clip ->
+            val audioPlayer = audioPlayers[clip.id]
+
+            if (!videoIsPlaying ||
+                timelinePosition < clip.startTimeMs ||
+                timelinePosition >= clip.endTimeMs
+            ) {
+                audioPlayer?.pause()
+                return@forEach
+            }
+
+            val instance = audioPlayer ?: ExoPlayer.Builder(this).build().also { created ->
+                created.volume = clip.volume
+                created.setMediaItem(MediaItem.fromUri(Uri.parse(clip.filePath)))
+                created.prepare()
+                audioPlayers[clip.id] = created
+            }
+
+            instance.volume = clip.volume
+
+            if (instance.playbackState == Player.STATE_READY) {
+                val desiredPosition = clip.sourceStartMs +
+                    (timelinePosition - clip.startTimeMs)
+                if (kotlin.math.abs(instance.currentPosition - desiredPosition) > 250L) {
+                    instance.seekTo(desiredPosition.coerceAtLeast(0L))
+                }
+                if (!instance.isPlaying) instance.play()
+            }
+        }
+
+        val activeIds = audioClipManager.clips.map { it.id }.toSet()
+        val removedIds = audioPlayers.keys.filter { it !in activeIds }
+        removedIds.forEach { id -> audioPlayers.remove(id)?.release() }
     }
 
     private fun createToolItem(
@@ -1382,6 +1492,8 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
             player.removeListener(it)
         }
 
+        audioPlayers.values.forEach { it.release() }
+        audioPlayers.clear()
         player.release()
 
         super.onDestroy()
