@@ -20,6 +20,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.media3.transformer.Composition
@@ -95,6 +96,7 @@ class MainActivity : AppCompatActivity() {
 
             if (::timeLabel.isInitialized) {
                 updateTime()
+                syncVideoClipProperties()
                 syncAudioPlayback()
             }
 
@@ -1202,11 +1204,19 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Volume" -> {
-                        val clip = audioClipManager.clips
-                            .firstOrNull { it.id == selectedAudioClipId }
-                        if (clip != null) {
-                            showAudioClipVolume(clip)
+                        if (selectedAudioClipId != null) {
+                            val clip = audioClipManager.clips
+                                .firstOrNull { it.id == selectedAudioClipId }
+                            if (clip != null) showAudioClipVolume(clip)
+                        } else {
+                            val clip = videoClipManager.find(selectedVideoClipId)
+                            if (clip != null) showVideoClipVolume(clip)
                         }
+                    }
+
+                    "Kecepatan" -> {
+                        val clip = videoClipManager.find(selectedVideoClipId)
+                        if (clip != null) showVideoClipSpeed(clip)
                     }
 
                     else -> {
@@ -1341,6 +1351,71 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Simpan") { _, _ ->
                 clip.volume = seek.progress / 100f
                 audioPlayers[clip.id]?.volume = clip.volume
+                saveCurrentProject()
+            }
+            .show()
+    }
+
+    private fun syncVideoClipProperties() {
+        if (!::player.isInitialized || videoClipManager.clips.isEmpty()) return
+        val index = player.currentMediaItemIndex
+        val clip = videoClipManager.clips.getOrNull(index) ?: return
+        player.volume = if (muteAudio) 0f else clip.volume.coerceIn(0f, 1f)
+        val speed = clip.speed.coerceIn(0.25f, 3f)
+        if (kotlin.math.abs(player.playbackParameters.speed - speed) > 0.01f) {
+            player.playbackParameters = PlaybackParameters(speed)
+        }
+    }
+
+    private fun showVideoClipVolume(clip: VideoClip) {
+        val seek = SeekBar(this).apply {
+            max = 100
+            progress = (clip.volume * 100f).toInt().coerceIn(0, 100)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Volume klip video")
+            .setMessage("Atur volume untuk klip yang dipilih.")
+            .setView(seek)
+            .setNegativeButton("Batal", null)
+            .setPositiveButton("Simpan") { _, _ ->
+                clip.volume = seek.progress / 100f
+                syncVideoClipProperties()
+                saveCurrentProject()
+            }
+            .show()
+    }
+
+    private fun showVideoClipSpeed(clip: VideoClip) {
+        val seek = SeekBar(this).apply {
+            max = 275
+            progress = ((clip.speed - 0.25f) * 100f).toInt().coerceIn(0, max)
+        }
+        val label = TextView(this).apply {
+            text = String.format(Locale.US, "%.2fx", clip.speed)
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            textSize = 18f
+        }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                label.text = String.format(Locale.US, "%.2fx", 0.25f + value / 100f)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(4))
+            addView(label, LinearLayout.LayoutParams(-1, dp(42)))
+            addView(seek, LinearLayout.LayoutParams(-1, dp(48)))
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Kecepatan klip")
+            .setView(content)
+            .setNegativeButton("Batal", null)
+            .setPositiveButton("Terapkan") { _, _ ->
+                clip.speed = 0.25f + seek.progress / 100f
+                syncVideoClipProperties()
                 saveCurrentProject()
             }
             .show()
