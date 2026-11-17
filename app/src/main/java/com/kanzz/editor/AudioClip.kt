@@ -9,7 +9,8 @@ data class AudioClip(
     val filePath: String,
     var sourceStartMs: Long = 0L,
     var name: String = "Audio",
-    var volume: Float = 1f
+    var volume: Float = 1f,
+    var speed: Float = 1f
 ) {
     val endTimeMs: Long
         get() = startTimeMs + durationMs
@@ -48,7 +49,7 @@ class AudioClipManager {
         val source = lanes.firstOrNull { lane -> lane.clips.any { it.id == clipId } }
         if (source?.id == target.id) return true
         source?.clips?.removeAll { it.id == clipId }
-        if (source != null && source.clips.isEmpty()) lanes.remove(source)
+        // Pertahankan lane kosong agar urutan layer tidak bergeser.
         if (target.clips.none { it.id == clipId }) target.clips.add(clip)
         return true
     }
