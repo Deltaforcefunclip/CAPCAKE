@@ -61,6 +61,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
     private lateinit var audioTracksContainer: LinearLayout
+    private lateinit var audioTracksScroll: ScrollView
     private val audioTrackViews = mutableMapOf<String, AudioTrackView>()
     private val audioPlayers = mutableMapOf<String, ExoPlayer>()
     private var exportTransformer: Transformer? = null
@@ -816,6 +817,12 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
         }
+        audioTracksScroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = true
+            isFillViewport = false
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
+            addView(audioTracksContainer, ScrollView.LayoutParams(-1, -2))
+        }
 
         // VIDEO TIMELINE
 
@@ -852,8 +859,8 @@ class MainActivity : AppCompatActivity() {
         )
 
         root.addView(
-            audioTracksContainer,
-            LinearLayout.LayoutParams(-1, LinearLayout.LayoutParams.WRAP_CONTENT)
+            audioTracksScroll,
+            LinearLayout.LayoutParams(-1, dp(136))
         )
 
         refreshAudioTracks()
@@ -1329,11 +1336,12 @@ class MainActivity : AppCompatActivity() {
                 lane,
                 onClipSelected = { clip ->
                     selectedAudioClipId = clip?.id
-                    if (clip != null) {
-                        videoSelected = false
-                        timeline.updateSelection(false)
-                        playerView.foreground = null
-                    }
+                    // Memilih lane audio selalu melepas outline klip video.
+                    selectedVideoClipId = null
+                    timeline.selectClip(null)
+                    videoSelected = false
+                    timeline.updateSelection(false)
+                    playerView.foreground = null
                     audioTrackViews.values.forEach { it.selectClip(clip?.id) }
                     updateToolMenu()
                 },
@@ -1346,10 +1354,10 @@ class MainActivity : AppCompatActivity() {
             trackView.selectClip(selectedAudioClipId)
             audioTracksContainer.addView(
                 trackView,
-                LinearLayout.LayoutParams(-1, dp(48))
+                LinearLayout.LayoutParams(-1, dp(32))
             )
         }
-        audioTracksContainer.visibility =
+        audioTracksScroll.visibility =
             if (audioClipManager.lanes.isEmpty()) View.GONE else View.VISIBLE
     }
 
