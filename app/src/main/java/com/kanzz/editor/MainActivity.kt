@@ -19,6 +19,7 @@ import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
+import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
@@ -1779,8 +1780,38 @@ class MainActivity : AppCompatActivity() {
         }
 
         try {
-            val sequence = EditedMediaItemSequence.Builder(editedItems).build()
-            val composition = Composition.Builder(listOf(sequence)).build()
+            val sequences = mutableListOf(
+                EditedMediaItemSequence.Builder(editedItems).build()
+            )
+
+            // Setiap lane audio diekspor sebagai track terpisah dengan jeda sesuai posisi timeline.
+            audioClipManager.lanes.forEach { lane ->
+                val audioSequence = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
+                var cursorMs = 0L
+                lane.clips.sortedBy { it.startTimeMs }.forEach { audioClip ->
+                    if (audioClip.startTimeMs > cursorMs) {
+                        audioSequence.addGap((audioClip.startTimeMs - cursorMs) * 1000L)
+                    }
+                    val audioMedia = MediaItem.Builder()
+                        .setUri(Uri.parse(audioClip.filePath))
+                        .setClippingConfiguration(
+                            MediaItem.ClippingConfiguration.Builder()
+                                .setStartPositionMs(audioClip.sourceStartMs.coerceAtLeast(0L))
+                                .setEndPositionMs((audioClip.sourceStartMs + audioClip.durationMs).coerceAtLeast(1L))
+                                .build()
+                        )
+                        .build()
+                    audioSequence.addItem(
+                        EditedMediaItem.Builder(audioMedia)
+                            .setRemoveVideo(true)
+                            .build()
+                    )
+                    cursorMs = audioClip.endTimeMs
+                }
+                if (lane.clips.isNotEmpty()) sequences.add(audioSequence.build())
+            }
+
+            val composition = Composition.Builder(sequences).build()
             val transformer = Transformer.Builder(this).addListener(listener).build()
             exportTransformer = transformer
             transformer.start(composition, output.absolutePath)
