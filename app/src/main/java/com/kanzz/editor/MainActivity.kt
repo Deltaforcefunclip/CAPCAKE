@@ -698,7 +698,6 @@ class MainActivity : AppCompatActivity() {
                 androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
 
             setKeepContentOnPlayerReset(true)
-            setSurfaceType(PlayerView.SURFACE_TYPE_TEXTURE_VIEW)
         }
 
         previewFrame.addView(
@@ -1392,7 +1391,7 @@ class MainActivity : AppCompatActivity() {
         val clip = videoClipManager.clips.getOrNull(index) ?: return
         player.volume = if (muteAudio) 0f else clip.volume.coerceIn(0f, 1f)
         if (::playerView.isInitialized) {
-            playerView.videoSurfaceView?.alpha = clip.opacity.coerceIn(0f, 1f)
+            playerView.alpha = clip.opacity.coerceIn(0f, 1f)
         }
         val speed = clip.speed.coerceIn(0.25f, 3f)
         if (kotlin.math.abs(player.playbackParameters.speed - speed) > 0.01f) {
