@@ -126,6 +126,8 @@ class MainActivity : AppCompatActivity() {
                     // Project baru dimulai tanpa audio clip lama.
                     audioClipManager.clear()
                     selectedAudioClipId = null
+                    audioPlayers.values.forEach { it.release() }
+                    audioPlayers.clear()
 
                     val project = VideoProject(
                         id = System.currentTimeMillis().toString(),
@@ -458,8 +460,10 @@ class MainActivity : AppCompatActivity() {
         currentProject = project
 
         // Audio clip belum disimpan ke data project.
-        audioClipManager.clips.clear()
+        audioClipManager.clear()
         selectedAudioClipId = null
+        audioPlayers.values.forEach { it.release() }
+        audioPlayers.clear()
 
         try {
 
