@@ -804,24 +804,14 @@ class MainActivity : AppCompatActivity() {
                 seekTimelinePosition(position)
                 updateTime()
             },
-            onTap = {
-
-                if (selectedAudioClipId != null) {
-                    selectedAudioClipId = null
-                    clearAudioTrackSelection()
-                    videoSelected = true
-                } else {
-                    videoSelected = !videoSelected
-                }
-
-                if (videoSelected) {
-                    selectedVideoClipId = videoClipManager.clips.firstOrNull { clip ->
-                        timelineController.positionMs >= clip.timelineStartMs &&
-                            timelineController.positionMs < clip.timelineEndMs
-                    }?.id ?: videoClipManager.clips.lastOrNull()?.id
-                }
-
-                timeline.updateSelection(videoSelected)
+            onTap = { tappedClip ->
+                selectedAudioClipId = null
+                clearAudioTrackSelection()
+                selectedVideoClipId = tappedClip?.id
+                videoSelected = tappedClip != null
+                timeline.selectClip(selectedVideoClipId)
+                timeline.updateSelection(false)
+                playerView.foreground = null
                 updateToolMenu()
             },
             onViewportChanged = {
@@ -1143,6 +1133,7 @@ class MainActivity : AppCompatActivity() {
                         val second = videoClipManager.split(clip?.id, editPosition)
                         if (second != null) {
                             selectedVideoClipId = second.id
+                            timeline.selectClip(second.id)
                             refreshEditedPreview(editPosition)
                             saveCurrentProject()
                             updateToolMenu()
@@ -1180,6 +1171,7 @@ class MainActivity : AppCompatActivity() {
                         val copy = videoClipManager.duplicate(selectedVideoClipId)
                         if (copy != null) {
                             selectedVideoClipId = copy.id
+                            timeline.selectClip(copy.id)
                             refreshEditedPreview(copy.timelineStartMs)
                             saveCurrentProject()
                             showMessage("Klip berhasil diduplikat dan masuk ke preview.")
@@ -1379,7 +1371,9 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Batal", null)
             .setPositiveButton("Simpan") { _, _ ->
                 clip.volume = seek.progress / 100f
-                syncVideoClipProperties()
+                if (player.currentMediaItemIndex == videoClipManager.clips.indexOf(clip)) {
+                    player.volume = if (muteAudio) 0f else clip.volume
+                }
                 saveCurrentProject()
             }
             .show()
@@ -1440,20 +1434,28 @@ class MainActivity : AppCompatActivity() {
 
             val instance = audioPlayer ?: ExoPlayer.Builder(this).build().also { created ->
                 created.volume = clip.volume
-                created.setMediaItem(MediaItem.fromUri(Uri.parse(clip.filePath)))
+                val audioItem = MediaItem.Builder()
+                    .setUri(Uri.parse(clip.filePath))
+                    .setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                            .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(1L))
+                            .build()
+                    )
+                    .build()
+                created.setMediaItem(audioItem)
                 created.prepare()
                 audioPlayers[clip.id] = created
             }
 
             instance.volume = clip.volume
 
-            if (instance.playbackState == Player.STATE_READY) {
+            if (instance.playbackState == Player.STATE_READY && !instance.isPlaying) {
+                // Sinkronkan hanya saat mulai/resume, bukan seek terus-menerus setiap 100 ms.
                 val desiredPosition = clip.sourceStartMs +
                     (timelinePosition - clip.startTimeMs)
-                if (kotlin.math.abs(instance.currentPosition - desiredPosition) > 250L) {
-                    instance.seekTo(desiredPosition.coerceAtLeast(0L))
-                }
-                if (!instance.isPlaying) instance.play()
+                instance.seekTo(desiredPosition.coerceAtLeast(0L))
+                instance.play()
             }
         }
 
@@ -1756,7 +1758,7 @@ class TimelineView(
     private val videoClips: VideoClipManager,
     private val onTransitionClick: (VideoTransition) -> Unit,
     private val onChange: (Long) -> Unit,
-    private val onTap: () -> Unit,
+    private val onTap: (VideoClip?) -> Unit,
     private val onViewportChanged: () -> Unit
 ) : View(context) {
 
@@ -1794,6 +1796,7 @@ class TimelineView(
 
     private var moved = false
     private var isSelected = false
+    private var selectedClipId: String? = null
 
     private var frames = mutableListOf<Bitmap>()
     private val transitionHitBoxes = mutableListOf<Pair<RectF, VideoTransition>>()
@@ -1842,9 +1845,12 @@ class TimelineView(
     // =====================================
 
     fun updateSelection(selected: Boolean) {
-
         isSelected = selected
+        invalidate()
+    }
 
+    fun selectClip(clipId: String?) {
+        selectedClipId = clipId
         invalidate()
     }
 
@@ -2192,9 +2198,9 @@ class TimelineView(
         videoClips.clips.forEachIndexed { index, videoClip ->
             val clipLeft = timeToX(videoClip.timelineStartMs)
             val clipRight = timeToX(videoClip.timelineEndMs)
-            paint.color = if (index == 0) Color.WHITE else Color.BLACK
+            paint.color = if (videoClip.id == selectedClipId) green else Color.WHITE
             paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 1.5f * density
+            paint.strokeWidth = if (videoClip.id == selectedClipId) 3f * density else 1f * density
             canvas.drawRect(
                 RectF(clipLeft, trackTop, clipRight, trackBottom),
                 paint
@@ -2221,28 +2227,8 @@ class TimelineView(
             }
         }
 
-        // TIMELINE BORDER
+        // Stroke hijau hanya ditampilkan pada klip yang dipilih.
 
-        paint.color = if (isSelected) {
-            green
-        } else {
-            Color.BLACK
-        }
-
-        paint.style = Paint.Style.STROKE
-        paint.strokeWidth = 2f * density
-
-        canvas.drawRect(
-            RectF(
-                left,
-                trackTop,
-                max(left, right),
-                trackBottom
-            ),
-            paint
-        )
-
-        paint.style = Paint.Style.FILL
 
         // FIXED CENTER PLAYHEAD
 
@@ -2347,9 +2333,11 @@ class TimelineView(
                     if (transition != null) {
                         onTransitionClick(transition)
                     } else {
-                        position = centerTime()
-                        onChange(position)
-                        onTap()
+                        val tappedTime = controller.xToTime(event.x)
+                        val tappedClip = videoClips.clips.firstOrNull { clip ->
+                            tappedTime >= clip.timelineStartMs && tappedTime < clip.timelineEndMs
+                        }
+                        onTap(tappedClip)
                     }
                 }
 
