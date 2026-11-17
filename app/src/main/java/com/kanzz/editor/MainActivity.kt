@@ -1267,37 +1267,51 @@ class TimelineView(
     private val executor = Executors.newSingleThreadExecutor()
 
     // =====================================
-    // PINCH ZOOM
-    // =====================================
+// PINCH ZOOM
+// =====================================
 
-    private val scaleDetector = ScaleGestureDetector(
-        context,
-        object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+private val scaleDetector = ScaleGestureDetector(
+    context,
+    object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
 
-            override fun onScale(detector: ScaleGestureDetector): Boolean {
-
-                if (pixelsPerMs <= 0f) return false
-
-                val focusX = detector.focusX
-
-                val focusTime =
-                    (offset + focusX) / pixelsPerMs
-
-                pixelsPerMs =
-                    (pixelsPerMs * detector.scaleFactor)
-                        .coerceIn(0.00005f, 0.01f)
-
-                offset =
-                    focusTime * pixelsPerMs - focusX
-
-                clampOffset()
-
-                invalidate()
-
-                return true
-            }
+        override fun onScaleBegin(
+            detector: ScaleGestureDetector
+        ): Boolean {
+            return true
         }
-    )
+
+        override fun onScale(
+            detector: ScaleGestureDetector
+        ): Boolean {
+
+            if (pixelsPerMs <= 0f) return false
+
+            // Titik fokus kedua jari
+            val focusX = detector.focusX
+
+            // Posisi waktu yang berada di antara kedua jari
+            val focusTime =
+                (offset + focusX) / pixelsPerMs
+
+            // Perbesar atau perkecil timeline
+            val newScale =
+                (pixelsPerMs * detector.scaleFactor)
+                    .coerceIn(0.00005f, 0.05f)
+
+            pixelsPerMs = newScale
+
+            // Pertahankan titik fokus ketika zoom
+            offset =
+                focusTime * pixelsPerMs - focusX
+
+            clampOffset()
+
+            invalidate()
+
+            return true
+        }
+    }
+)
 
     init {
         setBackgroundColor(Color.rgb(27, 27, 27))
