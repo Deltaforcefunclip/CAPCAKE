@@ -765,6 +765,11 @@ audioTrack = AudioTrackView(
     audioClipManager.clips
 ) { selectedClip ->
     selectedAudioClipId = selectedClip?.id
+    if (selectedClip != null) {
+        videoSelected = false
+        timeline.updateSelection(false)
+        playerView.foreground = null
+    }
     updateToolMenu()
 }
 
@@ -939,7 +944,15 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
 
         toolsContainer.removeAllViews()
 
-        val names = if (videoSelected) {
+        val names = if (selectedAudioClipId != null) {
+
+            listOf(
+                "♫" to "Volume",
+                "✂" to "Pisah",
+                "⌫" to "Hapus"
+            )
+
+        } else if (videoSelected) {
 
             listOf(
                 "✂" to "Potong",
@@ -1019,7 +1032,36 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
                         openAudioPicker()
                     }
 
+                    "Hapus" -> {
+                        val selectedClip = audioClipManager.clips
+                            .firstOrNull { it.id == selectedAudioClipId }
+
+                        if (selectedClip != null) {
+                            audioClipManager.clips.remove(selectedClip)
+                        }
+
+                        selectedAudioClipId = null
+                        audioTrack.selectClip(null)
+
+                        if (audioClipManager.clips.isEmpty()) {
+                            audioTrack.visibility = View.GONE
+                        }
+
+                        updateToolMenu()
+                    }
+
+                    "Pisah" -> {
+                        if (audioClipManager.splitAudio(timelineController.positionMs)) {
+                            audioTrack.invalidate()
+                        } else {
+                            showMessage("Geser playhead ke dalam klip audio untuk memisahkannya.")
+                        }
+                    }
+
                     "Volume" -> {
+                        if (selectedAudioClipId != null) {
+                            showMessage("Pengaturan volume klip audio akan dibuat pada tahap berikutnya.")
+                        } else {
 
                         muteAudio = !muteAudio
 
@@ -1030,6 +1072,7 @@ audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
 
                         saveCurrentProject()
                         updateToolMenu()
+                        }
                     }
 
                     else -> {
