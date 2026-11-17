@@ -79,6 +79,9 @@ class MainActivity : AppCompatActivity() {
     private var videoSelected = false
     private var selectedAudioClipId: String? = null
     private var isCreatingProject = false
+    private var editorOpen = false
+    private val undoStack = ArrayDeque<Pair<String, String>>()
+    private val redoStack = ArrayDeque<Pair<String, String>>()
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -200,6 +203,7 @@ class MainActivity : AppCompatActivity() {
     // =====================================
 
     private fun showHome() {
+        editorOpen = false
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -606,6 +610,7 @@ class MainActivity : AppCompatActivity() {
     // =====================================
 
     private fun openEditor() {
+        editorOpen = true
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -703,9 +708,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(12), dp(5), dp(12), dp(5))
         }
 
-        undoButton.setOnClickListener {
-            showMessage("Belum ada perubahan yang bisa di-undo.")
-        }
+        undoButton.setOnClickListener { undoTimelineEdit() }
 
         val backButton = button("−1m").apply {
             textSize = 17f
@@ -753,9 +756,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(12), dp(5), dp(12), dp(5))
         }
 
-        redoButton.setOnClickListener {
-            showMessage("Belum ada perubahan yang bisa di-redo.")
-        }
+        redoButton.setOnClickListener { redoTimelineEdit() }
 
         controls.addView(undoButton)
         controls.addView(backButton)
@@ -1132,6 +1133,7 @@ class MainActivity : AppCompatActivity() {
                     "Potong" -> {
                         val clip = videoClipManager.find(selectedVideoClipId)
                         val editPosition = currentTimelinePosition()
+                        pushUndoSnapshot()
                         val second = videoClipManager.split(clip?.id, editPosition)
                         if (second != null) {
                             selectedVideoClipId = second.id
@@ -1148,6 +1150,7 @@ class MainActivity : AppCompatActivity() {
                     "Hapus" -> {
                         if (selectedAudioClipId != null) {
                             val id = selectedAudioClipId ?: return@setOnClickListener
+                            pushUndoSnapshot()
                             audioClipManager.removeClip(id)
                             audioPlayers.remove(id)?.release()
                             selectedAudioClipId = null
@@ -1155,6 +1158,7 @@ class MainActivity : AppCompatActivity() {
                             refreshAudioTracks()
                         } else if (videoSelected) {
                             val removedClip = videoClipManager.find(selectedVideoClipId)
+                            pushUndoSnapshot()
                             if (videoClipManager.remove(selectedVideoClipId)) {
                                 val nextClip = videoClipManager.clips.firstOrNull {
                                     it.timelineStartMs >= (removedClip?.timelineStartMs ?: 0L)
@@ -1170,6 +1174,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Duplikat" -> {
+                        pushUndoSnapshot()
                         val copy = videoClipManager.duplicate(selectedVideoClipId)
                         if (copy != null) {
                             selectedVideoClipId = copy.id
@@ -1185,6 +1190,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Pisah" -> {
+                        pushUndoSnapshot()
                         val second = audioClipManager.splitAudio(
                             timelineController.positionMs,
                             selectedAudioClipId
@@ -1211,6 +1217,11 @@ class MainActivity : AppCompatActivity() {
                     "Kecepatan" -> {
                         val clip = videoClipManager.find(selectedVideoClipId)
                         if (clip != null) showVideoClipSpeed(clip)
+                    }
+
+                    "Opasitas" -> {
+                        val clip = videoClipManager.find(selectedVideoClipId)
+                        if (clip != null) showVideoClipOpacity(clip)
                     }
 
                     else -> {
@@ -1355,6 +1366,7 @@ class MainActivity : AppCompatActivity() {
         val index = player.currentMediaItemIndex
         val clip = videoClipManager.clips.getOrNull(index) ?: return
         player.volume = if (muteAudio) 0f else clip.volume.coerceIn(0f, 1f)
+        if (::playerView.isInitialized) playerView.alpha = clip.opacity.coerceIn(0f, 1f)
         val speed = clip.speed.coerceIn(0.25f, 3f)
         if (kotlin.math.abs(player.playbackParameters.speed - speed) > 0.01f) {
             player.playbackParameters = PlaybackParameters(speed)
@@ -1412,6 +1424,27 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Terapkan") { _, _ ->
                 clip.speed = 0.25f + seek.progress / 100f
                 syncVideoClipProperties()
+                saveCurrentProject()
+            }
+            .show()
+    }
+
+    private fun showVideoClipOpacity(clip: VideoClip) {
+        val seek = SeekBar(this).apply {
+            max = 100
+            progress = (clip.opacity * 100f).toInt().coerceIn(0, 100)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Opasitas klip")
+            .setMessage("Atur tingkat transparansi klip yang dipilih.")
+            .setView(seek)
+            .setNegativeButton("Batal", null)
+            .setPositiveButton("Terapkan") { _, _ ->
+                clip.opacity = seek.progress / 100f
+                if (::playerView.isInitialized &&
+                    player.currentMediaItemIndex == videoClipManager.clips.indexOf(clip)) {
+                    playerView.alpha = clip.opacity
+                }
                 saveCurrentProject()
             }
             .show()
@@ -1509,6 +1542,55 @@ class MainActivity : AppCompatActivity() {
     // SAVE CURRENT PROJECT
     // =====================================
 
+    private fun pushUndoSnapshot() {
+        undoStack.addLast(
+            TimelineStateCodec.encodeVideo(videoClipManager) to
+                TimelineStateCodec.encodeAudio(audioClipManager)
+        )
+        while (undoStack.size > 25) undoStack.removeFirst()
+        redoStack.clear()
+    }
+
+    private fun restoreTimelineSnapshot(snapshot: Pair<String, String>) {
+        TimelineStateCodec.restoreVideo(snapshot.first, videoClipManager)
+        TimelineStateCodec.restoreAudio(snapshot.second, audioClipManager)
+        selectedVideoClipId = videoClipManager.clips.firstOrNull()?.id
+        selectedAudioClipId = null
+        videoSelected = false
+        refreshAudioTracks()
+        if (::timeline.isInitialized) {
+            timeline.selectClip(selectedVideoClipId)
+            timeline.setDuration(videoClipManager.durationMs, timelineController.positionMs)
+        }
+        refreshEditedPreview(timelineController.positionMs.coerceAtMost(videoClipManager.durationMs))
+        saveCurrentProject()
+        updateToolMenu()
+    }
+
+    private fun undoTimelineEdit() {
+        if (undoStack.isEmpty()) {
+            showMessage("Belum ada perubahan yang bisa dibatalkan.")
+            return
+        }
+        redoStack.addLast(
+            TimelineStateCodec.encodeVideo(videoClipManager) to
+                TimelineStateCodec.encodeAudio(audioClipManager)
+        )
+        restoreTimelineSnapshot(undoStack.removeLast())
+    }
+
+    private fun redoTimelineEdit() {
+        if (redoStack.isEmpty()) {
+            showMessage("Belum ada perubahan yang bisa diulang.")
+            return
+        }
+        undoStack.addLast(
+            TimelineStateCodec.encodeVideo(videoClipManager) to
+                TimelineStateCodec.encodeAudio(audioClipManager)
+        )
+        restoreTimelineSnapshot(redoStack.removeLast())
+    }
+
     private fun saveCurrentProject() {
 
         currentProject?.let {
@@ -1533,6 +1615,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         saveProjects()
+    }
+
+    @Suppress("DEPRECATION")
+    override fun onBackPressed() {
+        if (editorOpen) {
+            saveCurrentProject()
+            player.pause()
+            showHome()
+        } else {
+            super.onBackPressed()
+        }
     }
 
     override fun onPause() {
