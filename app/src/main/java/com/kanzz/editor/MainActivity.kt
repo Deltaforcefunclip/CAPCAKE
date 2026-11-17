@@ -1,3 +1,4 @@
+
 package com.kanzz.editor
 
 import android.content.ContentValues
@@ -52,12 +53,16 @@ class MainActivity : AppCompatActivity() {
     private lateinit var playerView: PlayerView
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
+    private lateinit var audioTrack: AudioTrackView
 
     private lateinit var timeLabel: TextView
     private lateinit var toolsContainer: LinearLayout
     private lateinit var playButton: TextView
 
     private val projects = mutableListOf<VideoProject>()
+
+    // AUDIO CLIPS
+    private val audioClipManager = AudioClipManager()
 
     private var currentProject: VideoProject? = null
     private var videoUri: Uri? = null
@@ -109,9 +114,12 @@ class MainActivity : AppCompatActivity() {
                 } catch (_: Exception) {}
 
                 videoUri = uri
-                videoSelected = true
+                videoSelected = false
 
                 if (isCreatingProject) {
+
+                    // Project baru dimulai tanpa audio clip lama.
+                    audioClipManager.clips.clear()
 
                     val project = VideoProject(
                         id = System.currentTimeMillis().toString(),
@@ -135,6 +143,20 @@ class MainActivity : AppCompatActivity() {
                 saveProjects()
                 openEditor()
                 loadVideo(uri)
+            }
+        }
+
+    // =====================================
+    // AUDIO PICKER
+    // =====================================
+
+    private val pickAudio =
+        registerForActivityResult(
+            ActivityResultContracts.OpenDocument()
+        ) { uri ->
+
+            if (uri != null) {
+                importAudio(uri)
             }
         }
 
@@ -429,6 +451,9 @@ class MainActivity : AppCompatActivity() {
 
         currentProject = project
 
+        // Audio clip belum disimpan ke data project.
+        audioClipManager.clips.clear()
+
         try {
 
             val uri = Uri.parse(project.uri)
@@ -451,6 +476,78 @@ class MainActivity : AppCompatActivity() {
             isCreatingProject = false
             pickVideo.launch(arrayOf("video/*"))
         }
+    }
+
+    // =====================================
+    // IMPORT AUDIO
+    // =====================================
+
+    private fun openAudioPicker() {
+
+        pickAudio.launch(arrayOf("audio/*"))
+    }
+
+    private fun importAudio(uri: Uri) {
+
+        try {
+
+            contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+
+        } catch (_: Exception) {}
+
+        val retriever = MediaMetadataRetriever()
+
+        val durationMs = try {
+
+            retriever.setDataSource(this, uri)
+
+            retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_DURATION
+            )?.toLongOrNull() ?: 0L
+
+        } catch (_: Exception) {
+
+            0L
+
+        } finally {
+
+            try {
+                retriever.release()
+            } catch (_: Exception) {}
+        }
+
+        if (durationMs <= 0L) {
+
+            showMessage("File audio tidak dapat dibaca.")
+            return
+        }
+
+        if (!::timelineController.isInitialized ||
+            !::audioTrack.isInitialized
+        ) {
+            showMessage("Timeline belum siap.")
+            return
+        }
+
+        val clip = AudioClip(
+            startTimeMs = timelineController.positionMs,
+            durationMs = durationMs,
+            filePath = uri.toString(),
+            sourceStartMs = 0L
+        )
+
+        audioClipManager.clips.add(clip)
+
+        audioTrack.invalidate()
+
+        Toast.makeText(
+            this,
+            "Audio berhasil ditambahkan ke timeline.",
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     // =====================================
@@ -656,10 +753,15 @@ class MainActivity : AppCompatActivity() {
 
         // AUDIO TRACK
 
-        val audioTrack = AudioTrackView(
+        audioTrack = AudioTrackView(
             this,
-            timelineController
+            timelineController,
+            audioClipManager.clips
         )
+
+        audioTrack.setOnClickListener {
+            openAudioPicker()
+        }
 
         // VIDEO TIMELINE
 
@@ -900,23 +1002,31 @@ class MainActivity : AppCompatActivity() {
 
             item.setOnClickListener {
 
-                if (pair.second == "Volume") {
+                when (pair.second) {
 
-                    muteAudio = !muteAudio
+                    "Audio" -> {
+                        openAudioPicker()
+                    }
 
-                    player.volume =
-                        if (muteAudio) 0f else 1f
+                    "Volume" -> {
 
-                    currentProject?.muted = muteAudio
+                        muteAudio = !muteAudio
 
-                    saveCurrentProject()
-                    updateToolMenu()
+                        player.volume =
+                            if (muteAudio) 0f else 1f
 
-                } else {
+                        currentProject?.muted = muteAudio
 
-                    showMessage(
-                        "${pair.second} akan mendapatkan fungsi pada tahap berikutnya."
-                    )
+                        saveCurrentProject()
+                        updateToolMenu()
+                    }
+
+                    else -> {
+
+                        showMessage(
+                            "${pair.second} akan mendapatkan fungsi pada tahap berikutnya."
+                        )
+                    }
                 }
             }
 
@@ -1494,7 +1604,6 @@ class TimelineView(
     // =====================================
 
     private fun clampOffset() {
-
         controller.clampOffset()
     }
 
@@ -1511,12 +1620,10 @@ class TimelineView(
     }
 
     private fun timeToX(time: Long): Float {
-
         return controller.timeToX(time)
     }
 
     private fun centerTime(): Long {
-
         return controller.xToTime(width / 2f)
     }
 
@@ -1839,7 +1946,8 @@ class TimelineView(
 
 class AudioTrackView(
     context: android.content.Context,
-    private val controller: SharedTimelineController
+    private val controller: SharedTimelineController,
+    private val clips: List<AudioClip>
 ) : View(context) {
 
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
@@ -1866,7 +1974,9 @@ class AudioTrackView(
             paint
         )
 
-        if (controller.durationMs <= 0L) {
+        // EMPTY AUDIO TRACK
+
+        if (clips.isEmpty()) {
 
             paint.color = Color.GRAY
             paint.textSize = 11f * density
@@ -1881,15 +1991,7 @@ class AudioTrackView(
             return
         }
 
-        // AUDIO TRACK PLACEHOLDER
-
-        val left = controller.timeToX(0L)
-
-        val right = controller.timeToX(
-            controller.durationMs
-        )
-
-        paint.color = Color.rgb(34, 65, 52)
+        // CLIP AUDIO
 
         canvas.save()
 
@@ -1900,27 +2002,67 @@ class AudioTrackView(
             bottom
         )
 
-        canvas.drawRoundRect(
-            left,
-            top,
-            right,
-            bottom,
-            5f * density,
-            5f * density,
-            paint
-        )
+        clips.forEach { clip ->
 
-        // AUDIO LABEL
+            val left = controller.timeToX(
+                clip.startTimeMs
+            )
 
-        paint.color = Color.rgb(150, 220, 185)
-        paint.textSize = 11f * density
+            val right = controller.timeToX(
+                clip.endTimeMs
+            )
 
-        canvas.drawText(
-            "+ Tambahkan audio",
-            max(left, 12f * density),
-            height / 2f + 4f * density,
-            paint
-        )
+            if (right < 0f || left > width.toFloat()) {
+                return@forEach
+            }
+
+            // CLIP BACKGROUND
+
+            paint.color = Color.rgb(24, 105, 75)
+
+            canvas.drawRoundRect(
+                left,
+                top,
+                max(left + 4f * density, right),
+                bottom,
+                5f * density,
+                5f * density,
+                paint
+            )
+
+            // CLIP BORDER
+
+            paint.color = Color.rgb(65, 220, 155)
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1f * density
+
+            canvas.drawRoundRect(
+                left,
+                top,
+                max(left + 4f * density, right),
+                bottom,
+                5f * density,
+                5f * density,
+                paint
+            )
+
+            paint.style = Paint.Style.FILL
+
+            // AUDIO LABEL
+
+            paint.color = Color.WHITE
+            paint.textSize = 11f * density
+
+            if (right - left > 45f * density) {
+
+                canvas.drawText(
+                    "♫ Audio",
+                    left + 8f * density,
+                    height / 2f + 4f * density,
+                    paint
+                )
+            }
+        }
 
         canvas.restore()
     }
