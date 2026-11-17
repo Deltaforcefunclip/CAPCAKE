@@ -11,7 +11,9 @@ object TimelineStateCodec {
         val root = JSONObject().put("version", VERSION)
         val clips = JSONArray()
         manager.clips.forEach { clip ->
+            val laneIndex = manager.lanes.indexOfFirst { lane -> lane.clips.any { it.id == clip.id } }
             clips.put(JSONObject().apply {
+                put("laneIndex", laneIndex)
                 put("id", clip.id)
                 put("sourceUri", clip.sourceUri)
                 put("sourceStartMs", clip.sourceStartMs)
@@ -109,7 +111,7 @@ object TimelineStateCodec {
             val clips = JSONObject(json).optJSONArray("clips") ?: JSONArray()
             for (i in 0 until clips.length()) {
                 val item = clips.getJSONObject(i)
-                manager.addClip(AudioClip(
+                val clip = AudioClip(
                     id = item.optString("id"),
                     startTimeMs = item.optLong("startTimeMs"),
                     durationMs = item.optLong("durationMs"),
@@ -117,7 +119,23 @@ object TimelineStateCodec {
                     sourceStartMs = item.optLong("sourceStartMs"),
                     name = item.optString("name", "Audio"),
                     volume = item.optDouble("volume", 1.0).toFloat()
-                ))
+                )
+                val laneIndex = item.optInt("laneIndex", -1)
+                if (laneIndex >= 0) {
+                    while (manager.lanes.size <= laneIndex) manager.lanes.add(AudioLane())
+                    val lane = manager.lanes[laneIndex]
+                    if (lane.clips.none { existing ->
+                            clip.startTimeMs < existing.endTimeMs &&
+                                clip.endTimeMs > existing.startTimeMs
+                        }) {
+                        lane.clips.add(clip)
+                        manager.clips.add(clip)
+                    } else {
+                        manager.addClip(clip)
+                    }
+                } else {
+                    manager.addClip(clip)
+                }
             }
         } catch (_: Exception) {
             manager.clear()
