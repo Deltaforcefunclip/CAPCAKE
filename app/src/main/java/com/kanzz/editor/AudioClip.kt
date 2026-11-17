@@ -2,125 +2,95 @@ package com.kanzz.editor
 
 import java.util.UUID
 
-// =====================================
-// MODEL DATA AUDIO
-// =====================================
-
 data class AudioClip(
-
     val id: String = UUID.randomUUID().toString(),
-
-    // Posisi audio di timeline
     var startTimeMs: Long = 0L,
-
-    // Durasi audio
     var durationMs: Long = 0L,
-
-    // Lokasi file audio
     val filePath: String,
-
-    // Posisi awal sumber audio
-    var sourceStartMs: Long = 0L
-
+    var sourceStartMs: Long = 0L,
+    var name: String = "Audio",
+    var volume: Float = 1f
 ) {
     val endTimeMs: Long
         get() = startTimeMs + durationMs
 }
 
-
-// =====================================
-// AUDIO CLIP MANAGER
-// =====================================
+data class AudioLane(
+    val id: String = UUID.randomUUID().toString(),
+    val clips: MutableList<AudioClip> = mutableListOf()
+)
 
 class AudioClipManager {
-
     val clips = mutableListOf<AudioClip>()
+    val lanes = mutableListOf<AudioLane>()
 
+    fun addClip(clip: AudioClip): AudioLane {
+        val lane = lanes.firstOrNull { candidate ->
+            candidate.clips.none { existing ->
+                clip.startTimeMs < existing.endTimeMs &&
+                    clip.endTimeMs > existing.startTimeMs
+            }
+        } ?: AudioLane().also { lanes.add(it) }
 
-    // =================================
-    // SPLIT AUDIO
-    // =================================
+        lane.clips.add(clip)
+        clips.add(clip)
+        return lane
+    }
 
-    fun splitAudio(playheadMs: Long): Boolean {
+    fun removeClip(clipId: String): Boolean {
+        val clip = clips.firstOrNull { it.id == clipId } ?: return false
+        clips.remove(clip)
+        lanes.forEach { it.clips.removeAll { item -> item.id == clipId } }
+        lanes.removeAll { it.clips.isEmpty() }
+        return true
+    }
 
+    fun clear() {
+        clips.clear()
+        lanes.clear()
+    }
+
+    fun splitAudio(playheadMs: Long, selectedClipId: String? = null): AudioClip? {
         val clip = clips.firstOrNull {
-            playheadMs > it.startTimeMs &&
-            playheadMs < it.endTimeMs
-        } ?: return false
+            (selectedClipId == null || it.id == selectedClipId) &&
+                playheadMs > it.startTimeMs &&
+                playheadMs < it.endTimeMs
+        } ?: return null
 
-        val firstDuration =
-            playheadMs - clip.startTimeMs
+        val firstDuration = playheadMs - clip.startTimeMs
+        val secondDuration = clip.durationMs - firstDuration
 
-        val secondDuration =
-            clip.durationMs - firstDuration
-
-        // Audio bagian kedua
         val secondClip = AudioClip(
             startTimeMs = playheadMs,
             durationMs = secondDuration,
             filePath = clip.filePath,
-            sourceStartMs =
-                clip.sourceStartMs + firstDuration
+            sourceStartMs = clip.sourceStartMs + firstDuration,
+            name = clip.name,
+            volume = clip.volume
         )
 
-        // Potong durasi audio pertama
         clip.durationMs = firstDuration
-
-        // Masukkan audio kedua
         clips.add(secondClip)
+        lanes.firstOrNull { lane -> lane.clips.contains(clip) }
+            ?.clips?.add(secondClip)
 
-        return true
+        return secondClip
     }
 
-
-    // =================================
-    // TRIM AWAL AUDIO
-    // =================================
-
-    fun trimStart(
-        clipId: String,
-        newStartMs: Long
-    ): Boolean {
-
-        val clip = clips.find {
-            it.id == clipId
-        } ?: return false
-
-        if (newStartMs <= clip.startTimeMs) return false
-        if (newStartMs >= clip.endTimeMs) return false
-
-        val difference =
-            newStartMs - clip.startTimeMs
-
+    fun trimStart(clipId: String, newStartMs: Long): Boolean {
+        val clip = clips.find { it.id == clipId } ?: return false
+        if (newStartMs <= clip.startTimeMs || newStartMs >= clip.endTimeMs) return false
+        val difference = newStartMs - clip.startTimeMs
         clip.startTimeMs = newStartMs
-
         clip.durationMs -= difference
-
         clip.sourceStartMs += difference
-
         return true
     }
 
-
-    // =================================
-    // TRIM AKHIR AUDIO
-    // =================================
-
-    fun trimEnd(
-        clipId: String,
-        newEndMs: Long
-    ): Boolean {
-
-        val clip = clips.find {
-            it.id == clipId
-        } ?: return false
-
-        if (newEndMs <= clip.startTimeMs) return false
-        if (newEndMs >= clip.endTimeMs) return false
-
-        clip.durationMs =
-            newEndMs - clip.startTimeMs
-
+    fun trimEnd(clipId: String, newEndMs: Long): Boolean {
+        val clip = clips.find { it.id == clipId } ?: return false
+        if (newEndMs <= clip.startTimeMs || newEndMs >= clip.endTimeMs) return false
+        clip.durationMs = newEndMs - clip.startTimeMs
         return true
     }
 }
