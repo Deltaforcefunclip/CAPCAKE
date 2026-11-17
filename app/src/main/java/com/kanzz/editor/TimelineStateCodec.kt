@@ -98,6 +98,7 @@ object TimelineStateCodec {
                 put("sourceStartMs", clip.sourceStartMs)
                 put("name", clip.name)
                 put("volume", clip.volume.toDouble())
+                put("speed", clip.speed.toDouble())
             })
         }
         root.put("clips", clips)
@@ -118,7 +119,8 @@ object TimelineStateCodec {
                     filePath = item.getString("filePath"),
                     sourceStartMs = item.optLong("sourceStartMs"),
                     name = item.optString("name", "Audio"),
-                    volume = item.optDouble("volume", 1.0).toFloat()
+                    volume = item.optDouble("volume", 1.0).toFloat(),
+                    speed = item.optDouble("speed", 1.0).toFloat()
                 )
                 val laneIndex = item.optInt("laneIndex", -1)
                 if (laneIndex >= 0) {
