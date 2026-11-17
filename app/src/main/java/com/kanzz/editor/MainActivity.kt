@@ -28,6 +28,8 @@ import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
+import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.ProgressHolder
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -1570,81 +1572,116 @@ class MainActivity : AppCompatActivity() {
     // =====================================
 
     private fun exportVideo() {
-
-        val uri = videoUri
-
-        if (uri == null) {
-            showMessage("Pilih video terlebih dahulu.")
+        if (exportTransformer != null) {
+            showMessage("Ekspor sedang berjalan.")
+            return
+        }
+        if (videoClipManager.clips.isEmpty()) {
+            showMessage("Tidak ada klip video untuk diekspor.")
             return
         }
 
-        if (player.duration <= 0) {
-            showMessage("Video belum siap.")
+        val editedItems = try {
+            videoClipManager.clips.map { clip ->
+                val mediaItem = MediaItem.Builder()
+                    .setUri(Uri.parse(clip.sourceUri))
+                    .setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                            .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(1L))
+                            .build()
+                    )
+                    .build()
+                EditedMediaItem.Builder(mediaItem)
+                    .setRemoveAudio(muteAudio)
+                    .build()
+            }
+        } catch (error: Exception) {
+            showMessage("Tidak dapat menyiapkan klip ekspor: ${error.message}")
             return
         }
 
-        val mediaItem = MediaItem.fromUri(uri)
+        val output = File(cacheDir, "CAPCAKE_${System.currentTimeMillis()}.mp4")
+        val progressContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(22), dp(18), dp(22), dp(10))
+        }
+        exportProgressText = TextView(this).apply {
+            text = "Menyiapkan ekspor…"
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            textSize = 14f
+        }
+        exportProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+        }
+        progressContent.addView(exportProgressText, LinearLayout.LayoutParams(-1, dp(38)))
+        progressContent.addView(exportProgressBar, LinearLayout.LayoutParams(-1, dp(18)))
+        exportDialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Export CAPCAKE")
+            .setView(progressContent)
+            .setCancelable(false)
+            .setNegativeButton("Batal") { _, _ ->
+                exportTransformer?.cancel()
+                exportTransformer = null
+                handler.removeCallbacks(exportProgressRunnable)
+                output.delete()
+            }
+            .create()
+        exportDialog?.show()
 
-        val edited = EditedMediaItem.Builder(mediaItem)
-            .setRemoveAudio(muteAudio)
-            .build()
-
-        val output = File(
-            cacheDir,
-            "CAPCAKE_${System.currentTimeMillis()}.mp4"
-        )
-
-        val transformer = Transformer.Builder(this)
-
-            .addListener(object : Transformer.Listener {
-
-                override fun onCompleted(
-                    composition: Composition,
-                    exportResult: ExportResult
-                ) {
-
-                    try {
-
-                        saveVideo(output)
-
-                        runOnUiThread {
-
-                            Toast.makeText(
-                                this@MainActivity,
-                                "Video berhasil disimpan!",
-                                Toast.LENGTH_LONG
-                            ).show()
-                        }
-
-                        output.delete()
-
-                    } catch (_: Exception) {
-
-                        runOnUiThread {
-                            showMessage("Gagal menyimpan video.")
-                        }
-                    }
-                }
-
-                override fun onError(
-                    composition: Composition,
-                    exportResult: ExportResult,
-                    exportException: ExportException
-                ) {
-
-                    runOnUiThread {
-                        showMessage(
-                            exportException.message ?: "Kesalahan ekspor"
-                        )
-                    }
-
+        val listener = object : Transformer.Listener {
+            override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                exportTransformer = null
+                handler.removeCallbacks(exportProgressRunnable)
+                exportProgressBar?.progress = 100
+                exportProgressText?.text = "Menyimpan video…"
+                try {
+                    saveVideo(output)
+                    Toast.makeText(this@MainActivity, "Video berhasil disimpan di Movies/CAPCAKE", Toast.LENGTH_LONG).show()
+                } catch (error: Exception) {
+                    showMessage("Gagal menyimpan video: ${error.message}")
+                } finally {
                     output.delete()
+                    exportDialog?.dismiss()
+                    exportDialog = null
+                    exportProgressBar = null
+                    exportProgressText = null
                 }
-            })
+            }
 
-            .build()
+            override fun onError(
+                composition: Composition,
+                exportResult: ExportResult,
+                exportException: ExportException
+            ) {
+                exportTransformer = null
+                handler.removeCallbacks(exportProgressRunnable)
+                output.delete()
+                exportDialog?.dismiss()
+                exportDialog = null
+                exportProgressBar = null
+                exportProgressText = null
+                showMessage("Ekspor gagal: ${exportException.message ?: "Kesalahan tidak diketahui"}")
+            }
+        }
 
-        transformer.start(edited, output.absolutePath)
+        try {
+            val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(editedItems)
+            val composition = Composition.Builder(sequence).build()
+            val transformer = Transformer.Builder(this).addListener(listener).build()
+            exportTransformer = transformer
+            transformer.start(composition, output.absolutePath)
+            handler.post(exportProgressRunnable)
+        } catch (error: Exception) {
+            exportTransformer = null
+            handler.removeCallbacks(exportProgressRunnable)
+            output.delete()
+            exportDialog?.dismiss()
+            exportDialog = null
+            showMessage("Tidak dapat memulai ekspor: ${error.message}")
+        }
     }
 
     private fun saveVideo(file: File) {
