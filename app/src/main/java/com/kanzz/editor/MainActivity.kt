@@ -1347,6 +1347,22 @@ class MainActivity : AppCompatActivity() {
                 },
                 onClipMoved = {
                     syncAudioPlayback()
+                },
+                onClipDropped = { clip, rawY ->
+                    val targetEntry = audioTrackViews.entries.firstOrNull { (laneId, view) ->
+                        val location = IntArray(2)
+                        view.getLocationOnScreen(location)
+                        rawY >= location[1] && rawY <= location[1] + view.height
+                    }
+                    if (targetEntry != null) {
+                        val moved = audioClipManager.moveClipToLane(clip.id, targetEntry.key)
+                        if (!moved) {
+                            Toast.makeText(this, "Layer tujuan masih ditempati audio lain.", Toast.LENGTH_SHORT).show()
+                        } else {
+                            saveCurrentProject()
+                            refreshAudioTracks()
+                        }
+                    }
                 }
             )
 
@@ -1356,6 +1372,12 @@ class MainActivity : AppCompatActivity() {
                 trackView,
                 LinearLayout.LayoutParams(-1, dp(32))
             )
+        }
+        // Muat pola amplitudo audio di background agar UI tidak tersendat.
+        audioClipManager.clips.forEach { clip ->
+            AudioWaveformDecoder.request(this, clip) { values ->
+                audioTrackViews.values.forEach { it.setWaveform(clip.id, values) }
+            }
         }
         audioTracksScroll.visibility =
             if (audioClipManager.lanes.isEmpty()) View.GONE else View.VISIBLE
@@ -1644,6 +1666,7 @@ class MainActivity : AppCompatActivity() {
         refreshAudioTracks()
         if (::timeline.isInitialized) {
             timeline.selectClip(selectedVideoClipId)
+            // setDuration mempertahankan tingkat zoom yang sedang dipakai.
             timeline.setDuration(videoClipManager.durationMs, timelineController.positionMs)
         }
         refreshEditedPreview(timelineController.positionMs.coerceAtMost(videoClipManager.durationMs))
@@ -2090,12 +2113,9 @@ class TimelineView(
             duration.coerceAtLeast(0L)
         )
 
-        initialized = false
-
         if (width > 0 && duration > 0) {
-
-            initializeScale()
-
+            // Jangan reset zoom ketika undo/redo atau durasi klip berubah.
+            if (!initialized) initializeScale()
             controller.centerPlayhead()
         }
 
@@ -2107,11 +2127,8 @@ class TimelineView(
 
         if (width <= 0 || duration <= 0) return
 
-        val visibleDuration =
-            min(duration, 120000L)
-
-        pixelsPerMs =
-            width.toFloat() / visibleDuration.toFloat()
+        // Default: 15 detik memenuhi lebar layar.
+        pixelsPerMs = width.toFloat() / 15_000f
 
         initialized = true
     }
