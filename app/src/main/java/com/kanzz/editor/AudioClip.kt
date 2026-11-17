@@ -37,6 +37,22 @@ class AudioClipManager {
         return lane
     }
 
+    fun moveClipToLane(clipId: String, targetLaneId: String): Boolean {
+        val clip = clips.firstOrNull { it.id == clipId } ?: return false
+        val target = lanes.firstOrNull { it.id == targetLaneId } ?: return false
+        if (target.clips.any { other ->
+                other.id != clip.id &&
+                    clip.startTimeMs < other.endTimeMs &&
+                    clip.endTimeMs > other.startTimeMs
+            }) return false
+        val source = lanes.firstOrNull { lane -> lane.clips.any { it.id == clipId } }
+        if (source?.id == target.id) return true
+        source?.clips?.removeAll { it.id == clipId }
+        if (source != null && source.clips.isEmpty()) lanes.remove(source)
+        if (target.clips.none { it.id == clipId }) target.clips.add(clip)
+        return true
+    }
+
     fun removeClip(clipId: String): Boolean {
         val clip = clips.firstOrNull { it.id == clipId } ?: return false
         clips.remove(clip)
