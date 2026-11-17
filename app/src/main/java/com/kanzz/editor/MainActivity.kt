@@ -60,6 +60,25 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioTracksContainer: LinearLayout
     private val audioTrackViews = mutableMapOf<String, AudioTrackView>()
     private val audioPlayers = mutableMapOf<String, ExoPlayer>()
+    private var exportTransformer: Transformer? = null
+    private var exportDialog: androidx.appcompat.app.AlertDialog? = null
+    private var exportProgressBar: ProgressBar? = null
+    private var exportProgressText: TextView? = null
+    private val exportProgressHolder = ProgressHolder()
+    private val exportProgressRunnable = object : Runnable {
+        override fun run() {
+            val activeTransformer = exportTransformer ?: return
+            val state = activeTransformer.getProgress(exportProgressHolder)
+            if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
+                exportProgressBar?.progress = exportProgressHolder.progress
+                exportProgressText?.text = "Mengekspor ${exportProgressHolder.progress}%"
+            }
+            if (state != Transformer.PROGRESS_STATE_NOT_STARTED &&
+                state != Transformer.PROGRESS_STATE_UNAVAILABLE) {
+                handler.postDelayed(this, 350L)
+            }
+        }
+    }
 
     private lateinit var timeLabel: TextView
     private lateinit var toolsContainer: LinearLayout
@@ -1760,7 +1779,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         try {
-            val sequence = EditedMediaItemSequence.withAudioAndVideoFrom(editedItems)
+            val sequence = EditedMediaItemSequence.Builder(editedItems).build()
             val composition = Composition.Builder(listOf(sequence)).build()
             val transformer = Transformer.Builder(this).addListener(listener).build()
             exportTransformer = transformer
