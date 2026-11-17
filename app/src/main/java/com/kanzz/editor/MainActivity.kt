@@ -751,15 +751,13 @@ class MainActivity : AppCompatActivity() {
 
         timelineController = SharedTimelineController()
 
-    // AUDIO TRACK
+   // AUDIO TRACK
 
-val audioTrack = AudioTrackView(
+audioTrack = AudioTrackView(
     this,
     timelineController,
     audioClipManager.clips
-)
-
-audioTrack.setOnClickListener {
+) {
     openAudioPicker()
 }
 
