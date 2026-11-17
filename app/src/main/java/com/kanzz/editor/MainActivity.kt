@@ -2527,10 +2527,15 @@ class TimelineView(
                     if (transition != null) {
                         onTransitionClick(transition)
                     } else {
-                        val tappedTime = controller.xToTime(event.x)
-                        val tappedClip = videoClips.clips.firstOrNull { clip ->
-                            tappedTime >= clip.timelineStartMs && tappedTime < clip.timelineEndMs
-                        }
+                        val trackTop = 27f * density
+                        val trackBottom = 92f * density
+                        val tappedClip = if (event.y in trackTop..trackBottom) {
+                            val tappedTime = controller.xToTime(event.x)
+                            videoClips.clips.firstOrNull { clip ->
+                                tappedTime >= clip.timelineStartMs && tappedTime < clip.timelineEndMs
+                            }
+                        } else null
+                        // Ketukan di luar area klip video membatalkan pilihan klip.
                         onTap(tappedClip)
                     }
                 }
