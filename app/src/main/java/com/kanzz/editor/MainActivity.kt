@@ -816,6 +816,13 @@ class MainActivity : AppCompatActivity() {
                     videoSelected = !videoSelected
                 }
 
+                if (videoSelected) {
+                    selectedVideoClipId = videoClipManager.clips.firstOrNull { clip ->
+                        timelineController.positionMs >= clip.timelineStartMs &&
+                            timelineController.positionMs < clip.timelineEndMs
+                    }?.id ?: videoClipManager.clips.lastOrNull()?.id
+                }
+
                 timeline.updateSelection(videoSelected)
                 updateToolMenu()
             },
