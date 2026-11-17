@@ -1405,9 +1405,7 @@ class MainActivity : AppCompatActivity() {
         if (kotlin.math.abs(player.playbackParameters.speed - speed) > 0.01f) {
             player.playbackParameters = PlaybackParameters(speed)
         }
-        if (::timeline.isInitialized) {
-            timeline.selectClip(clip.id)
-        }
+        // Jangan menimpa pilihan pengguna dengan klip yang sedang berada di playhead.
     }
 
     private fun showVideoClipVolume(clip: VideoClip) {
