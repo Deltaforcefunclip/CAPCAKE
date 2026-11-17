@@ -66,6 +66,8 @@ class MainActivity : AppCompatActivity() {
 
     // AUDIO CLIPS
     private val audioClipManager = AudioClipManager()
+    private val videoClipManager = VideoClipManager()
+    private var selectedVideoClipId: String? = null
 
     private var currentProject: VideoProject? = null
     private var videoUri: Uri? = null
@@ -125,6 +127,9 @@ class MainActivity : AppCompatActivity() {
 
                     // Project baru dimulai tanpa audio clip lama.
                     audioClipManager.clear()
+                    videoClipManager.clips.clear()
+                    videoClipManager.transitions.clear()
+                    selectedVideoClipId = null
                     selectedAudioClipId = null
                     audioPlayers.values.forEach { it.release() }
                     audioPlayers.clear()
@@ -461,6 +466,9 @@ class MainActivity : AppCompatActivity() {
 
         // Audio clip belum disimpan ke data project.
         audioClipManager.clear()
+        videoClipManager.clips.clear()
+        videoClipManager.transitions.clear()
+        selectedVideoClipId = null
         selectedAudioClipId = null
         audioPlayers.values.forEach { it.release() }
         audioPlayers.clear()
@@ -791,6 +799,8 @@ class MainActivity : AppCompatActivity() {
         timeline = TimelineView(
             this,
             timelineController,
+            videoClipManager,
+            onTransitionClick = { transition -> showTransitionPicker(transition) },
             onChange = { position ->
 
                 player.seekTo(position)
@@ -912,10 +922,13 @@ class MainActivity : AppCompatActivity() {
                         duration
                     )
 
+                    videoClipManager.setSource(uri.toString(), duration)
+                    selectedVideoClipId = videoClipManager.clips.firstOrNull()?.id
                     timeline.setDuration(
                         duration,
                         startPosition
                     )
+                    timeline.invalidate()
 
                     timeline.loadThumbnails(uri, duration)
 
@@ -1044,18 +1057,49 @@ class MainActivity : AppCompatActivity() {
 
                 when (pair.second) {
 
-                    "Audio" -> {
-                        openAudioPicker()
+                    "Potong" -> {
+                        val clip = videoClipManager.find(selectedVideoClipId)
+                        val second = videoClipManager.split(clip?.id, timelineController.positionMs)
+                        if (second != null) {
+                            selectedVideoClipId = second.id
+                            timeline.invalidate()
+                            showMessage("Klip berhasil dipotong.")
+                        } else {
+                            showMessage("Geser playhead ke bagian dalam klip video yang dipilih.")
+                        }
                     }
 
                     "Hapus" -> {
-                        selectedAudioClipId?.let { id ->
+                        if (selectedAudioClipId != null) {
+                            val id = selectedAudioClipId
                             audioClipManager.removeClip(id)
                             audioPlayers.remove(id)?.release()
+                            selectedAudioClipId = null
+                            refreshAudioTracks()
+                        } else if (videoSelected) {
+                            if (videoClipManager.remove(selectedVideoClipId)) {
+                                selectedVideoClipId = videoClipManager.clips
+                                    .getOrNull((videoClipManager.clips.size - 1).coerceAtLeast(0))?.id
+                                timeline.invalidate()
+                                timelineController.setDuration(videoClipManager.durationMs)
+                                player.seekTo(0L)
+                                showMessage("Klip dihapus. Klip setelahnya otomatis merapat.")
+                            } else showMessage("Pilih klip video yang ingin dihapus.")
                         }
-                        selectedAudioClipId = null
-                        refreshAudioTracks()
                         updateToolMenu()
+                    }
+
+                    "Duplikat" -> {
+                        val copy = videoClipManager.duplicate(selectedVideoClipId)
+                        if (copy != null) {
+                            selectedVideoClipId = copy.id
+                            timeline.invalidate()
+                            showMessage("Klip berhasil diduplikat.")
+                        } else showMessage("Pilih klip video terlebih dahulu.")
+                    }
+
+                    "Audio" -> {
+                        openAudioPicker()
                     }
 
                     "Pisah" -> {
@@ -1129,6 +1173,21 @@ class MainActivity : AppCompatActivity() {
             toggle,
             LinearLayout.LayoutParams(-1, dp(22))
         )
+    }
+
+    private fun showTransitionPicker(transition: VideoTransition) {
+        val options = arrayOf("Tanpa transisi", "Fade", "Dissolve", "Wipe ke kiri", "Wipe ke kanan")
+        val types = VideoTransition.Type.values()
+        val current = types.indexOf(transition.type).coerceAtLeast(0)
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Pilih Transisi")
+            .setSingleChoiceItems(options, current) { dialog, which ->
+                transition.type = types[which]
+                timeline.invalidate()
+                dialog.dismiss()
+            }
+            .setNegativeButton("Batal", null)
+            .show()
     }
 
     private fun refreshAudioTracks() {
@@ -1512,6 +1571,8 @@ class MainActivity : AppCompatActivity() {
 class TimelineView(
     context: android.content.Context,
     private val controller: SharedTimelineController,
+    private val videoClips: VideoClipManager,
+    private val onTransitionClick: (VideoTransition) -> Unit,
     private val onChange: (Long) -> Unit,
     private val onTap: () -> Unit,
     private val onViewportChanged: () -> Unit
@@ -1553,6 +1614,7 @@ class TimelineView(
     private var isSelected = false
 
     private var frames = mutableListOf<Bitmap>()
+    private val transitionHitBoxes = mutableListOf<Pair<RectF, VideoTransition>>()
 
     private val green = Color.rgb(24, 213, 138)
 
@@ -1943,6 +2005,40 @@ class TimelineView(
 
         canvas.restoreToCount(clip)
 
+        // BATAS KLIP DAN TOMBOL TRANSISI
+        transitionHitBoxes.clear()
+        videoClips.clips.forEachIndexed { index, videoClip ->
+            val clipLeft = timeToX(videoClip.timelineStartMs)
+            val clipRight = timeToX(videoClip.timelineEndMs)
+            paint.color = if (index == 0) Color.WHITE else Color.BLACK
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = 1.5f * density
+            canvas.drawRect(
+                RectF(clipLeft, trackTop, clipRight, trackBottom),
+                paint
+            )
+            paint.style = Paint.Style.FILL
+            if (index < videoClips.clips.lastIndex) {
+                val next = videoClips.clips[index + 1]
+                val transition = videoClips.transitionBetween(videoClip.id, next.id)
+                    ?: VideoTransition(leftClipId = videoClip.id, rightClipId = next.id)
+                        .also { videoClips.transitions.add(it) }
+                val x = clipRight
+                val box = RectF(
+                    x - 9f * density,
+                    (trackTop + trackBottom) / 2f - 9f * density,
+                    x + 9f * density,
+                    (trackTop + trackBottom) / 2f + 9f * density
+                )
+                paint.color = Color.WHITE
+                canvas.drawRoundRect(box, 3f * density, 3f * density, paint)
+                paint.color = Color.DKGRAY
+                paint.textSize = 13f * density
+                canvas.drawText("+", x - 4f * density, box.centerY() + 4.5f * density, paint)
+                transitionHitBoxes.add(box to transition)
+            }
+        }
+
         // TIMELINE BORDER
 
         paint.color = if (isSelected) {
@@ -2063,12 +2159,16 @@ class TimelineView(
             MotionEvent.ACTION_UP -> {
 
                 if (!moved && !scaleDetector.isInProgress) {
-
-                    position = centerTime()
-
-                    onChange(position)
-
-                    onTap()
+                    val transition = transitionHitBoxes.firstOrNull { (rect, _) ->
+                        rect.contains(event.x, event.y)
+                    }?.second
+                    if (transition != null) {
+                        onTransitionClick(transition)
+                    } else {
+                        position = centerTime()
+                        onChange(position)
+                        onTap()
+                    }
                 }
 
                 parent?.requestDisallowInterceptTouchEvent(false)
