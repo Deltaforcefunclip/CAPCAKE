@@ -84,9 +84,11 @@ class SharedTimelineController {
         val focusTime =
             (offsetPx + focusX) / pixelsPerMs
 
+        val minScale = if (viewportWidthPx > 0f) viewportWidthPx / 30_000f else 0.00005f
+        val maxScale = if (viewportWidthPx > 0f) viewportWidthPx / 2_000f else 0.05f
         pixelsPerMs =
             (pixelsPerMs * scaleFactor)
-                .coerceIn(0.00005f, 0.05f)
+                .coerceIn(minScale, maxScale)
 
         offsetPx =
             focusTime * pixelsPerMs - focusX
