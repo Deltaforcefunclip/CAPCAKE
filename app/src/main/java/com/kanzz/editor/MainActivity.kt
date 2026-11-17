@@ -832,9 +832,11 @@ class MainActivity : AppCompatActivity() {
             videoClipManager,
             onTransitionClick = { transition -> showTransitionPicker(transition) },
             onChange = { position ->
-
+                // Menggeser ruler selalu menghentikan playback dan langsung memperbarui preview.
+                if (player.isPlaying) player.pause()
                 seekTimelinePosition(position)
                 updateTime()
+                updatePlayButton()
             },
             onTap = { tappedClip ->
                 selectedAudioClipId = null
@@ -1084,6 +1086,8 @@ class MainActivity : AppCompatActivity() {
 
             listOf(
                 "♫" to "Volume",
+                "◷" to "Kecepatan",
+                "▤" to "Duplikat",
                 "✂" to "Pisah",
                 "⌫" to "Hapus"
             )
@@ -1205,6 +1209,22 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Duplikat" -> {
+                        if (selectedAudioClipId != null) {
+                            val original = audioClipManager.clips.firstOrNull { it.id == selectedAudioClipId }
+                            if (original != null) {
+                                pushUndoSnapshot()
+                                val copy = original.copy(
+                                    id = java.util.UUID.randomUUID().toString(),
+                                    startTimeMs = original.endTimeMs
+                                )
+                                audioClipManager.addClip(copy)
+                                selectedAudioClipId = copy.id
+                                refreshAudioTracks()
+                                saveCurrentProject()
+                                updateToolMenu()
+                            }
+                            return@setOnClickListener
+                        }
                         pushUndoSnapshot()
                         val copy = videoClipManager.duplicate(selectedVideoClipId)
                         if (copy != null) {
@@ -1246,8 +1266,12 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Kecepatan" -> {
-                        val clip = videoClipManager.find(selectedVideoClipId)
-                        if (clip != null) showVideoClipSpeed(clip)
+                        if (selectedAudioClipId != null) {
+                            audioClipManager.clips.firstOrNull { it.id == selectedAudioClipId }?.let { showAudioClipSpeed(it) }
+                        } else {
+                            val clip = videoClipManager.find(selectedVideoClipId)
+                            if (clip != null) showVideoClipSpeed(clip)
+                        }
                     }
 
                     "Opasitas" -> {
@@ -1394,8 +1418,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showAudioClipVolume(clip: AudioClip) {
         val seek = SeekBar(this).apply {
-            max = 100
-            progress = (clip.volume * 100f).toInt().coerceIn(0, 100)
+            max = 300
+            progress = (clip.volume * 100f).toInt().coerceIn(0, 300)
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -1410,6 +1434,41 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Simpan") { _, _ ->
                 clip.volume = seek.progress / 100f
                 audioPlayers[clip.id]?.volume = clip.volume
+                saveCurrentProject()
+            }
+            .show()
+    }
+
+    private fun showAudioClipSpeed(clip: AudioClip) {
+        val seek = SeekBar(this).apply {
+            max = 300
+            progress = ((clip.speed - 0.25f) * 100f).toInt().coerceIn(0, max)
+        }
+        val label = TextView(this).apply {
+            text = String.format(Locale.US, "%.2fx", clip.speed)
+            setTextColor(Color.WHITE); gravity = Gravity.CENTER; textSize = 18f
+        }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                label.text = String.format(Locale.US, "%.2fx", 0.25f + value / 100f)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(4))
+            addView(label, LinearLayout.LayoutParams(-1, dp(42)))
+            addView(seek, LinearLayout.LayoutParams(-1, dp(48)))
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Kecepatan audio")
+            .setView(content)
+            .setNegativeButton("Batal", null)
+            .setPositiveButton("Terapkan") { _, _ ->
+                pushUndoSnapshot()
+                clip.speed = (0.25f + seek.progress / 100f).coerceIn(0.25f, 3.25f)
+                audioPlayers[clip.id]?.playbackParameters = PlaybackParameters(clip.speed)
                 saveCurrentProject()
             }
             .show()
@@ -1587,9 +1646,10 @@ class MainActivity : AppCompatActivity() {
             }
 
             instance.volume = clip.volume
+            instance.playbackParameters = PlaybackParameters(clip.speed.coerceIn(0.25f, 3.25f))
 
             if (instance.playbackState == Player.STATE_READY) {
-                val desiredPosition = (timelinePosition - clip.startTimeMs).coerceAtLeast(0L)
+                val desiredPosition = ((timelinePosition - clip.startTimeMs).coerceAtLeast(0L) * clip.speed).toLong()
                 if (!instance.isPlaying) {
                     instance.seekTo(desiredPosition)
                     instance.playWhenReady = true
@@ -2380,35 +2440,19 @@ class TimelineView(
 
         if (frames.isNotEmpty()) {
 
-            val totalWidth =
-                duration * pixelsPerMs
-
-            val frameWidth =
-                totalWidth / frames.size
-
-            frames.forEachIndexed { index, bitmap ->
-
-                val frameLeft =
-                    timeToX(duration * index / frames.size)
-
-                val frameRight =
-                    frameLeft + frameWidth
-
-                val destination = RectF(
-                    frameLeft,
-                    trackTop,
-                    frameRight,
-                    trackBottom
-                )
-
+            // Thumbnail memakai ukuran tetap; zoom hanya menambah/mengurangi jumlah pengulangan frame.
+            val tileWidth = dp(70).toFloat().coerceAtLeast(1f)
+            val visibleLeft = max(0f, timeToX(0L))
+            val visibleRight = min(width.toFloat(), timeToX(duration))
+            var tileLeft = visibleLeft - ((visibleLeft % tileWidth))
+            var tileIndex = 0
+            while (tileLeft < visibleRight) {
+                val bitmap = frames[tileIndex % frames.size]
+                val destination = RectF(tileLeft, trackTop, tileLeft + tileWidth, trackBottom)
                 paint.alpha = 255
-
-                canvas.drawBitmap(
-                    bitmap,
-                    null,
-                    destination,
-                    paint
-                )
+                canvas.drawBitmap(bitmap, null, destination, paint)
+                tileLeft += tileWidth
+                tileIndex++
             }
 
         } else {
