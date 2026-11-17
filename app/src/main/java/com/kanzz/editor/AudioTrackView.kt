@@ -147,7 +147,10 @@ class AudioTrackView(
                 val clip = touchedClip ?: return true
                 val dxFromDown = abs(event.x - downX)
                 val dyFromDown = abs(event.y - downY)
-                if (dxFromDown > 5f * density && dxFromDown > dyFromDown) {
+                // Gerakan diagonal memungkinkan clip dipindah ke layer di atas/bawah.
+                if (dxFromDown > 5f * density &&
+                    (dxFromDown > dyFromDown * 0.35f || isDragging)
+                ) {
                     isDragging = true
                     parent?.requestDisallowInterceptTouchEvent(true)
                 }
