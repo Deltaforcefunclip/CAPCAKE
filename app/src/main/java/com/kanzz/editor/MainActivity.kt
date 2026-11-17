@@ -69,6 +69,7 @@ class MainActivity : AppCompatActivity() {
 
     private var muteAudio = false
     private var videoSelected = false
+    private var selectedAudioClipId: String? = null
     private var isCreatingProject = false
 
     private val handler = Handler(Looper.getMainLooper())
@@ -120,6 +121,7 @@ class MainActivity : AppCompatActivity() {
 
                     // Project baru dimulai tanpa audio clip lama.
                     audioClipManager.clips.clear()
+                    selectedAudioClipId = null
 
                     val project = VideoProject(
                         id = System.currentTimeMillis().toString(),
@@ -453,6 +455,7 @@ class MainActivity : AppCompatActivity() {
 
         // Audio clip belum disimpan ke data project.
         audioClipManager.clips.clear()
+        selectedAudioClipId = null
 
         try {
 
@@ -540,7 +543,10 @@ class MainActivity : AppCompatActivity() {
         )
 
         audioClipManager.clips.add(clip)
+        selectedAudioClipId = clip.id
 
+        audioTrack.visibility = View.VISIBLE
+        audioTrack.selectClip(clip.id)
         audioTrack.invalidate()
 
         Toast.makeText(
@@ -757,8 +763,15 @@ audioTrack = AudioTrackView(
     this,
     timelineController,
     audioClipManager.clips
-) {
-    openAudioPicker()
+) { selectedClip ->
+    selectedAudioClipId = selectedClip?.id
+    updateToolMenu()
+}
+
+audioTrack.visibility = if (audioClipManager.clips.isEmpty()) {
+    View.GONE
+} else {
+    View.VISIBLE
 }
 
 // VIDEO TIMELINE
