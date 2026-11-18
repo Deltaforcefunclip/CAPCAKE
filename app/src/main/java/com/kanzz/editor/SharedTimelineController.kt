@@ -78,22 +78,26 @@ class SharedTimelineController {
         scaleFactor: Float,
         focusX: Float
     ) {
-
         if (pixelsPerMs <= 0f) return
+        val focusTime = (offsetPx + focusX) / pixelsPerMs
+        applyZoom(scaleFactor)
+        offsetPx = focusTime * pixelsPerMs - focusX
+        clampOffset()
+    }
 
-        val focusTime =
-            (offsetPx + focusX) / pixelsPerMs
+    // Zoom dengan waktu playhead sebagai jangkar tetap.
+    fun zoomAroundPlayhead(scaleFactor: Float) {
+        if (pixelsPerMs <= 0f || viewportWidthPx <= 0f) return
+        val playheadTime = positionMs.toDouble()
+        applyZoom(scaleFactor)
+        offsetPx = (playheadTime * pixelsPerMs.toDouble() - viewportWidthPx / 2.0).toFloat()
+        clampOffset()
+    }
 
+    private fun applyZoom(scaleFactor: Float) {
         val minScale = if (viewportWidthPx > 0f) viewportWidthPx / 30_000f else 0.00005f
         val maxScale = if (viewportWidthPx > 0f) viewportWidthPx / 2_000f else 0.05f
-        pixelsPerMs =
-            (pixelsPerMs * scaleFactor)
-                .coerceIn(minScale, maxScale)
-
-        offsetPx =
-            focusTime * pixelsPerMs - focusX
-
-        clampOffset()
+        pixelsPerMs = (pixelsPerMs * scaleFactor).coerceIn(minScale, maxScale)
     }
 
 
