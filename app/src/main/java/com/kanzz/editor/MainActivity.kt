@@ -123,11 +123,16 @@ class MainActivity : AppCompatActivity() {
         if (isTimelineScrubbing) {
             handler.removeCallbacks(scrubSeekRunnable)
             scrubSeekScheduled = false
+
+            // Saat jari dilepas, lakukan satu seek final yang presisi.
+            player.setSeekParameters(SeekParameters.EXACT)
             seekTimelinePosition(pendingScrubPositionMs)
-            isTimelineScrubbing = false
+
+            // Pertahankan posisi visual target sampai player sempat menyelesaikan seek.
             handler.postDelayed({
-                player.setSeekParameters(SeekParameters.EXACT)
-            }, 120L)
+                isTimelineScrubbing = false
+                updateTime()
+            }, 150L)
         }
     }
 
@@ -872,9 +877,11 @@ class MainActivity : AppCompatActivity() {
                     updatePlayButton()
                 }
                 handler.removeCallbacks(scrubFinishRunnable)
+                // Maksimal 10 permintaan seek per detik selama jari bergerak.
+                // Posisi terbaru tetap disimpan; permintaan terjadwal memakai posisi terbaru itu.
                 if (!scrubSeekScheduled) {
                     scrubSeekScheduled = true
-                    handler.postDelayed(scrubSeekRunnable, 45L)
+                    handler.postDelayed(scrubSeekRunnable, 100L)
                 }
                 handler.postDelayed(scrubFinishRunnable, 140L)
                 updateTime()
@@ -1927,7 +1934,11 @@ class MainActivity : AppCompatActivity() {
 
         if (!::timeLabel.isInitialized) return
 
-        val position = currentTimelinePosition()
+        val position = if (isTimelineScrubbing) {
+            pendingScrubPositionMs.coerceIn(0L, videoClipManager.durationMs)
+        } else {
+            currentTimelinePosition()
+        }
         val duration = if (videoClipManager.clips.isNotEmpty()) {
             videoClipManager.durationMs
         } else {
