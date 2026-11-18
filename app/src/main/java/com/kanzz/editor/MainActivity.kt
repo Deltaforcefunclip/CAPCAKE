@@ -1156,7 +1156,7 @@ class MainActivity : AppCompatActivity() {
             typeface = android.graphics.Typeface.DEFAULT_BOLD
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(Color.WHITE)
-                cornerRadius = dp(3.6f).toFloat()
+                cornerRadius = dp(4).toFloat()
             }
             elevation = dp(8).toFloat()
             contentDescription = "Import video ke timeline"
