@@ -2585,9 +2585,70 @@ class MainActivity : AppCompatActivity() {
                                     )
                                 }
 
-                                // Zoom diterapkan SETELAH kanvas dibuat agar video membesar
-                                // di dalam kanvas tetap, tanpa mengubah rasio output.
-                                if (previewScale > 1.001f ||
+                                // Samakan skala ekspor dengan ukuran video yang terlihat di dalam
+                                // kotak rasio preview. PlayerView bisa jauh lebih lebar/tinggi
+                                // daripada kotak kanvas (contoh preview 16:9 untuk kanvas 3:4).
+                                if (selectedPreviewRatio.isNotBlank()) {
+                                    val ratioParts = selectedPreviewRatio.split(":")
+                                    val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
+                                    val frameW = playerView.width.coerceAtLeast(1).toFloat()
+                                    val frameH = playerView.height.coerceAtLeast(1).toFloat()
+                                    val boxW: Float
+                                    val boxH: Float
+                                    val frameAspect = frameW / frameH
+                                    if (outputAspect >= frameAspect) {
+                                        boxW = frameW
+                                        boxH = boxW / outputAspect
+                                    } else {
+                                        boxH = frameH
+                                        boxW = boxH * outputAspect
+                                    }
+
+                                    val videoSize = player.videoSize
+                                    val sourceAspect = if (videoSize.width > 0 && videoSize.height > 0) {
+                                        videoSize.width.toFloat() *
+                                            videoSize.pixelWidthHeightRatio /
+                                            videoSize.height.toFloat()
+                                    } else {
+                                        frameAspect
+                                    }
+
+                                    // Ukuran video hasil FIT pada preview dibandingkan dengan
+                                    // ukuran video hasil FIT pada kanvas ekspor.
+                                    val previewFitWidth = minOf(frameW, frameH * sourceAspect)
+                                    val previewFitHeight = previewFitWidth / sourceAspect
+                                    val exportFitWidthFraction =
+                                        minOf(1f, outputAspect / sourceAspect)
+                                    val exportFitHeightFraction =
+                                        exportFitWidthFraction * outputAspect / sourceAspect
+                                    val previewWidthFraction = previewFitWidth / boxW
+                                    val previewHeightFraction = previewFitHeight / boxH
+                                    val correctionX = previewWidthFraction /
+                                        exportFitWidthFraction.coerceAtLeast(0.0001f)
+                                    val correctionY = previewHeightFraction /
+                                        exportFitHeightFraction.coerceAtLeast(0.0001f)
+                                    val effectiveScale = (previewScale *
+                                        ((correctionX + correctionY) / 2f))
+                                        .coerceIn(0.05f, 20f)
+
+                                    if (effectiveScale > 1.001f ||
+                                        previewTranslateX != 0f || previewTranslateY != 0f
+                                    ) {
+                                        val half = (1f / effectiveScale).coerceIn(0.05f, 1f)
+                                        val centerX = (-2f * previewTranslateX / boxW / effectiveScale)
+                                            .coerceIn(-1f + half, 1f - half)
+                                        val centerY = (2f * previewTranslateY / boxH / effectiveScale)
+                                            .coerceIn(-1f + half, 1f - half)
+                                        add(
+                                            Crop(
+                                                (centerX - half).coerceIn(-1f, 1f),
+                                                (centerX + half).coerceIn(-1f, 1f),
+                                                (centerY - half).coerceIn(-1f, 1f),
+                                                (centerY + half).coerceIn(-1f, 1f)
+                                            )
+                                        )
+                                    }
+                                } else if (previewScale > 1.001f ||
                                     previewTranslateX != 0f || previewTranslateY != 0f
                                 ) {
                                     val half = (1f / previewScale).coerceIn(0.05f, 1f)
