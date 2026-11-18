@@ -22,9 +22,11 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.exoplayer.DefaultRenderersFactory
 import androidx.media3.ui.PlayerView
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
@@ -52,7 +54,7 @@ data class VideoProject(
     var muted: Boolean = false
 )
 
-@OptIn(UnstableApi::class)
+@OptIn(UnstableApi::class, ExperimentalApi::class)
 class MainActivity : AppCompatActivity() {
 
     private val bg = Color.rgb(16, 16, 16)
@@ -258,9 +260,11 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = bg
         window.navigationBarColor = bg
 
-        player = ExoPlayer.Builder(this).build().apply {
-            // Siapkan sebagian awal klip berikutnya sebelum klip aktif selesai.
-            // Ini mengurangi jeda saat ExoPlayer berpindah antar MediaItem hasil split.
+        val renderersFactory = DefaultRenderersFactory(this)
+            .experimentalSetEnableMediaCodecVideoRendererPrewarming(true)
+
+        player = ExoPlayer.Builder(this, renderersFactory).build().apply {
+            // Tetap preload awal item berikutnya; renderer prewarming menyiapkan decoder video.
             preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
         }
 
