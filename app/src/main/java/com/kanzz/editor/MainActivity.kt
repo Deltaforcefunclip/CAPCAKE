@@ -96,6 +96,15 @@ class MainActivity : AppCompatActivity() {
     // AUDIO CLIPS
     private val audioClipManager = AudioClipManager()
     private val videoClipManager = VideoClipManager()
+
+    // Satu PlaybackGroup dapat berisi beberapa potongan berurutan dari file sumber
+    // yang sama. Timeline tetap menyimpan klip terpisah; hanya playlist preview yang digabung.
+    private data class PlaybackGroup(
+        val clips: List<VideoClip>,
+        val sourceStartMs: Long,
+        val sourceEndMs: Long
+    )
+    private var playbackGroups: List<PlaybackGroup> = emptyList()
     private var selectedVideoClipId: String? = null
 
     private var currentProject: VideoProject? = null
@@ -966,8 +975,7 @@ class MainActivity : AppCompatActivity() {
         playerView.setOnClickListener {
             selectedAudioClipId = null
             clearAudioTrackSelection()
-            val currentIndex = player.currentMediaItemIndex
-            selectedVideoClipId = videoClipManager.clips.getOrNull(currentIndex)?.id
+            selectedVideoClipId = activeVideoClip()?.id
             videoSelected = selectedVideoClipId != null
             timeline.selectClip(selectedVideoClipId)
             timeline.updateSelection(false)
@@ -1061,31 +1069,76 @@ class MainActivity : AppCompatActivity() {
         player.prepare()
     }
 
+    /**
+     * Gabungkan potongan berurutan dari sumber yang sama menjadi satu MediaItem.
+     * Syarat properti sama penting agar speed/volume/opacity tidak berubah di tengah item.
+     */
     private fun buildEditedVideoItems(): List<MediaItem> {
-        return videoClipManager.clips.map { clip ->
+        val groups = mutableListOf<PlaybackGroup>()
+        for (clip in videoClipManager.clips) {
+            val previous = groups.lastOrNull()
+            val lastClip = previous?.clips?.lastOrNull()
+            val canMerge = previous != null && lastClip != null &&
+                lastClip.sourceUri == clip.sourceUri &&
+                lastClip.sourceEndMs == clip.sourceStartMs &&
+                abs(lastClip.speed - clip.speed) < 0.001f &&
+                abs(lastClip.volume - clip.volume) < 0.001f &&
+                abs(lastClip.opacity - clip.opacity) < 0.001f
+            if (canMerge) {
+                groups[groups.lastIndex] = previous!!.copy(
+                    clips = previous.clips + clip,
+                    sourceEndMs = clip.sourceEndMs
+                )
+            } else {
+                groups.add(PlaybackGroup(listOf(clip), clip.sourceStartMs, clip.sourceEndMs))
+            }
+        }
+        playbackGroups = groups
+        return groups.map { group ->
             MediaItem.Builder()
-                .setUri(Uri.parse(clip.sourceUri))
+                .setUri(Uri.parse(group.clips.first().sourceUri))
                 .setClippingConfiguration(
                     MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
-                        .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(1L))
+                        .setStartPositionMs(group.sourceStartMs.coerceAtLeast(0L))
+                        .setEndPositionMs(group.sourceEndMs.coerceAtLeast(group.sourceStartMs + 1L))
                         .build()
                 )
                 .build()
         }
     }
 
+    /** Klip timeline yang sedang berada di bawah posisi sumber player. */
+    private fun activeVideoClip(): VideoClip? {
+        val group = playbackGroups.getOrNull(player.currentMediaItemIndex) ?: return null
+        val sourcePosition = group.sourceStartMs + player.currentPosition.coerceAtLeast(0L)
+        return group.clips.firstOrNull {
+            sourcePosition < it.sourceEndMs
+        } ?: group.clips.lastOrNull()
+    }
+
+    /** Posisi lokal sumber untuk klip yang sedang aktif. */
+    private fun activeClipSourcePosition(clip: VideoClip): Long {
+        val group = playbackGroups.getOrNull(player.currentMediaItemIndex) ?: return clip.sourceStartMs
+        return (group.sourceStartMs + player.currentPosition.coerceAtLeast(0L))
+            .coerceIn(clip.sourceStartMs, clip.sourceEndMs)
+    }
+
     /** Posisi player dalam timeline hasil edit, bukan posisi file sumber. */
     private fun currentTimelinePosition(): Long {
         if (videoClipManager.clips.isEmpty()) return player.currentPosition.coerceAtLeast(0L)
-        val index = player.currentMediaItemIndex
-        if (index !in videoClipManager.clips.indices) return timelineController.positionMs
-        val before = videoClipManager.clips.take(index).sumOf { it.timelineDurationMs }
-        val clip = videoClipManager.clips[index]
-        val localTimelinePosition = (player.currentPosition.coerceAtLeast(0L) /
-            clip.speed.coerceIn(0.25f, 3f)).toLong()
-        return (before + localTimelinePosition)
-            .coerceIn(0L, videoClipManager.durationMs)
+        val group = playbackGroups.getOrNull(player.currentMediaItemIndex)
+            ?: return timelineController.positionMs
+        var sourcePosition = (group.sourceStartMs + player.currentPosition.coerceAtLeast(0L))
+            .coerceIn(group.sourceStartMs, group.sourceEndMs)
+        for (clip in group.clips) {
+            val before = clip.timelineStartMs
+            if (sourcePosition < clip.sourceEndMs || clip === group.clips.last()) {
+                val sourceOffset = (sourcePosition - clip.sourceStartMs).coerceIn(0L, clip.durationMs)
+                val localTimeline = (sourceOffset / clip.speed.coerceIn(0.25f, 3f)).toLong()
+                return (before + localTimeline).coerceIn(0L, videoClipManager.durationMs)
+            }
+        }
+        return timelineController.positionMs
     }
 
     /** Memetakan waktu timeline ke item dan offset sumber yang benar. */
@@ -1096,23 +1149,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         val target = positionMs.coerceIn(0L, videoClipManager.durationMs)
-        var accumulated = 0L
-        var targetIndex = videoClipManager.clips.lastIndex
-        var localPosition = videoClipManager.clips.last().durationMs
-
-        for (index in videoClipManager.clips.indices) {
-            val clip = videoClipManager.clips[index]
-            val end = accumulated + clip.timelineDurationMs
-            if (target < end || index == videoClipManager.clips.lastIndex) {
-                targetIndex = index
-                val localTimelineMs = (target - accumulated).coerceIn(0L, clip.timelineDurationMs)
-                localPosition = (localTimelineMs * clip.speed.coerceIn(0.25f, 3f))
-                    .toLong().coerceIn(0L, clip.durationMs)
-                break
-            }
-            accumulated = end
+        val clip = videoClipManager.clips.lastOrNull { target <= it.timelineEndMs }
+            ?: videoClipManager.clips.last()
+        val localTimelineMs = (target - clip.timelineStartMs)
+            .coerceIn(0L, clip.timelineDurationMs)
+        val sourcePosition = (clip.sourceStartMs +
+            (localTimelineMs * clip.speed.coerceIn(0.25f, 3f)).toLong())
+            .coerceIn(clip.sourceStartMs, clip.sourceEndMs)
+        val groupIndex = playbackGroups.indexOfFirst { group ->
+            group.clips.any { it.id == clip.id }
         }
-        player.seekTo(targetIndex, localPosition)
+        val group = playbackGroups.getOrNull(groupIndex) ?: return
+        player.seekTo(groupIndex, (sourcePosition - group.sourceStartMs).coerceAtLeast(0L))
     }
 
     /**
@@ -1145,9 +1193,15 @@ class MainActivity : AppCompatActivity() {
                     .coerceIn(clip.sourceStartMs, clip.sourceEndMs)
                 val originalIndex = originalClips.indexOfFirst { it.id == clip.id }
                 if (originalIndex >= 0) {
-                    player.pause()
-                    player.seekTo(originalIndex, sourcePosition)
-                    updateTime()
+                    val groupIndex = playbackGroups.indexOfFirst { group ->
+                        group.clips.any { it.id == clip.id }
+                    }
+                    val group = playbackGroups.getOrNull(groupIndex)
+                    if (group != null) {
+                        player.pause()
+                        player.seekTo(groupIndex, (sourcePosition - group.sourceStartMs).coerceAtLeast(0L))
+                        updateTime()
+                    }
                 }
                 return
             }
@@ -1597,8 +1651,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun syncVideoClipProperties() {
         if (!::player.isInitialized || videoClipManager.clips.isEmpty()) return
-        val index = player.currentMediaItemIndex
-        val clip = videoClipManager.clips.getOrNull(index) ?: return
+        val clip = activeVideoClip() ?: return
         player.volume = if (muteAudio) 0f else clip.volume.coerceIn(0f, 1f)
         if (::playerView.isInitialized) {
             playerView.alpha = clip.opacity.coerceIn(0f, 1f)
@@ -1622,7 +1675,7 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Batal", null)
             .setPositiveButton("Simpan") { _, _ ->
                 clip.volume = seek.progress / 100f
-                if (player.currentMediaItemIndex == videoClipManager.clips.indexOf(clip)) {
+                if (activeVideoClip()?.id == clip.id) {
                     player.volume = if (muteAudio) 0f else clip.volume
                 }
                 saveCurrentProject()
