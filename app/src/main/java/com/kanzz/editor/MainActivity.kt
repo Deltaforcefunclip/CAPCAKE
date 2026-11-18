@@ -714,6 +714,24 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Tutup", null)
             .create()
 
+        var previewPlayer: android.media.MediaPlayer? = null
+        var previewFile: File? = null
+        var previewButton: TextView? = null
+
+        fun stopPreview() {
+            try {
+                previewPlayer?.stop()
+            } catch (_: Exception) {
+            }
+            previewPlayer?.release()
+            previewPlayer = null
+            previewFile = null
+            previewButton?.text = "▶"
+            previewButton = null
+        }
+
+        dialog.setOnDismissListener { stopPreview() }
+
         fun refreshList() {
             list.removeAllViews()
             val files = audioLibraryDirectory(category).listFiles()
@@ -743,15 +761,51 @@ class MainActivity : AppCompatActivity() {
                     maxLines = 2
                     ellipsize = android.text.TextUtils.TruncateAt.END
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(8), dp(10), dp(4), dp(10))
+                    setPadding(dp(8), dp(4), dp(4), dp(4))
                     setOnClickListener {
                         importAudio(Uri.fromFile(file))
                         dialog.dismiss()
                     }
                 }
+                val playButton = TextView(this).apply {
+                    text = "▶"
+                    textSize = 16f
+                    setTextColor(green)
+                    gravity = Gravity.CENTER
+                    setOnClickListener {
+                        if (previewFile == file) {
+                            stopPreview()
+                        } else {
+                            stopPreview()
+                            try {
+                                val player = android.media.MediaPlayer()
+                                previewPlayer = player
+                                previewFile = file
+                                previewButton = this
+                                text = "■"
+                                player.setDataSource(file.absolutePath)
+                                player.setOnPreparedListener { mediaPlayer ->
+                                    if (previewPlayer === mediaPlayer) mediaPlayer.start()
+                                }
+                                player.setOnCompletionListener {
+                                    if (previewPlayer === it) stopPreview()
+                                }
+                                player.setOnErrorListener { _, _, _ ->
+                                    stopPreview()
+                                    showMessage("Audio tidak dapat diputar.")
+                                    true
+                                }
+                                player.prepareAsync()
+                            } catch (e: Exception) {
+                                stopPreview()
+                                showMessage("Gagal memutar audio: ${e.message ?: "file tidak terbaca"}")
+                            }
+                        }
+                    }
+                }
                 val menu = TextView(this).apply {
                     text = "⋮"
-                    textSize = 24f
+                    textSize = 22f
                     setTextColor(Color.LTGRAY)
                     gravity = Gravity.CENTER
                     setOnClickListener {
@@ -788,10 +842,11 @@ class MainActivity : AppCompatActivity() {
                             }.show()
                     }
                 }
-                row.addView(name, LinearLayout.LayoutParams(0, dp(48), 1f))
-                row.addView(menu, LinearLayout.LayoutParams(dp(42), dp(48)))
-                val params = LinearLayout.LayoutParams(-1, -2)
-                params.bottomMargin = dp(4)
+                row.addView(name, LinearLayout.LayoutParams(0, dp(38), 1f))
+                row.addView(playButton, LinearLayout.LayoutParams(dp(38), dp(38)))
+                row.addView(menu, LinearLayout.LayoutParams(dp(34), dp(38)))
+                val params = LinearLayout.LayoutParams(-1, dp(38))
+                params.bottomMargin = dp(3)
                 list.addView(row, params)
             }
         }
