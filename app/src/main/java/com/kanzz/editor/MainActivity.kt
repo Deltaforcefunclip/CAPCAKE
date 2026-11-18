@@ -1990,7 +1990,11 @@ class MainActivity : AppCompatActivity() {
                     true
                 }
                 MotionEvent.ACTION_POINTER_UP -> {
-                    if (event.pointerCount > 2) lastAngle = angle(event)
+                    if (event.pointerCount > 1) {
+                        val remainingIndex = if (event.actionIndex == 0) 1 else 0
+                        lastX = event.getX(remainingIndex)
+                        lastY = event.getY(remainingIndex)
+                    }
                     true
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
