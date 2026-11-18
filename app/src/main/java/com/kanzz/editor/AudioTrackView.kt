@@ -22,7 +22,7 @@ class AudioTrackView(
     private val density = resources.displayMetrics.density
     private val handler = Handler(Looper.getMainLooper())
     private val backgroundPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF202020.toInt() }
-    private val clipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF8FE8C5.toInt() }
+    private val clipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF168B65.toInt() }
     private val selectedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density
     }
@@ -61,7 +61,7 @@ class AudioTrackView(
                 val centerY = rect.centerY()
                 val halfHeight = (rect.height() * 0.40f).coerceAtLeast(2f * density)
                 val step = (rect.width() / waveform.size).coerceAtLeast(1f)
-                val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF168B65.toInt(); strokeWidth = maxOf(1f * density, step * 0.55f); strokeCap = Paint.Cap.ROUND }
+                val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFFFFFFF.toInt(); strokeWidth = maxOf(1f * density, step * 0.55f); strokeCap = Paint.Cap.ROUND }
                 waveform.forEachIndexed { index, amplitude ->
                     val x = rect.left + index * step + step / 2f
                     if (x in rect.left..rect.right) {
@@ -96,7 +96,7 @@ class AudioTrackView(
             MotionEvent.ACTION_MOVE -> {
                 if (!longPressTriggered) {
                     val dxFromDown = event.x - downX
-                    if (abs(dxFromDown) > 8f * density || abs(event.y - downY) > 8f * density) {
+                    if (abs(dxFromDown) > 8f * density) {
                         handler.removeCallbacks(longPressRunnable)
                     }
                     // Geser area audio (termasuk area kosong/clip tanpa long-press)
@@ -118,11 +118,21 @@ class AudioTrackView(
                     return true
                 }
                 val clip = touchedClip ?: return true
+                // Setelah long-press, gerakan vertikal memindahkan clip ke lane
+                // lain saat dilepas; gerakan horizontal mengubah waktu clip.
                 val deltaX = event.x - lastTouchX
-                if (controller.pixelsPerMs > 0f && abs(deltaX) > 0f) {
+                if (controller.pixelsPerMs > 0f && abs(deltaX) > 0.5f * density) {
                     val proposed = (clip.startTimeMs + (deltaX / controller.pixelsPerMs).toLong()).coerceAtLeast(0L)
-                    val collides = lane.clips.any { other -> other.id != clip.id && proposed < other.endTimeMs && proposed + clip.durationMs > other.startTimeMs }
-                    if (!collides) { clip.startTimeMs = proposed; lastTouchX = event.x; invalidate(); onClipMoved() }
+                    val collides = lane.clips.any { other ->
+                        other.id != clip.id && proposed < other.endTimeMs &&
+                            proposed + clip.durationMs > other.startTimeMs
+                    }
+                    if (!collides) {
+                        clip.startTimeMs = proposed
+                        lastTouchX = event.x
+                        invalidate()
+                        onClipMoved()
+                    }
                 }
                 return true
             }
@@ -130,10 +140,11 @@ class AudioTrackView(
                 handler.removeCallbacks(longPressRunnable); parent?.requestDisallowInterceptTouchEvent(false)
                 if (longPressTriggered) touchedClip?.let { onClipDropped(it, event.rawY) }
                 isScrollingTimeline = false
+                longPressTriggered = false
                 touchedClip = null; performClick(); return true
             }
             MotionEvent.ACTION_CANCEL -> {
-                handler.removeCallbacks(longPressRunnable); isScrollingTimeline = false; parent?.requestDisallowInterceptTouchEvent(false); touchedClip = null; return true
+                handler.removeCallbacks(longPressRunnable); isScrollingTimeline = false; longPressTriggered = false; parent?.requestDisallowInterceptTouchEvent(false); touchedClip = null; return true
             }
         }
         return true
