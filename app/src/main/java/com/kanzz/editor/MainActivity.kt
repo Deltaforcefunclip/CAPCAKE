@@ -263,6 +263,12 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
+    // Picker khusus untuk menambahkan klip video baru ke main timeline.
+    private val pickAdditionalVideo =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) addVideoClip(uri)
+        }
+
     // =====================================
     // AUDIO PICKER
     // =====================================
@@ -713,6 +719,57 @@ class MainActivity : AppCompatActivity() {
         ).show()
     }
 
+    private fun addVideoClip(uri: Uri) {
+        try {
+            contentResolver.takePersistableUriPermission(
+                uri,
+                android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+            )
+        } catch (_: Exception) {}
+
+        val retriever = MediaMetadataRetriever()
+        val durationMs = try {
+            retriever.setDataSource(this, uri)
+            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
+                ?.toLongOrNull() ?: 0L
+        } catch (_: Exception) {
+            0L
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
+        }
+
+        if (durationMs <= 0L) {
+            showMessage("File video tidak dapat dibaca.")
+            return
+        }
+        if (!::timeline.isInitialized || !::timelineController.isInitialized) {
+            showMessage("Timeline belum siap.")
+            return
+        }
+
+        val oldPosition = timelineController.positionMs
+        pushUndoSnapshot()
+        val clip = VideoClip(
+            sourceUri = uri.toString(),
+            sourceStartMs = 0L,
+            durationMs = durationMs
+        )
+        videoClipManager.clips.add(clip)
+        videoClipManager.recalculateTimeline()
+        selectedVideoClipId = clip.id
+        selectedAudioClipId = null
+        videoSelected = true
+        timeline.selectClip(clip.id)
+        timeline.setDuration(videoClipManager.durationMs, oldPosition)
+        timeline.updateSelection(true)
+        if (::playerView.isInitialized) playerView.foreground = null
+        refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
+        saveCurrentProject()
+        updateToolMenu()
+
+        Toast.makeText(this, "Video berhasil ditambahkan ke timeline.", Toast.LENGTH_SHORT).show()
+    }
+
     // =====================================
     // EDITOR
     // =====================================
@@ -1083,8 +1140,42 @@ class MainActivity : AppCompatActivity() {
 
         timeline.updateSelection(videoSelected)
 
-        root.addView(
+        // Tombol import video berada di layer terpisah dari TimelineView.
+        // Sentuhan pada tombol tidak diteruskan ke gesture timeline.
+        val timelineFrame = FrameLayout(this)
+        timelineFrame.addView(
             timeline,
+            FrameLayout.LayoutParams(-1, -1)
+        )
+
+        val importVideoButton = TextView(this).apply {
+            text = "+"
+            textSize = 17f
+            setTextColor(green)
+            gravity = Gravity.CENTER
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.WHITE)
+                cornerRadius = dp(3.6f).toFloat()
+            }
+            elevation = dp(8).toFloat()
+            contentDescription = "Import video ke timeline"
+            isClickable = true
+            isFocusable = true
+        }
+        val importButtonParams = FrameLayout.LayoutParams(
+            dp(22), dp(22), Gravity.TOP or Gravity.END
+        ).apply {
+            topMargin = dp(48)
+            marginEnd = dp(8)
+        }
+        timelineFrame.addView(importVideoButton, importButtonParams)
+        importVideoButton.setOnClickListener {
+            pickAdditionalVideo.launch(arrayOf("video/*"))
+        }
+
+        root.addView(
+            timelineFrame,
             LinearLayout.LayoutParams(-1, dp(100))
         )
 
