@@ -245,7 +245,7 @@ class MainActivity : AppCompatActivity() {
         player = ExoPlayer.Builder(this).build().apply {
             // Siapkan sebagian awal klip berikutnya sebelum klip aktif selesai.
             // Ini mengurangi jeda saat ExoPlayer berpindah antar MediaItem hasil split.
-            preloadConfiguration = ExoPlayer.PreloadConfiguration(2_000_000L)
+            preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
         }
 
         handler.post(playbackUpdater)
