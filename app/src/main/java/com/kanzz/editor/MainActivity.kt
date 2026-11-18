@@ -146,7 +146,7 @@ class MainActivity : AppCompatActivity() {
             if (::timeLabel.isInitialized && player.isPlaying) {
                 updateTime()
             }
-            handler.postDelayed(this, 16L)
+            handler.postDelayed(this, 33L)
         }
     }
 
@@ -2273,7 +2273,7 @@ class TimelineView(
 
                 controller.zoomAt(
                     detector.scaleFactor,
-                    detector.focusX
+                    width / 2f
                 )
 
                 invalidate()
@@ -2479,8 +2479,9 @@ class TimelineView(
 
         controller.setPosition(value)
 
+        // Perubahan playhead tidak mengubah viewport; jangan gambar ulang track audio
+        // pada setiap frame playback.
         invalidate()
-        onViewportChanged()
     }
 
     private fun timeToX(time: Long): Float {
@@ -2720,22 +2721,33 @@ class TimelineView(
                 )
             }
 
+        }
+
+        // Gambar tombol transisi paling akhir agar tidak tertutup clip di sebelah kanan.
+        displayedClips.forEachIndexed { index, (videoClip, clipStartMs) ->
             if (index < displayedClips.lastIndex) {
                 val next = displayedClips[index + 1].first
                 val transition = videoClips.transitionBetween(videoClip.id, next.id)
                     ?: VideoTransition(leftClipId = videoClip.id, rightClipId = next.id)
-                val x = clipRight
+                val x = timeToX(clipStartMs + videoClip.timelineDurationMs)
+                val halfSize = 10.8f * density // 20% lebih besar dari ukuran sebelumnya.
                 val box = RectF(
-                    x - 9f * density,
-                    (trackTop + trackBottom) / 2f - 9f * density,
-                    x + 9f * density,
-                    (trackTop + trackBottom) / 2f + 9f * density
+                    x - halfSize,
+                    (trackTop + trackBottom) / 2f - halfSize,
+                    x + halfSize,
+                    (trackTop + trackBottom) / 2f + halfSize
                 )
                 paint.color = Color.WHITE
-                canvas.drawRoundRect(box, 3f * density, 3f * density, paint)
+                canvas.drawRoundRect(box, 3.6f * density, 3.6f * density, paint)
                 paint.color = Color.DKGRAY
-                paint.textSize = 13f * density
-                canvas.drawText("+", x - 4f * density, box.centerY() + 4.5f * density, paint)
+                paint.textSize = 15.6f * density
+                val plusWidth = paint.measureText("+")
+                canvas.drawText(
+                    "+",
+                    x - plusWidth / 2f,
+                    box.centerY() + paint.textSize * 0.34f,
+                    paint
+                )
                 transitionHitBoxes.add(box to transition)
             }
         }
