@@ -2470,12 +2470,14 @@ class MainActivity : AppCompatActivity() {
                             } else null
                         }
                         .minByOrNull { it.third }
-                        ?: audioTrackViews.entries.minByOrNull { (_, view) ->
-                            val location = IntArray(2)
-                            view.getLocationOnScreen(location)
-                            val centerY = location[1] + view.height / 2f
-                            kotlin.math.abs(rawY - centerY)
-                        }
+                        ?: audioTrackViews.entries
+                            .map { entry ->
+                                val location = IntArray(2)
+                                entry.value.getLocationOnScreen(location)
+                                val centerY = location[1] + entry.value.height / 2f
+                                Triple(entry.key, entry.value, kotlin.math.abs(rawY - centerY))
+                            }
+                            .minByOrNull { it.third }
                     val sourceLaneId = audioClipManager.lanes.firstOrNull { lane ->
                         lane.clips.any { it.id == clip.id }
                     }?.id
