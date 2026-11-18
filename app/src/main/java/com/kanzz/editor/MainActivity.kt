@@ -2425,14 +2425,23 @@ class MainActivity : AppCompatActivity() {
                         view.getLocationOnScreen(location)
                         rawY >= location[1] && rawY <= location[1] + view.height
                     }
-                    if (targetEntry != null) {
+                    if (targetEntry != null && targetEntry.key != audioClipManager.lanes.firstOrNull { lane ->
+                            lane.clips.any { it.id == clip.id }
+                        }?.id) {
+                        pushUndoSnapshot()
                         val moved = audioClipManager.moveClipToLane(clip.id, targetEntry.key)
                         if (!moved) {
+                            undoStack.removeLast()
                             Toast.makeText(this, "Layer tujuan masih ditempati audio lain.", Toast.LENGTH_SHORT).show()
                         } else {
+                            // Perbarui tampilan dan simpan posisi/layer baru.
                             saveCurrentProject()
                             refreshAudioTracks()
+                            syncAudioPlayback()
                         }
+                    } else if (targetEntry != null) {
+                        // Lepas di layer asal: simpan perubahan posisi horizontal.
+                        saveCurrentProject()
                     }
                 }
             )
@@ -2694,12 +2703,22 @@ class MainActivity : AppCompatActivity() {
             instance.volume = clip.volume
             instance.playbackParameters = PlaybackParameters(clip.speed.coerceIn(0.25f, 3.25f))
 
-            if (instance.playbackState == Player.STATE_READY) {
-                val desiredPosition = ((timelinePosition - clip.startTimeMs).coerceAtLeast(0L) * clip.speed).toLong()
+            val desiredPosition = (
+                (timelinePosition - clip.startTimeMs).coerceAtLeast(0L) * clip.speed
+            ).toLong().coerceAtLeast(0L)
+
+            // Setelah satu klip audio selesai, ExoPlayer masuk STATE_ENDED.
+            // Tanpa seek ulang, player lama tidak pernah kembali ke STATE_READY
+            // sehingga efek suara tersebut hanya terdengar pada pemutaran pertama.
+            if (instance.playbackState == Player.STATE_ENDED) {
+                instance.seekTo(desiredPosition)
+                instance.playWhenReady = true
+            } else if (instance.playbackState == Player.STATE_READY) {
                 if (!instance.isPlaying) {
                     instance.seekTo(desiredPosition)
                     instance.playWhenReady = true
-                } else if (kotlin.math.abs(instance.currentPosition - desiredPosition) > 350L) {                    // Koreksi drift sesekali agar audio tetap sinkron tanpa tersendat tiap frame.
+                } else if (kotlin.math.abs(instance.currentPosition - desiredPosition) > 350L) {
+                    // Koreksi drift sesekali agar audio tetap sinkron tanpa tersendat tiap frame.
                     instance.seekTo(desiredPosition)
                 }
             }
