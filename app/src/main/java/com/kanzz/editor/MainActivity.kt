@@ -21,6 +21,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.util.UnstableApi
 import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
@@ -51,6 +52,7 @@ data class VideoProject(
     var muted: Boolean = false
 )
 
+@OptIn(UnstableApi::class)
 class MainActivity : AppCompatActivity() {
 
     private val bg = Color.rgb(16, 16, 16)
@@ -111,24 +113,17 @@ class MainActivity : AppCompatActivity() {
 
     private var playbackListener: Player.Listener? = null
 
-    // Scrubbing preview: batasi seek agar decoder sempat menampilkan frame di tengah gerakan.
+    // Scrubbing preview memakai optimasi decoder bawaan Media3.
     private var pendingScrubPositionMs = 0L
     private var isTimelineScrubbing = false
-    private var scrubSeekScheduled = false
-    private val scrubSeekRunnable = Runnable {
-        scrubSeekScheduled = false
-        if (isTimelineScrubbing) seekTimelinePosition(pendingScrubPositionMs)
-    }
     private val scrubFinishRunnable = Runnable {
         if (isTimelineScrubbing) {
-            handler.removeCallbacks(scrubSeekRunnable)
-            scrubSeekScheduled = false
-
-            // Saat jari dilepas, lakukan satu seek final yang presisi.
+            // Keluar dari mode scrubbing, lalu lakukan seek akhir yang presisi.
+            player.setScrubbingModeEnabled(false)
             player.setSeekParameters(SeekParameters.EXACT)
             seekTimelinePosition(pendingScrubPositionMs)
 
-            // Pertahankan posisi visual target sampai player sempat menyelesaikan seek.
+            // Tahan indikator waktu pada target jari sampai seek akhir diproses.
             handler.postDelayed({
                 isTimelineScrubbing = false
                 updateTime()
@@ -867,22 +862,17 @@ class MainActivity : AppCompatActivity() {
             videoClipManager,
             onTransitionClick = { transition -> showTransitionPicker(transition) },
             onChange = { position ->
-                // Jangan seek pada setiap event sentuhan: beri decoder jeda singkat
-                // agar frame preview sempat tampil selama jari masih bergerak.
+                // Media3 Scrubbing Mode mengelola seek cepat dan membuang target
+                // lama yang sudah tidak relevan. Kirim posisi terbaru langsung.
                 pendingScrubPositionMs = position
                 if (!isTimelineScrubbing) {
                     isTimelineScrubbing = true
                     if (player.isPlaying) player.pause()
-                    player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+                    player.setScrubbingModeEnabled(true)
                     updatePlayButton()
                 }
+                seekTimelinePosition(position)
                 handler.removeCallbacks(scrubFinishRunnable)
-                // Maksimal 10 permintaan seek per detik selama jari bergerak.
-                // Posisi terbaru tetap disimpan; permintaan terjadwal memakai posisi terbaru itu.
-                if (!scrubSeekScheduled) {
-                    scrubSeekScheduled = true
-                    handler.postDelayed(scrubSeekRunnable, 100L)
-                }
                 handler.postDelayed(scrubFinishRunnable, 140L)
                 updateTime()
             },
