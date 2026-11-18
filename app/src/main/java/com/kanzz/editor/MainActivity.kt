@@ -2258,7 +2258,11 @@ class TimelineView(
     // Setelah pinch zoom dimulai, gerakan satu jari yang tersisa tidak boleh dianggap scrub.
     private var isPinchGesture = false
     private var isDraggingClip = false
-    private var dragOffsetMs = 0L
+    // Posisi awal jari dan klip dikunci saat sentuhan dimulai.
+    // Target drag dihitung dari selisih gerakan jari, bukan xToTime(),
+    // agar perubahan offset/playhead tidak menarik klip kembali.
+    private var dragDownX = 0f
+    private var dragInitialStartMs = 0L
     private var dragTargetStartMs = 0L
     private var lastDragPreviewAt = 0L
     private var lastDragPreviewTargetMs = Long.MIN_VALUE
@@ -2830,6 +2834,7 @@ class TimelineView(
             MotionEvent.ACTION_DOWN -> {
                 downX = event.x
                 lastX = event.x
+                dragDownX = event.x
                 moved = false
                 pointerDown = true
                 isPinchGesture = false
@@ -2864,7 +2869,8 @@ class TimelineView(
                 if (trimClipId == null) {
                     pressedClip = hitClip
                     pressedClip?.let { clip ->
-                        dragOffsetMs = (tappedTime - clip.timelineStartMs).coerceIn(0L, clip.timelineDurationMs)
+                        dragInitialStartMs = clip.timelineStartMs
+                        dragTargetStartMs = clip.timelineStartMs
                         postDelayed(dragLongPress, 350L)
                     }
                 } else {
@@ -2904,7 +2910,12 @@ class TimelineView(
                         if (isDraggingClip && pressedClip != null) {
                             moved = true
                             val clip = pressedClip!!
-                            val proposed = (controller.xToTime(event.x) - dragOffsetMs).coerceAtLeast(0L)
+                            // Hitung perpindahan dari titik sentuh awal. Jangan memakai
+                            // xToTime() di sini karena koordinat timeline bisa berubah
+                            // saat playhead/viewport diperbarui selama gesture.
+                            val deltaMs = ((event.x - dragDownX) /
+                                pixelsPerMs.coerceAtLeast(0.000001f)).toLong()
+                            val proposed = (dragInitialStartMs + deltaMs).coerceAtLeast(0L)
                             val snapState = TimelineState(
                                 clips = videoClips.clips.map { item ->
                                     EditorClip(
