@@ -2271,10 +2271,7 @@ class TimelineView(
                 detector: ScaleGestureDetector
             ): Boolean {
 
-                controller.zoomAt(
-                    detector.scaleFactor,
-                    width / 2f
-                )
+                controller.zoomAroundPlayhead(detector.scaleFactor)
 
                 invalidate()
                 onViewportChanged()
