@@ -666,7 +666,7 @@ class MainActivity : AppCompatActivity() {
             )?.use { cursor ->
                 if (cursor.moveToFirst()) cursor.getString(0) else null
             } ?: "Audio_${System.currentTimeMillis()}"
-            val safeName = displayName.replace(Regex("[\\\\/:*?\\"<>|]"), "_")
+            val safeName = displayName.filterNot { it in "\\\\/:*?\\"<>|" }
                 .ifBlank { "Audio_${System.currentTimeMillis()}" }
             val dot = safeName.lastIndexOf('.')
             val base = if (dot > 0) safeName.substring(0, dot) else safeName
@@ -768,7 +768,7 @@ class MainActivity : AppCompatActivity() {
                                         .setNegativeButton("Batal", null)
                                         .setPositiveButton("Simpan") { _, _ ->
                                             val newName = input.text.toString().trim()
-                                                .replace(Regex("[\\\\/:*?\\"<>|]"), "_")
+                                                .filterNot { it in "\\\\/:*?\\"<>|" }
                                             if (newName.isBlank()) showMessage("Nama file tidak boleh kosong.")
                                             else {
                                                 val target = File(file.parentFile, newName)
