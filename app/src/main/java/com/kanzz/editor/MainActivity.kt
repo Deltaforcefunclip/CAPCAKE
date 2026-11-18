@@ -1041,6 +1041,9 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                // Terapkan properti klip tepat saat item berganti, bukan menunggu
+                // siklus updater 100 ms. Ini menghindari jeda perubahan speed/volume.
+                syncVideoClipProperties()
                 updateTime()
             }
 
@@ -2476,9 +2479,9 @@ class TimelineView(
 
         controller.setPosition(value)
 
-        // Perubahan playhead tidak mengubah viewport; jangan gambar ulang track audio
-        // pada setiap frame playback.
-        invalidate()
+        // Jadwalkan gambar pada frame layar berikutnya agar gerakan playhead
+        // mengikuti VSYNC dan tidak menumpuk invalidate di main thread.
+        postInvalidateOnAnimation()
     }
 
     private fun timeToX(time: Long): Float {
