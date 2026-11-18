@@ -14,10 +14,8 @@ import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
-import android.view.SurfaceView
 import android.view.View
 import android.widget.*
-import android.util.LruCache
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
@@ -42,7 +40,6 @@ import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
-import java.util.concurrent.atomic.AtomicLong
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -64,7 +61,6 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var player: ExoPlayer
     private lateinit var playerView: PlayerView
-    private lateinit var scrubFrameOverlay: ImageView
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
     private lateinit var audioTracksContainer: LinearLayout
@@ -120,13 +116,6 @@ class MainActivity : AppCompatActivity() {
     // Scrubbing preview memakai optimasi decoder bawaan Media3.
     private var pendingScrubPositionMs = 0L
     private var isTimelineScrubbing = false
-    private val scrubFrameCache = object : LruCache<String, Bitmap>(24 * 1024) {
-        override fun sizeOf(key: String, value: Bitmap): Int =
-            (value.byteCount / 1024).coerceAtLeast(1)
-    }
-    private val scrubFrameExecutor = Executors.newSingleThreadExecutor()
-    private val scrubFrameRequestId = AtomicLong(0L)
-    private var lastScrubFrameKey: String? = null
     private val scrubFinishRunnable = Runnable {
         if (isTimelineScrubbing) {
             // Keluar dari mode scrubbing, lalu lakukan seek akhir yang presisi.
@@ -137,9 +126,6 @@ class MainActivity : AppCompatActivity() {
             // Tahan indikator waktu pada target jari sampai seek akhir diproses.
             handler.postDelayed({
                 isTimelineScrubbing = false
-                handler.postDelayed({
-                    if (::scrubFrameOverlay.isInitialized) scrubFrameOverlay.visibility = View.GONE
-                }, 180L)
                 updateTime()
             }, 150L)
         }
@@ -749,15 +735,7 @@ class MainActivity : AppCompatActivity() {
             playerView,
             FrameLayout.LayoutParams(-1, -1)
         )
-        scrubFrameOverlay = ImageView(this).apply {
-            setBackgroundColor(Color.BLACK)
-            scaleType = ImageView.ScaleType.FIT_CENTER
-            visibility = View.GONE
-            isClickable = false
-            isFocusable = false
-        }
-        previewFrame.addView(scrubFrameOverlay, FrameLayout.LayoutParams(-1, -1))
-        (playerView.videoSurfaceView as? SurfaceView)?.setZOrderMediaOverlay(true)
+
         playerView.player = player
 
         val screenWidth =
@@ -894,7 +872,6 @@ class MainActivity : AppCompatActivity() {
                     updatePlayButton()
                 }
                 seekTimelinePosition(position)
-                requestCachedScrubFrame(position)
                 handler.removeCallbacks(scrubFinishRunnable)
                 handler.postDelayed(scrubFinishRunnable, 140L)
                 updateTime()
@@ -1024,12 +1001,6 @@ class MainActivity : AppCompatActivity() {
         player.playWhenReady = false
 
         val listener = object : Player.Listener {
-            override fun onRenderedFirstFrame() {
-                if (!isTimelineScrubbing && ::scrubFrameOverlay.isInitialized) {
-                    scrubFrameOverlay.visibility = View.GONE
-                }
-            }
-
             override fun onPlaybackStateChanged(state: Int) {
                 if (state != Player.STATE_READY) return
 
@@ -1108,74 +1079,6 @@ class MainActivity : AppCompatActivity() {
             clip.speed.coerceIn(0.25f, 3f)).toLong()
         return (before + localTimelinePosition)
             .coerceIn(0L, videoClipManager.durationMs)
-    }
-
-    /**
-     * Cache frame preview terpisah dari thumbnail timeline. Ekstraksi dilakukan
-     * di worker tunggal; hasil lama dibuang agar tidak menimpa posisi jari terbaru.
-     */
-    private fun requestCachedScrubFrame(timelinePositionMs: Long) {
-        if (!::scrubFrameOverlay.isInitialized || videoClipManager.clips.isEmpty()) return
-        val target = timelinePositionMs.coerceIn(0L, videoClipManager.durationMs)
-        var elapsed = 0L
-        var selected = videoClipManager.clips.last()
-        var localMs = selected.timelineDurationMs
-        for (clip in videoClipManager.clips) {
-            val end = elapsed + clip.timelineDurationMs
-            if (target < end || clip === videoClipManager.clips.last()) {
-                selected = clip
-                localMs = (target - elapsed).coerceIn(0L, clip.timelineDurationMs)
-                break
-            }
-            elapsed = end
-        }
-        val sourceMs = selected.sourceStartMs +
-            (localMs * selected.speed.coerceIn(0.25f, 3f)).toLong()
-        val bucketMs = (sourceMs.coerceAtLeast(0L) / 100L) * 100L
-        val key = selected.sourceUri + "#" + bucketMs
-        lastScrubFrameKey = key
-
-        scrubFrameCache.get(key)?.let { cached ->
-            scrubFrameOverlay.setImageBitmap(cached)
-            scrubFrameOverlay.visibility = View.VISIBLE
-            return
-        }
-
-        val requestId = scrubFrameRequestId.incrementAndGet()
-        val uri = Uri.parse(selected.sourceUri)
-        scrubFrameExecutor.execute {
-            if (requestId != scrubFrameRequestId.get()) return@execute
-            var retriever: MediaMetadataRetriever? = null
-            var bitmap: Bitmap? = null
-            try {
-                retriever = MediaMetadataRetriever()
-                retriever.setDataSource(this, uri)
-                bitmap = retriever.getScaledFrameAtTime(
-                    bucketMs * 1000L,
-                    MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
-                    640,
-                    640
-                )
-            } catch (_: Exception) {
-                // ExoPlayer tetap menjadi fallback jika ekstraksi tidak didukung.
-            } finally {
-                try { retriever?.release() } catch (_: Exception) {}
-            }
-            val result = bitmap ?: return@execute
-            if (requestId != scrubFrameRequestId.get()) {
-                result.recycle()
-                return@execute
-            }
-            scrubFrameCache.put(key, result)
-            handler.post {
-                if (requestId == scrubFrameRequestId.get() &&
-                    lastScrubFrameKey == key && isTimelineScrubbing
-                ) {
-                    scrubFrameOverlay.setImageBitmap(result)
-                    scrubFrameOverlay.visibility = View.VISIBLE
-                }
-            }
-        }
     }
 
     /** Memetakan waktu timeline ke item dan offset sumber yang benar. */
@@ -2248,9 +2151,6 @@ class MainActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
-        scrubFrameRequestId.incrementAndGet()
-        scrubFrameExecutor.shutdownNow()
-        scrubFrameCache.evictAll()
 
         saveCurrentProject()
 
