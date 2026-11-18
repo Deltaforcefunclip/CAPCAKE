@@ -897,8 +897,7 @@ class MainActivity : AppCompatActivity() {
                 timeline.selectClip(selectedVideoClipId)
                 timeline.updateSelection(false)
                 playerView.foreground = null
-                updateToolMenu()
-            },
+                updateToolMenu()            },
             onViewportChanged = {
                 audioTrackViews.values.forEach { it.invalidate() }
             },
@@ -1797,8 +1796,7 @@ class MainActivity : AppCompatActivity() {
                 if (!instance.isPlaying) {
                     instance.seekTo(desiredPosition)
                     instance.playWhenReady = true
-                } else if (kotlin.math.abs(instance.currentPosition - desiredPosition) > 350L) {
-                    // Koreksi drift sesekali agar audio tetap sinkron tanpa tersendat tiap frame.
+                } else if (kotlin.math.abs(instance.currentPosition - desiredPosition) > 350L) {                    // Koreksi drift sesekali agar audio tetap sinkron tanpa tersendat tiap frame.
                     instance.seekTo(desiredPosition)
                 }
             }
@@ -2510,10 +2508,11 @@ class TimelineView(
 
     fun updatePositionFromPlayer(value: Long) {
 
-        // Saat klip sedang di-drag, player memang di-seek untuk preview isi klip
-        // yang berada di bawah playhead. Jangan biarkan waktu sumber preview itu
-        // menggeser viewport timeline dan menarik klip kembali ke posisi playhead.
-        if (isDraggingClip) return
+        // Saat pengguna menggeser timeline, posisi yang benar berasal dari
+        // jari (onChange). Callback player bisa datang terlambat dari seek
+        // sebelumnya; jika diterapkan, controller.centerPlayhead() akan
+        // mengembalikan offset ke waktu lama dan timeline tampak meloncat.
+        if (isDraggingClip || isTimelineScrubbing) return
 
         controller.setPosition(value)
 
@@ -2697,7 +2696,6 @@ class TimelineView(
 
         val trackTop = 27f * density
         val trackBottom = 92f * density
-
         val left = max(0f, timeToX(0))
         val right = min(width.toFloat(), timeToX(duration))
 
@@ -3068,4 +3066,3 @@ class TimelineView(
 // ========================================
 // AUDIO TRACK
 // ========================================
-
