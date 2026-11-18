@@ -1171,45 +1171,12 @@ class MainActivity : AppCompatActivity() {
      * lalu arahkan player ke sumber klip yang berada tepat di bawah playhead.
      */
     private fun previewClipMoveAt(clipId: String, targetStartMs: Long) {
-        val originalClips = videoClipManager.clips.toList()
-        val moving = originalClips.firstOrNull { it.id == clipId } ?: return
-        if (originalClips.size < 2) return
-
-        val previewOrder = originalClips.toMutableList()
-        previewOrder.removeAll { it.id == clipId }
-        val targetCenter = targetStartMs.coerceAtLeast(0L) + moving.timelineDurationMs / 2L
-        val insertIndex = previewOrder.indexOfFirst { other ->
-            targetCenter <= other.timelineDurationMs / 2L + previewOrder
-                .takeWhile { it.id != other.id }
-                .sumOf { it.timelineDurationMs }
-        }.let { if (it < 0) previewOrder.size else it }
-        previewOrder.add(insertIndex, moving)
-
-        val playhead = timelineController.positionMs.coerceIn(0L, videoClipManager.durationMs)
-        var cursor = 0L
-        for (clip in previewOrder) {
-            val end = cursor + clip.timelineDurationMs
-            if (playhead < end || clip === previewOrder.last()) {
-                val localTimeline = (playhead - cursor).coerceIn(0L, clip.timelineDurationMs)
-                val sourcePosition = (clip.sourceStartMs +
-                    (localTimeline * clip.speed.coerceIn(0.25f, 3f)).toLong())
-                    .coerceIn(clip.sourceStartMs, clip.sourceEndMs)
-                val originalIndex = originalClips.indexOfFirst { it.id == clip.id }
-                if (originalIndex >= 0) {
-                    val groupIndex = playbackGroups.indexOfFirst { group ->
-                        group.clips.any { it.id == clip.id }
-                    }
-                    val group = playbackGroups.getOrNull(groupIndex)
-                    if (group != null) {
-                        player.pause()
-                        player.seekTo(groupIndex, (sourcePosition - group.sourceStartMs).coerceAtLeast(0L))
-                        updateTime()
-                    }
-                }
-                return
-            }
-            cursor = end
-        }
+        // Jangan melakukan seek player selama jari masih menggeser klip.
+        // Seek sementara membuat callback ExoPlayer mengubah waktu preview,
+        // sehingga koordinat drag dan posisi klip dapat saling memengaruhi.
+        // Susunan klip tetap diperlihatkan oleh TimelineView secara visual.
+        // Preview player diperbarui sekali saja setelah klip dilepas,
+        // melalui refreshEditedPreview() di callback onMoveClip.
     }
 
     /** Rebuild playlist after split/delete/duplicate while keeping the preview at the same edit time. */
