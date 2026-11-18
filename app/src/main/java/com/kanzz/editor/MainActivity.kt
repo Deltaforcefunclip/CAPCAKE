@@ -21,6 +21,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
@@ -109,6 +110,26 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private var playbackListener: Player.Listener? = null
+
+    // Scrubbing preview: batasi seek agar decoder sempat menampilkan frame di tengah gerakan.
+    private var pendingScrubPositionMs = 0L
+    private var isTimelineScrubbing = false
+    private var scrubSeekScheduled = false
+    private val scrubSeekRunnable = Runnable {
+        scrubSeekScheduled = false
+        if (isTimelineScrubbing) seekTimelinePosition(pendingScrubPositionMs)
+    }
+    private val scrubFinishRunnable = Runnable {
+        if (isTimelineScrubbing) {
+            handler.removeCallbacks(scrubSeekRunnable)
+            scrubSeekScheduled = false
+            seekTimelinePosition(pendingScrubPositionMs)
+            isTimelineScrubbing = false
+            handler.postDelayed({
+                player.setSeekParameters(SeekParameters.EXACT)
+            }, 120L)
+        }
+    }
 
     private val prefs by lazy {
         getSharedPreferences("CAPCAKE_PROJECTS", MODE_PRIVATE)
@@ -841,11 +862,22 @@ class MainActivity : AppCompatActivity() {
             videoClipManager,
             onTransitionClick = { transition -> showTransitionPicker(transition) },
             onChange = { position ->
-                // Menggeser ruler selalu menghentikan playback dan langsung memperbarui preview.
-                if (player.isPlaying) player.pause()
-                seekTimelinePosition(position)
+                // Jangan seek pada setiap event sentuhan: beri decoder jeda singkat
+                // agar frame preview sempat tampil selama jari masih bergerak.
+                pendingScrubPositionMs = position
+                if (!isTimelineScrubbing) {
+                    isTimelineScrubbing = true
+                    if (player.isPlaying) player.pause()
+                    player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+                    updatePlayButton()
+                }
+                handler.removeCallbacks(scrubFinishRunnable)
+                if (!scrubSeekScheduled) {
+                    scrubSeekScheduled = true
+                    handler.postDelayed(scrubSeekRunnable, 45L)
+                }
+                handler.postDelayed(scrubFinishRunnable, 140L)
                 updateTime()
-                updatePlayButton()
             },
             onTap = { tappedClip ->
                 selectedAudioClipId = null
