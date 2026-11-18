@@ -37,6 +37,7 @@ import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.effect.Presentation
+import androidx.media3.effect.FrameDropEffect
 import androidx.media3.transformer.Effects
 import org.json.JSONArray
 import org.json.JSONObject
@@ -127,8 +128,10 @@ class MainActivity : AppCompatActivity() {
     private var proxyProgressBar: ProgressBar? = null
     private var proxyProgressText: TextView? = null
     private val proxyProgressHolder = ProgressHolder()
-    private val proxyQueue = ArrayDeque<String>()
+    private val proxyQueue = ArrayDeque<VideoClip>()
     private var proxyTargetQuality = 720
+    private var proxyTargetFps = 30
+    private var previewProxyFps = 30
     private var proxyCompletedCount = 0
     private var proxyFailedCount = 0
     private var proxyGenerationId = 0
@@ -282,6 +285,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         previewQualityShortSide = prefs.getInt("preview_quality_short_side", 720)
+        previewProxyFps = prefs.getInt("preview_proxy_fps", 30)
 
         handler.post(playbackUpdater)
         handler.post(timelineFrameUpdater)
@@ -1100,7 +1104,6 @@ class MainActivity : AppCompatActivity() {
                     // Replace the original full-length source with the edited clip sequence.
                     player.setMediaItems(buildEditedVideoItems())
                     player.prepare()
-                    if (previewQualityShortSide > 0) ensurePreviewProxies(previewQualityShortSide)
                     return
                 }
 
@@ -1130,56 +1133,89 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showPreviewQualityDialog() {
-        val values = intArrayOf(0, 1080, 720, 480)
-        val labels = arrayOf("Original", "1080p", "720p (Disarankan)", "480p (Paling ringan)")
-        val selected = values.indexOf(previewQualityShortSide).coerceAtLeast(0)
+        if (videoClipManager.clips.isEmpty()) {
+            showMessage("Impor video terlebih dahulu.")
+            return
+        }
+        if (proxyTransformer != null) {
+            showMessage("Proses proxy sedang berjalan.")
+            return
+        }
 
+        val values = intArrayOf(0, 1080, 720, 480)
+        val labels = arrayOf(
+            "Original (tanpa proxy)",
+            "1080p - kualitas tinggi",
+            "720p - seimbang",
+            "480p - paling ringan"
+        )
+        val selected = values.indexOf(previewQualityShortSide).coerceAtLeast(0)
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Kualitas Preview")
+            .setTitle("Preview Proxy (Opsional)")
+            .setMessage("Proxy tidak dibuat otomatis. Potong video terlebih dahulu agar proses lebih singkat, lalu buat proxy saat diperlukan.")
             .setSingleChoiceItems(labels, selected) { dialog, which ->
                 val chosen = values[which]
                 dialog.dismiss()
-                if (proxyTransformer != null) {
-                    showMessage("Tunggu proses proxy selesai terlebih dahulu.")
-                    return@setSingleChoiceItems
-                }
                 previewQualityShortSide = chosen
                 prefs.edit().putInt("preview_quality_short_side", chosen).apply()
                 if (chosen == 0) {
                     refreshEditedPreview()
-                    showMessage("Preview: Original")
+                    showMessage("Preview menggunakan video asli.")
                 } else {
-                    ensurePreviewProxies(chosen)
+                    showProxyFpsDialog(chosen)
                 }
             }
             .setNegativeButton("Tutup", null)
             .show()
     }
 
+    private fun showProxyFpsDialog(quality: Int) {
+        val fpsValues = intArrayOf(30, 60)
+        val fpsLabels = arrayOf("30 FPS - lebih ringan dan cepat dibuat", "60 FPS - gerakan lebih halus")
+        val selected = fpsValues.indexOf(previewProxyFps).coerceAtLeast(0)
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Frame Rate Proxy")
+            .setMessage("FPS proxy tidak mengubah FPS video asli saat ekspor.")
+            .setSingleChoiceItems(fpsLabels, selected) { dialog, which ->
+                val fps = fpsValues[which]
+                dialog.dismiss()
+                previewProxyFps = fps
+                prefs.edit().putInt("preview_proxy_fps", fps).apply()
+                ensurePreviewProxies(quality, fps)
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
     private fun previewProxyDirectory(): File =
         File(cacheDir, "preview_proxies").apply { mkdirs() }
 
-    private fun previewProxyFile(sourceUri: String, quality: Int): File {
+    private fun previewProxyFile(clip: VideoClip, quality: Int, fps: Int): File {
+        val identity = "${clip.id}| ${clip.sourceUri}|${clip.sourceStartMs}|${clip.durationMs}|$quality|$fps"
         val digest = MessageDigest.getInstance("SHA-256")
-            .digest(sourceUri.toByteArray(Charsets.UTF_8))
+            .digest(identity.toByteArray(Charsets.UTF_8))
             .joinToString("") { "%02x".format(it) }
-        return File(previewProxyDirectory(), "${digest}_${quality}.mp4")
+        return File(previewProxyDirectory(), "${digest}.mp4")
     }
 
-    private fun ensurePreviewProxies(quality: Int) {
+    private fun ensurePreviewProxies(quality: Int, fps: Int) {
         if (quality <= 0 || videoClipManager.clips.isEmpty() || proxyTransformer != null) return
         proxyTargetQuality = quality
+        proxyTargetFps = fps
         proxyQueue.clear()
-        videoClipManager.clips.map { it.sourceUri }.distinct().forEach { source ->
-            val cached = previewProxyFile(source, quality)
+
+        // Setiap segmen timeline dibuatkan proxy sesuai batas potongannya,
+        // bukan mentranscode seluruh file sumber yang mungkin sangat panjang.
+        videoClipManager.clips.distinctBy { previewProxyFile(it, quality, fps).name }.forEach { clip ->
+            val cached = previewProxyFile(clip, quality, fps)
             if (!cached.exists() || cached.length() < 1024L) {
                 cached.delete()
-                proxyQueue.addLast(source)
+                proxyQueue.addLast(clip)
             }
         }
         if (proxyQueue.isEmpty()) {
             refreshEditedPreview()
-            showMessage("Proxy preview siap digunakan.")
+            showMessage("Proxy untuk klip yang dipilih sudah tersedia.")
             return
         }
 
@@ -1191,7 +1227,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(20), dp(12), dp(20), dp(8))
         }
         proxyProgressText = TextView(this).apply {
-            text = "Menyiapkan video preview..."
+            text = "Menyiapkan proxy klip..."
             setTextColor(Color.WHITE)
             textSize = 13f
         }
@@ -1204,8 +1240,8 @@ class MainActivity : AppCompatActivity() {
             topMargin = dp(14)
         })
         proxyDialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Membuat Preview Proxy")
-            .setMessage("Video asli tetap digunakan saat ekspor.")
+            .setTitle("Membuat Proxy Klip")
+            .setMessage("Hanya bagian klip yang ada di timeline yang diproses. Ekspor tetap memakai video asli.")
             .setView(content)
             .setNegativeButton("Batal") { _, _ -> cancelPreviewProxyGeneration() }
             .setCancelable(false)
@@ -1225,23 +1261,40 @@ class MainActivity : AppCompatActivity() {
             val position = currentTimelinePosition()
             refreshEditedPreview(position)
             showMessage(
-                if (proxyFailedCount == 0) "Proxy preview selesai dibuat."
-                else "Sebagian proxy gagal. Video asli tetap digunakan untuk sumber tersebut."
+                if (proxyFailedCount == 0) "Proxy klip selesai dibuat."
+                else "Sebagian proxy gagal. Klip tersebut tetap memakai video asli."
             )
             return
         }
 
-        val source = proxyQueue.first()
-        val target = previewProxyFile(source, proxyTargetQuality)
+        val clip = proxyQueue.first()
+        val target = previewProxyFile(clip, proxyTargetQuality, proxyTargetFps)
         val temp = File(target.parentFile, "${target.nameWithoutExtension}_tmp_${proxyGenerationId}.mp4")
         temp.delete()
         proxyProgressHolder.progress = 0
         proxyProgressBar?.progress = 0
-        proxyProgressText?.text = "Membuat proxy ${proxyCompletedCount + 1} dari ${proxyCompletedCount + proxyQueue.size} • 0%"
+        proxyProgressText?.text = "Klip ${proxyCompletedCount + 1} dari ${proxyCompletedCount + proxyQueue.size} • 0%"
 
         try {
-            val editedItem = EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(source)))
-                .setEffects(Effects(emptyList(), listOf(Presentation.createForShortSide(proxyTargetQuality))))
+            val sourceMediaItem = MediaItem.Builder()
+                .setUri(Uri.parse(clip.sourceUri))
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                        .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(clip.sourceStartMs + 1L))
+                        .build()
+                )
+                .build()
+            val editedItem = EditedMediaItem.Builder(sourceMediaItem)
+                .setEffects(
+                    Effects(
+                        emptyList(),
+                        listOf(
+                            Presentation.createForShortSide(proxyTargetQuality),
+                            FrameDropEffect.createDefaultFrameDropEffect(proxyTargetFps.toFloat())
+                        )
+                    )
+                )
                 .build()
             val sequence = EditedMediaItemSequence.Builder(listOf(editedItem)).build()
             val composition = Composition.Builder(listOf(sequence)).build()
@@ -1309,26 +1362,37 @@ class MainActivity : AppCompatActivity() {
         proxyDialog = null
         proxyProgressBar = null
         proxyProgressText = null
-        showMessage("Pembuatan proxy dibatalkan. Preview memakai sumber asli.")
+        showMessage("Pembuatan proxy dibatalkan.")
     }
 
-    /** Satu potongan timeline = satu MediaItem preview. */
+    /** Preview menggunakan proxy hasil potongan bila tersedia; selain itu sumber asli. */
     private fun buildEditedVideoItems(): List<MediaItem> {
         return videoClipManager.clips.map { clip ->
             val cachedProxy = if (previewQualityShortSide > 0) {
-                previewProxyFile(clip.sourceUri, previewQualityShortSide)
+                previewProxyFile(clip, previewQualityShortSide, previewProxyFps)
                     .takeIf { it.exists() && it.length() >= 1024L }
             } else null
-            val previewUri = cachedProxy?.let { Uri.fromFile(it) } ?: Uri.parse(clip.sourceUri)
-            MediaItem.Builder()
-                .setUri(previewUri)
-                .setClippingConfiguration(
-                    MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
-                        .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(clip.sourceStartMs + 1L))
-                        .build()
-                )
-                .build()
+            val mediaBuilder = MediaItem.Builder()
+            if (cachedProxy != null) {
+                mediaBuilder
+                    .setUri(Uri.fromFile(cachedProxy))
+                    .setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(0L)
+                            .setEndPositionMs(clip.durationMs.coerceAtLeast(1L))
+                            .build()
+                    )
+            } else {
+                mediaBuilder
+                    .setUri(Uri.parse(clip.sourceUri))
+                    .setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                            .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(clip.sourceStartMs + 1L))
+                            .build()
+                    )
+            }
+            mediaBuilder.build()
         }
     }
 
