@@ -242,7 +242,11 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = bg
         window.navigationBarColor = bg
 
-        player = ExoPlayer.Builder(this).build()
+        player = ExoPlayer.Builder(this).build().apply {
+            // Siapkan sebagian awal klip berikutnya sebelum klip aktif selesai.
+            // Ini mengurangi jeda saat ExoPlayer berpindah antar MediaItem hasil split.
+            preloadConfiguration = ExoPlayer.PreloadConfiguration(2_000_000L)
+        }
 
         handler.post(playbackUpdater)
         handler.post(timelineFrameUpdater)
