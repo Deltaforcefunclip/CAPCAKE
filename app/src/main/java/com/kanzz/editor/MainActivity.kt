@@ -119,26 +119,11 @@ class MainActivity : AppCompatActivity() {
     // Scrubbing preview memakai optimasi decoder bawaan Media3.
     private var pendingScrubPositionMs = 0L
     private var isTimelineScrubbing = false
-    private var scrubPreviewScheduled = false
-
-    // Batasi seek preview menjadi maksimal sekitar 30 kali/detik.
-    // Gerakan jari yang datang lebih cepat hanya memperbarui target terbaru,
-    // sehingga decoder tidak dibanjiri perintah seek saat melewati batas potongan.
-    private val scrubPreviewRunnable = Runnable {
-        scrubPreviewScheduled = false
-        if (isTimelineScrubbing) {
-            seekTimelinePosition(pendingScrubPositionMs)
-        }
-    }
-
     private val scrubFinishRunnable = Runnable {
         if (isTimelineScrubbing) {
-            handler.removeCallbacks(scrubPreviewRunnable)
-            scrubPreviewScheduled = false
-
-            // Seek terakhir memakai mode presisi setelah gerakan jari berhenti.
-            player.setSeekParameters(SeekParameters.EXACT)
+            // Keluar dari mode scrubbing, lalu lakukan seek akhir yang presisi.
             player.setScrubbingModeEnabled(false)
+            player.setSeekParameters(SeekParameters.EXACT)
             seekTimelinePosition(pendingScrubPositionMs)
 
             // Tahan indikator waktu pada target jari sampai seek akhir diproses.
@@ -892,17 +877,10 @@ class MainActivity : AppCompatActivity() {
                 if (!isTimelineScrubbing) {
                     isTimelineScrubbing = true
                     if (player.isPlaying) player.pause()
-                    player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
                     player.setScrubbingModeEnabled(true)
                     updatePlayButton()
                 }
-
-                // Jangan seek pada setiap event sentuhan. Simpan posisi terbaru,
-                // lalu proses satu kali per interval 33 ms agar preview lebih stabil.
-                if (!scrubPreviewScheduled) {
-                    scrubPreviewScheduled = true
-                    handler.postDelayed(scrubPreviewRunnable, 33L)
-                }
+                seekTimelinePosition(position)
 
                 handler.removeCallbacks(scrubFinishRunnable)
                 handler.postDelayed(scrubFinishRunnable, 140L)
