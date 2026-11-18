@@ -146,9 +146,19 @@ class VideoClipManager {
         val moving = clips.removeAt(oldIndex)
         recalculateTimeline()
 
+        // Tentukan slot berdasarkan titik tengah klip lain. Dengan begitu,
+        // melepas di bagian tengah klip terasa natural: sebelum/ sesudah klip
+        // mengikuti sisi tempat klip dilepaskan, bukan sekadar awal klip.
         val target = targetStartMs.coerceAtLeast(0L)
-        val insertIndex = clips.indexOfFirst { it.timelineStartMs >= target }
-            .let { if (it < 0) clips.size else it }
+        val insertIndex = clips.indexOfFirst { other ->
+            target < other.timelineStartMs + other.timelineDurationMs / 2L
+        }.let { if (it < 0) clips.size else it }
+
+        if (insertIndex == oldIndex) {
+            clips.add(oldIndex, moving)
+            recalculateTimeline()
+            return false
+        }
 
         clips.add(insertIndex, moving)
         recalculateTimeline()
