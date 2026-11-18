@@ -679,7 +679,7 @@ class MainActivity : AppCompatActivity() {
             contentResolver.openInputStream(uri)?.use { input ->
                 destination.outputStream().use { output -> input.copyTo(output) }
             } ?: throw IllegalStateException("Tidak dapat membaca file.")
-            showMessage("Audio disimpan di perpustakaan CAPCAKE.")
+            // File tersimpan otomatis di penyimpanan internal aplikasi; tanpa dialog sukses.
         } catch (e: Exception) {
             showMessage("Gagal menyimpan audio: ${e.message ?: "file tidak terbaca"}")
         }
@@ -923,7 +923,7 @@ class MainActivity : AppCompatActivity() {
         } ?: "Audio"
 
         val clip = AudioClip(
-            startTimeMs = timelineController.positionMs,
+            startTimeMs = currentTimelinePosition().coerceIn(0L, videoClipManager.durationMs),
             durationMs = durationMs,
             filePath = uri.toString(),
             sourceStartMs = 0L,
@@ -2872,6 +2872,9 @@ class MainActivity : AppCompatActivity() {
         if (::timeline.isInitialized) {
             timeline.updatePositionFromPlayer(position)
         }
+        // Audio track memakai controller waktu yang sama; gambar ulang setiap frame
+        // agar klip tetap melekat pada waktunya saat playhead bergerak.
+        audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
 
         currentProject?.position = position
     }
