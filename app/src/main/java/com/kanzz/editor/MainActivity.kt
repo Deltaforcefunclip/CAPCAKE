@@ -709,6 +709,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun openEditor() {
         editorOpen = true
+        val ratioProjectKey = currentProject?.id ?: "default"
+        selectedPreviewRatio = prefs.getString("preview_ratio_$ratioProjectKey", "9:16") ?: "9:16"
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -782,6 +784,10 @@ class MainActivity : AppCompatActivity() {
         )
 
         playerView.player = player
+        val initialRatioParts = selectedPreviewRatio.split(":")
+        playerView.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(
+            androidx.media3.ui.R.id.exo_content_frame
+        )?.setAspectRatio(initialRatioParts[0].toFloat() / initialRatioParts[1].toFloat())
 
         // Tombol Preview (PV), melayang di bawah tombol EXPORT.
         val previewQualityButton = TextView(this).apply {
@@ -1778,6 +1784,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(8), dp(18), dp(8), dp(18))
         }
 
+        lateinit var ratioDialog: androidx.appcompat.app.AlertDialog
         ratios.forEach { ratio ->
             val parts = ratio.split(":")
             val widthRatio = parts[0].toFloat()
@@ -1822,18 +1829,17 @@ class MainActivity : AppCompatActivity() {
             item.addView(label, LinearLayout.LayoutParams(-1, dp(22)))
             item.setOnClickListener {
                 applyPreviewAspectRatio(ratio)
-                (item.parent as? android.view.ViewGroup)?.let { parent ->
-                    (parent.parent as? androidx.appcompat.app.AlertDialog)?.dismiss()
-                }
+                ratioDialog.dismiss()
             }
             content.addView(item, LinearLayout.LayoutParams(0, dp(92), 1f))
         }
 
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        ratioDialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Pilih Rasio")
             .setView(content)
             .setNegativeButton("Tutup", null)
-            .show()
+            .create()
+        ratioDialog.show()
     }
 
     private fun applyPreviewAspectRatio(ratio: String) {
