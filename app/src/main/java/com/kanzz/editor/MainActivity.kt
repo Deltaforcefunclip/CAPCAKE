@@ -806,7 +806,7 @@ class MainActivity : AppCompatActivity() {
                 strokeWidth = dp(2).toFloat()
             }
             private val shadePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = Color.argb(115, 0, 0, 0)
+                color = Color.BLACK
                 style = Paint.Style.FILL
             }
             private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -1969,6 +1969,11 @@ class MainActivity : AppCompatActivity() {
                     if (event.pointerCount >= 2) {
                         val currentAngle = angle(event)
                         previewRotation += normalizeAngle(currentAngle - lastAngle)
+                        // Magnet rotasi ringan di kelipatan 90 derajat (lurus/datar/tegak).
+                        val nearestRightAngle = kotlin.math.round(previewRotation / 90f) * 90f
+                        if (abs(previewRotation - nearestRightAngle) <= 1.5f) {
+                            previewRotation = nearestRightAngle
+                        }
                         lastAngle = currentAngle
                         applyPreviewTransform()
                         moved = true
@@ -1978,7 +1983,8 @@ class MainActivity : AppCompatActivity() {
                         if (abs(event.x - downX) > dp(5) || abs(event.y - downY) > dp(5)) moved = true
                         previewTranslateX += dx
                         previewTranslateY += dy
-                        val snap = dp(12).toFloat()
+                        // Magnet posisi dibuat ringan: hanya mengunci sangat dekat pusat.
+                        val snap = dp(3).toFloat()
                         previewMagnetVertical = abs(previewTranslateX) < snap
                         previewMagnetHorizontal = abs(previewTranslateY) < snap
                         if (previewMagnetVertical) previewTranslateX = 0f
@@ -2558,7 +2564,25 @@ class MainActivity : AppCompatActivity() {
                     .setEffects(
                         Effects(
                             emptyList(),
-                            listOf(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3f)))
+                            buildList {
+                                add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3f)))
+                                if (previewScale != 1f || previewRotation % 360f != 0f) {
+                                    add(
+                                        androidx.media3.effect.ScaleAndRotateTransformation.Builder()
+                                            .setScale(previewScale, previewScale)
+                                            .setRotationDegrees(previewRotation)
+                                            .build()
+                                    )
+                                }
+                                val ratioParts = selectedPreviewRatio.split(":")
+                                val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
+                                add(
+                                    Presentation.createForAspectRatio(
+                                        outputAspect,
+                                        Presentation.LAYOUT_SCALE_TO_FIT
+                                    )
+                                )
+                            }
                         )
                     )
                     .build()
