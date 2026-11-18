@@ -2573,9 +2573,28 @@ class MainActivity : AppCompatActivity() {
                                 // Zoom diekspor sebagai crop bagian tengah sumber, lalu
                                 // bagian yang tersisa diperbesar memenuhi frame hasil.
                                 // Ini lebih konsisten daripada ScaleAndRotate untuk zoom.
-                                if (previewScale > 1.001f) {
+                                // Pertahankan komposisi video di dalam kanvas.
+                                // Zoom dan geser diterapkan sebagai area sumber yang terlihat,
+                                // bukan dengan memaksa video memenuhi rasio kanvas.
+                                if (previewScale > 1.001f ||
+                                    previewTranslateX != 0f || previewTranslateY != 0f
+                                ) {
                                     val half = (1f / previewScale).coerceIn(0.05f, 1f)
-                                    add(Crop(-half, half, -half, half))
+                                    val frameW = playerView.width.coerceAtLeast(1).toFloat()
+                                    val frameH = playerView.height.coerceAtLeast(1).toFloat()
+                                    // Arah crop berlawanan dengan arah geser pada preview.
+                                    val centerX = (-2f * previewTranslateX / frameW / previewScale)
+                                        .coerceIn(-1f + half, 1f - half)
+                                    val centerY = (2f * previewTranslateY / frameH / previewScale)
+                                        .coerceIn(-1f + half, 1f - half)
+                                    add(
+                                        Crop(
+                                            (centerX - half).coerceIn(-1f, 1f),
+                                            (centerX + half).coerceIn(-1f, 1f),
+                                            (centerY - half).coerceIn(-1f, 1f),
+                                            (centerY + half).coerceIn(-1f, 1f)
+                                        )
+                                    )
                                 }
 
                                 // Rotasi tetap memakai transformasi terpisah; skala sudah
@@ -2595,7 +2614,7 @@ class MainActivity : AppCompatActivity() {
                                     add(
                                         Presentation.createForAspectRatio(
                                             outputAspect,
-                                            Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
+                                            Presentation.LAYOUT_SCALE_TO_FIT
                                         )
                                     )
                                 }
