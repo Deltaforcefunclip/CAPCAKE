@@ -2609,7 +2609,7 @@ class MainActivity : AppCompatActivity() {
                                     add(
                                         Presentation.createForAspectRatio(
                                             outputAspect,
-                                            Presentation.LAYOUT_SCALE_TO_FIT
+                                            Presentation.LAYOUT_SCALE_TO_FIT_WITH_CROP
                                         )
                                     )
                                 }
