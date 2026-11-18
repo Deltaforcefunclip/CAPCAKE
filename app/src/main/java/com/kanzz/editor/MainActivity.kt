@@ -37,6 +37,7 @@ import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.effect.Presentation
+import androidx.media3.effect.Crop
 import androidx.media3.effect.FrameDropEffect
 import androidx.media3.transformer.Effects
 import org.json.JSONArray
@@ -2568,9 +2569,26 @@ class MainActivity : AppCompatActivity() {
                             emptyList(),
                             buildList {
                                 add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3f)))
+
+                                // Zoom diekspor sebagai crop bagian tengah sumber, lalu
+                                // bagian yang tersisa diperbesar memenuhi frame hasil.
+                                // Ini lebih konsisten daripada ScaleAndRotate untuk zoom.
+                                if (previewScale > 1.001f) {
+                                    val half = (1f / previewScale).coerceIn(0.05f, 1f)
+                                    add(Crop(-half, half, -half, half))
+                                }
+
+                                // Rotasi tetap memakai transformasi terpisah; skala sudah
+                                // ditangani oleh Crop agar tidak dikembalikan ke ukuran awal.
+                                if (previewRotation % 360f != 0f) {
+                                    add(
+                                        androidx.media3.effect.ScaleAndRotateTransformation.Builder()
+                                            .setRotationDegrees(previewRotation)
+                                            .build()
+                                    )
+                                }
+
                                 // Rasio hanya diterapkan bila pengguna memilihnya.
-                                // Terapkan kanvas lebih dulu, lalu zoom/rotasi agar efek zoom
-                                // tidak dinormalisasi kembali oleh Presentation.
                                 if (selectedPreviewRatio.isNotBlank()) {
                                     val ratioParts = selectedPreviewRatio.split(":")
                                     val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
@@ -2579,14 +2597,6 @@ class MainActivity : AppCompatActivity() {
                                             outputAspect,
                                             Presentation.LAYOUT_SCALE_TO_FIT
                                         )
-                                    )
-                                }
-                                if (previewScale != 1f || previewRotation % 360f != 0f) {
-                                    add(
-                                        androidx.media3.effect.ScaleAndRotateTransformation.Builder()
-                                            .setScale(previewScale, previewScale)
-                                            .setRotationDegrees(previewRotation)
-                                            .build()
                                     )
                                 }
                             }
