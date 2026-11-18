@@ -115,6 +115,8 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private var playbackListener: Player.Listener? = null
+    // Mencegah callback refresh preview lama menimpa hasil edit yang lebih baru.
+    private var previewRefreshGeneration = 0
 
     // Scrubbing preview memakai optimasi decoder bawaan Media3.
     private var pendingScrubPositionMs = 0L
@@ -1146,8 +1148,10 @@ class MainActivity : AppCompatActivity() {
         // melalui refreshEditedPreview() di callback onMoveClip.
     }
 
-    /** Rebuild playlist after split/delete/duplicate while keeping the preview at the same edit time. */
+    /** Rebuild playlist setelah edit, lalu seek dan lanjutkan playback setelah decoder siap. */
     private fun refreshEditedPreview(positionMs: Long = currentTimelinePosition()) {
+        val generation = ++previewRefreshGeneration
+
         if (videoClipManager.clips.isEmpty()) {
             player.pause()
             timelineController.setDuration(0L)
@@ -1157,15 +1161,36 @@ class MainActivity : AppCompatActivity() {
         }
 
         val wasPlaying = player.isPlaying
-        player.pause()
-        player.setMediaItems(buildEditedVideoItems())
-        player.prepare()
         val safePosition = positionMs.coerceIn(0L, videoClipManager.durationMs)
-        seekTimelinePosition(safePosition)
+
+        player.pause()
+        player.playWhenReady = false
+        player.setMediaItems(buildEditedVideoItems())
+
         timelineController.setDuration(videoClipManager.durationMs)
         timelineController.setPosition(safePosition)
         timeline.invalidate()
-        if (wasPlaying) player.play()
+
+        // Jangan seek atau mulai memutar saat playlist/track audio baru belum READY.
+        // Ini menghindari audio bawaan video terlambat aktif setelah klip dipotong.
+        val refreshListener = object : Player.Listener {
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state != Player.STATE_READY) return
+                player.removeListener(this)
+                if (generation != previewRefreshGeneration) return
+
+                seekTimelinePosition(safePosition)
+                syncVideoClipProperties()
+                updateTime()
+                if (wasPlaying) player.play()
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                player.removeListener(this)
+            }
+        }
+        player.addListener(refreshListener)
+        player.prepare()
         updateTime()
     }
 
