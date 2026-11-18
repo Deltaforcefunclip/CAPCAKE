@@ -892,6 +892,9 @@ class MainActivity : AppCompatActivity() {
             onViewportChanged = {
                 audioTrackViews.values.forEach { it.invalidate() }
             },
+            onPreviewMoveClip = { clipId, targetStartMs ->
+                previewClipMoveAt(clipId, targetStartMs)
+            },
             onMoveClip = { clipId, targetStartMs ->
                 val current = videoClipManager.find(clipId)
                 if (current != null) {
@@ -1106,6 +1109,46 @@ class MainActivity : AppCompatActivity() {
             accumulated = end
         }
         player.seekTo(targetIndex, localPosition)
+    }
+
+    /**
+     * Preview frame saat klip digeser: hitung susunan sementara tanpa mengubah project,
+     * lalu arahkan player ke sumber klip yang berada tepat di bawah playhead.
+     */
+    private fun previewClipMoveAt(clipId: String, targetStartMs: Long) {
+        val originalClips = videoClipManager.clips.toList()
+        val moving = originalClips.firstOrNull { it.id == clipId } ?: return
+        if (originalClips.size < 2) return
+
+        val previewOrder = originalClips.toMutableList()
+        previewOrder.removeAll { it.id == clipId }
+        val targetCenter = targetStartMs.coerceAtLeast(0L) + moving.timelineDurationMs / 2L
+        val insertIndex = previewOrder.indexOfFirst { other ->
+            targetCenter <= other.timelineDurationMs / 2L + previewOrder
+                .takeWhile { it.id != other.id }
+                .sumOf { it.timelineDurationMs }
+        }.let { if (it < 0) previewOrder.size else it }
+        previewOrder.add(insertIndex, moving)
+
+        val playhead = timelineController.positionMs.coerceIn(0L, videoClipManager.durationMs)
+        var cursor = 0L
+        for (clip in previewOrder) {
+            val end = cursor + clip.timelineDurationMs
+            if (playhead < end || clip === previewOrder.last()) {
+                val localTimeline = (playhead - cursor).coerceIn(0L, clip.timelineDurationMs)
+                val sourcePosition = (clip.sourceStartMs +
+                    (localTimeline * clip.speed.coerceIn(0.25f, 3f)).toLong())
+                    .coerceIn(clip.sourceStartMs, clip.sourceEndMs)
+                val originalIndex = originalClips.indexOfFirst { it.id == clip.id }
+                if (originalIndex >= 0) {
+                    player.pause()
+                    player.seekTo(originalIndex, sourcePosition)
+                    updateTime()
+                }
+                return
+            }
+            cursor = end
+        }
     }
 
     /** Rebuild playlist after split/delete/duplicate while keeping the preview at the same edit time. */
@@ -2137,6 +2180,7 @@ class TimelineView(
     private val onChange: (Long) -> Unit,
     private val onTap: (VideoClip?) -> Unit,
     private val onViewportChanged: () -> Unit,
+    private val onPreviewMoveClip: (String, Long) -> Unit,
     private val onMoveClip: (String, Long) -> Unit,
     private val onTrimClip: (String, Long, Long) -> Unit
 ) : View(context) {
@@ -2183,6 +2227,8 @@ class TimelineView(
     private var isDraggingClip = false
     private var dragOffsetMs = 0L
     private var dragTargetStartMs = 0L
+    private var lastDragPreviewAt = 0L
+    private var lastDragPreviewTargetMs = Long.MIN_VALUE
     private var dragSnapTargetMs: Long? = null
     private var trimClipId: String? = null
     private var trimEdge: Int = 0 // -1 = kiri, +1 = kanan
@@ -2828,6 +2874,14 @@ class TimelineView(
                             )
                             dragTargetStartMs = snapped.timeMs.coerceAtLeast(0L)
                             dragSnapTargetMs = snapped.targetTimeMs
+                            val now = android.os.SystemClock.uptimeMillis()
+                            if (dragTargetStartMs != lastDragPreviewTargetMs &&
+                                now - lastDragPreviewAt >= 35L
+                            ) {
+                                lastDragPreviewTargetMs = dragTargetStartMs
+                                lastDragPreviewAt = now
+                                onPreviewMoveClip(clip.id, dragTargetStartMs)
+                            }
                             invalidate()
                         } else {
                             val dx = event.x - lastX
