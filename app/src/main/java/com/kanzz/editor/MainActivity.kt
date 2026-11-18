@@ -2228,6 +2228,8 @@ class TimelineView(
     // Drag klip memakai long-press agar geser biasa tetap berfungsi untuk scrub/scroll.
     private var pressedClip: VideoClip? = null
     private var pointerDown = false
+    // Setelah pinch zoom dimulai, gerakan satu jari yang tersisa tidak boleh dianggap scrub.
+    private var isPinchGesture = false
     private var isDraggingClip = false
     private var dragOffsetMs = 0L
     private var dragTargetStartMs = 0L
@@ -2798,6 +2800,7 @@ class TimelineView(
                 lastX = event.x
                 moved = false
                 pointerDown = true
+                isPinchGesture = false
                 isDraggingClip = false
                 dragSnapTargetMs = null
                 trimClipId = null
@@ -2841,6 +2844,8 @@ class TimelineView(
             }
 
             MotionEvent.ACTION_POINTER_DOWN -> {
+                // Kunci gesture sebagai pinch sampai SEMUA jari terangkat.
+                isPinchGesture = true
                 removeCallbacks(dragLongPress)
                 pressedClip = null
                 trimClipId = null
@@ -2850,6 +2855,8 @@ class TimelineView(
             }
 
             MotionEvent.ACTION_MOVE -> {
+                // Jari yang tersisa setelah pinch tidak boleh menggeser playhead.
+                if (isPinchGesture) return true
                 if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
                     if (trimClipId != null) {
                         moved = true
@@ -2923,6 +2930,18 @@ class TimelineView(
                 pointerDown = false
                 removeCallbacks(dragLongPress)
 
+                // Pinch selesai hanya saat pointer terakhir terangkat. Abaikan ACTION_UP
+                // agar posisi preview tidak ikut berubah setelah zoom.
+                if (isPinchGesture) {
+                    isPinchGesture = false
+                    pressedClip = null
+                    trimClipId = null
+                    isDraggingClip = false
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    invalidate()
+                    return true
+                }
+
                 if (trimClipId != null) {
                     val id = trimClipId!!
                     val leftDelta = if (trimEdge < 0) trimDeltaMs else 0L
@@ -2966,6 +2985,7 @@ class TimelineView(
 
             MotionEvent.ACTION_CANCEL -> {
                 pointerDown = false
+                isPinchGesture = false
                 removeCallbacks(dragLongPress)
                 isDraggingClip = false
                 pressedClip = null
