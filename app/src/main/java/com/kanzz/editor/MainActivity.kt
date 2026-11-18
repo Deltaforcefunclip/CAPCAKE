@@ -43,6 +43,7 @@ import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
+import java.security.MessageDigest
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -119,6 +120,29 @@ class MainActivity : AppCompatActivity() {
     // Mencegah callback refresh preview lama menimpa hasil edit yang lebih baru.
     private var previewRefreshGeneration = 0
     private var previewQualityShortSide = 720
+
+    // Proxy preview cache dan proses transcode berurutan.
+    private var proxyTransformer: Transformer? = null
+    private var proxyDialog: androidx.appcompat.app.AlertDialog? = null
+    private var proxyProgressBar: ProgressBar? = null
+    private var proxyProgressText: TextView? = null
+    private val proxyProgressHolder = ProgressHolder()
+    private val proxyQueue = ArrayDeque<String>()
+    private var proxyTargetQuality = 720
+    private var proxyCompletedCount = 0
+    private var proxyFailedCount = 0
+    private var proxyGenerationId = 0
+    private val proxyProgressRunnable = object : Runnable {
+        override fun run() {
+            val active = proxyTransformer ?: return
+            val state = active.getProgress(proxyProgressHolder)
+            if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
+                proxyProgressBar?.progress = proxyProgressHolder.progress
+                proxyProgressText?.text = "Membuat proxy ${proxyCompletedCount + 1} • ${proxyProgressHolder.progress}%"
+            }
+            if (proxyTransformer != null) handler.postDelayed(this, 400L)
+        }
+    }
 
     // Scrubbing preview memakai optimasi decoder bawaan Media3.
     private var pendingScrubPositionMs = 0L
@@ -258,10 +282,6 @@ class MainActivity : AppCompatActivity() {
         }
 
         previewQualityShortSide = prefs.getInt("preview_quality_short_side", 720)
-        player.setVideoEffects(
-            if (previewQualityShortSide <= 0) emptyList()
-            else listOf(Presentation.createForShortSide(previewQualityShortSide))
-        )
 
         handler.post(playbackUpdater)
         handler.post(timelineFrameUpdater)
@@ -1080,6 +1100,7 @@ class MainActivity : AppCompatActivity() {
                     // Replace the original full-length source with the edited clip sequence.
                     player.setMediaItems(buildEditedVideoItems())
                     player.prepare()
+                    if (previewQualityShortSide > 0) ensurePreviewProxies(previewQualityShortSide)
                     return
                 }
 
@@ -1117,30 +1138,190 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Kualitas Preview")
             .setSingleChoiceItems(labels, selected) { dialog, which ->
                 val chosen = values[which]
+                dialog.dismiss()
+                if (proxyTransformer != null) {
+                    showMessage("Tunggu proses proxy selesai terlebih dahulu.")
+                    return@setSingleChoiceItems
+                }
                 previewQualityShortSide = chosen
                 prefs.edit().putInt("preview_quality_short_side", chosen).apply()
-
-                // Efek hanya mengubah ukuran frame yang dirender pada preview.
-                // MediaItem sumber dan jalur ekspor tetap memakai video asli.
-                player.setVideoEffects(
-                    if (chosen <= 0) emptyList()
-                    else listOf(Presentation.createForShortSide(chosen))
-                )
-                dialog.dismiss()
-                showMessage(
-                    if (chosen <= 0) "Preview: Original"
-                    else "Preview: ${labels[which]}"
-                )
+                if (chosen == 0) {
+                    refreshEditedPreview()
+                    showMessage("Preview: Original")
+                } else {
+                    ensurePreviewProxies(chosen)
+                }
             }
             .setNegativeButton("Tutup", null)
             .show()
     }
 
+    private fun previewProxyDirectory(): File =
+        File(cacheDir, "preview_proxies").apply { mkdirs() }
+
+    private fun previewProxyFile(sourceUri: String, quality: Int): File {
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(sourceUri.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        return File(previewProxyDirectory(), "${digest}_${quality}.mp4")
+    }
+
+    private fun ensurePreviewProxies(quality: Int) {
+        if (quality <= 0 || videoClipManager.clips.isEmpty() || proxyTransformer != null) return
+        proxyTargetQuality = quality
+        proxyQueue.clear()
+        videoClipManager.clips.map { it.sourceUri }.distinct().forEach { source ->
+            val cached = previewProxyFile(source, quality)
+            if (!cached.exists() || cached.length() < 1024L) {
+                cached.delete()
+                proxyQueue.addLast(source)
+            }
+        }
+        if (proxyQueue.isEmpty()) {
+            refreshEditedPreview()
+            showMessage("Proxy preview siap digunakan.")
+            return
+        }
+
+        proxyCompletedCount = 0
+        proxyFailedCount = 0
+        proxyGenerationId++
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+        }
+        proxyProgressText = TextView(this).apply {
+            text = "Menyiapkan video preview..."
+            setTextColor(Color.WHITE)
+            textSize = 13f
+        }
+        proxyProgressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+        }
+        content.addView(proxyProgressText)
+        content.addView(proxyProgressBar, LinearLayout.LayoutParams(-1, dp(8)).apply {
+            topMargin = dp(14)
+        })
+        proxyDialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Membuat Preview Proxy")
+            .setMessage("Video asli tetap digunakan saat ekspor.")
+            .setView(content)
+            .setNegativeButton("Batal") { _, _ -> cancelPreviewProxyGeneration() }
+            .setCancelable(false)
+            .create()
+        proxyDialog?.show()
+        startNextPreviewProxy()
+    }
+
+    private fun startNextPreviewProxy() {
+        if (proxyQueue.isEmpty()) {
+            handler.removeCallbacks(proxyProgressRunnable)
+            proxyTransformer = null
+            proxyDialog?.dismiss()
+            proxyDialog = null
+            proxyProgressBar = null
+            proxyProgressText = null
+            val position = currentTimelinePosition()
+            refreshEditedPreview(position)
+            showMessage(
+                if (proxyFailedCount == 0) "Proxy preview selesai dibuat."
+                else "Sebagian proxy gagal. Video asli tetap digunakan untuk sumber tersebut."
+            )
+            return
+        }
+
+        val source = proxyQueue.first()
+        val target = previewProxyFile(source, proxyTargetQuality)
+        val temp = File(target.parentFile, "${target.nameWithoutExtension}_tmp_${proxyGenerationId}.mp4")
+        temp.delete()
+        proxyProgressHolder.progress = 0
+        proxyProgressBar?.progress = 0
+        proxyProgressText?.text = "Membuat proxy ${proxyCompletedCount + 1} dari ${proxyCompletedCount + proxyQueue.size} • 0%"
+
+        try {
+            val editedItem = EditedMediaItem.Builder(MediaItem.fromUri(Uri.parse(source)))
+                .setEffects(Effects(emptyList(), listOf(Presentation.createForShortSide(proxyTargetQuality))))
+                .build()
+            val sequence = EditedMediaItemSequence.Builder(listOf(editedItem)).build()
+            val composition = Composition.Builder(listOf(sequence)).build()
+            val generation = proxyGenerationId
+            val listener = object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                    if (generation != proxyGenerationId) {
+                        temp.delete()
+                        return
+                    }
+                    proxyTransformer = null
+                    handler.removeCallbacks(proxyProgressRunnable)
+                    target.delete()
+                    try {
+                        if (!temp.renameTo(target)) {
+                            temp.copyTo(target, overwrite = true)
+                            temp.delete()
+                        }
+                        if (target.exists() && target.length() >= 1024L) proxyCompletedCount++
+                        else proxyFailedCount++
+                    } catch (_: Exception) {
+                        target.delete()
+                        temp.delete()
+                        proxyFailedCount++
+                    }
+                    proxyQueue.removeFirstOrNull()
+                    startNextPreviewProxy()
+                }
+
+                override fun onError(
+                    composition: Composition,
+                    exportResult: ExportResult,
+                    exportException: ExportException
+                ) {
+                    if (generation != proxyGenerationId) {
+                        temp.delete()
+                        return
+                    }
+                    proxyTransformer = null
+                    handler.removeCallbacks(proxyProgressRunnable)
+                    temp.delete()
+                    proxyFailedCount++
+                    proxyQueue.removeFirstOrNull()
+                    startNextPreviewProxy()
+                }
+            }
+            proxyTransformer = Transformer.Builder(this).addListener(listener).build()
+            proxyTransformer?.start(composition, temp.absolutePath)
+            handler.post(proxyProgressRunnable)
+        } catch (_: Exception) {
+            proxyTransformer = null
+            temp.delete()
+            proxyFailedCount++
+            proxyQueue.removeFirstOrNull()
+            startNextPreviewProxy()
+        }
+    }
+
+    private fun cancelPreviewProxyGeneration() {
+        proxyGenerationId++
+        handler.removeCallbacks(proxyProgressRunnable)
+        try { proxyTransformer?.cancel() } catch (_: Exception) {}
+        proxyTransformer = null
+        proxyQueue.clear()
+        proxyDialog = null
+        proxyProgressBar = null
+        proxyProgressText = null
+        showMessage("Pembuatan proxy dibatalkan. Preview memakai sumber asli.")
+    }
+
     /** Satu potongan timeline = satu MediaItem preview. */
     private fun buildEditedVideoItems(): List<MediaItem> {
         return videoClipManager.clips.map { clip ->
+            val cachedProxy = if (previewQualityShortSide > 0) {
+                previewProxyFile(clip.sourceUri, previewQualityShortSide)
+                    .takeIf { it.exists() && it.length() >= 1024L }
+            } else null
+            val previewUri = cachedProxy?.let { Uri.fromFile(it) } ?: Uri.parse(clip.sourceUri)
             MediaItem.Builder()
-                .setUri(Uri.parse(clip.sourceUri))
+                .setUri(previewUri)
                 .setClippingConfiguration(
                     MediaItem.ClippingConfiguration.Builder()
                         .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
