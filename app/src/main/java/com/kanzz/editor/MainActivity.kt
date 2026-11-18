@@ -1142,48 +1142,33 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val values = intArrayOf(0, 1080, 720, 480)
-        val labels = arrayOf(
-            "Original (tanpa proxy)",
-            "1080p - kualitas tinggi",
-            "720p - seimbang",
-            "480p - paling ringan"
-        )
-        val selected = values.indexOf(previewQualityShortSide).coerceAtLeast(0)
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Preview Proxy (Opsional)")
-            
-            .setSingleChoiceItems(labels, selected) { dialog, which ->
-                val chosen = values[which]
-                dialog.dismiss()
-                previewQualityShortSide = chosen
-                prefs.edit().putInt("preview_quality_short_side", chosen).apply()
-                if (chosen == 0) {
-                    refreshEditedPreview()
-                    showMessage("Preview menggunakan video asli.")
-                } else {
-                    showProxyFpsDialog(chosen)
-                }
-            }
-            .setNegativeButton("Tutup", null)
-            .show()
+        // Resolusi proxy ditetapkan 720p; pengguna hanya memilih FPS.
+        previewQualityShortSide = 720
+        prefs.edit().putInt("preview_quality_short_side", 720).apply()
+        showProxyFpsDialog(720)
     }
 
     private fun showProxyFpsDialog(quality: Int) {
         val fpsValues = intArrayOf(30, 60)
-        val fpsLabels = arrayOf("30 FPS - lebih ringan dan cepat dibuat", "60 FPS - gerakan lebih halus")
-        val selected = fpsValues.indexOf(previewProxyFps).coerceAtLeast(0)
+        val fpsLabels = arrayOf("30 FPS", "60 FPS")
+
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Frame Rate Proxy")
-            .setMessage("FPS proxy tidak mengubah FPS video asli saat ekspor.")
-            .setSingleChoiceItems(fpsLabels, selected) { dialog, which ->
-                val fps = fpsValues[which]
-                dialog.dismiss()
-                previewProxyFps = fps
-                prefs.edit().putInt("preview_proxy_fps", fps).apply()
-                ensurePreviewProxies(quality, fps)
+            .setTitle("Pilih FPS Proxy")
+            .setItems(fpsLabels) { _, which ->
+                val selectedFps = fpsValues[which]
+
+                androidx.appcompat.app.AlertDialog.Builder(this)
+                    .setTitle("Proses Proxy?")
+                    .setMessage("Buat proxy dengan resolusi 720p dan $selectedFps FPS?")
+                    .setNegativeButton("Batalkan", null)
+                    .setPositiveButton("Proses") { _, _ ->
+                        previewProxyFps = selectedFps
+                        prefs.edit().putInt("preview_proxy_fps", selectedFps).apply()
+                        ensurePreviewProxies(720, selectedFps)
+                    }
+                    .show()
             }
-            .setNegativeButton("Batal", null)
+            .setNegativeButton("Batalkan", null)
             .show()
     }
 
