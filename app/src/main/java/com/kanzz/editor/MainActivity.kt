@@ -2459,18 +2459,30 @@ class MainActivity : AppCompatActivity() {
                     audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
                 },
                 onClipDropped = { clip, rawY ->
-                    val targetEntry = audioTrackViews.entries.firstOrNull { (laneId, view) ->
-                        val location = IntArray(2)
-                        view.getLocationOnScreen(location)
-                        rawY >= location[1] && rawY <= location[1] + view.height
-                    }
+                    val targetEntry = audioTrackViews.entries
+                        .mapNotNull { entry ->
+                            val location = IntArray(2)
+                            entry.value.getLocationOnScreen(location)
+                            val top = location[1].toFloat()
+                            val bottom = top + entry.value.height
+                            if (rawY >= top - dp(6) && rawY <= bottom + dp(6)) {
+                                Triple(entry.key, entry.value, kotlin.math.abs(rawY - (top + bottom) / 2f))
+                            } else null
+                        }
+                        .minByOrNull { it.third }
+                        ?: audioTrackViews.entries.minByOrNull { (_, view) ->
+                            val location = IntArray(2)
+                            view.getLocationOnScreen(location)
+                            val centerY = location[1] + view.height / 2f
+                            kotlin.math.abs(rawY - centerY)
+                        }
                     val sourceLaneId = audioClipManager.lanes.firstOrNull { lane ->
                         lane.clips.any { it.id == clip.id }
                     }?.id
-                    if (targetEntry != null && targetEntry.key != sourceLaneId) {
+                    if (targetEntry != null && targetEntry.first != sourceLaneId) {
                         val oldScrollY = audioTracksScroll.scrollY
                         pushUndoSnapshot()
-                        val moved = audioClipManager.moveClipToLane(clip.id, targetEntry.key)
+                        val moved = audioClipManager.moveClipToLane(clip.id, targetEntry.first)
                         if (!moved) {
                             if (undoStack.isNotEmpty()) undoStack.removeLast()
                             Toast.makeText(this, "Layer tujuan masih bertabrakan dengan audio lain.", Toast.LENGTH_SHORT).show()
