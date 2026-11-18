@@ -2570,19 +2570,29 @@ class MainActivity : AppCompatActivity() {
                             buildList {
                                 add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3f)))
 
-                                // Zoom diekspor sebagai crop bagian tengah sumber, lalu
-                                // bagian yang tersisa diperbesar memenuhi frame hasil.
-                                // Ini lebih konsisten daripada ScaleAndRotate untuk zoom.
-                                // Pertahankan komposisi video di dalam kanvas.
-                                // Zoom dan geser diterapkan sebagai area sumber yang terlihat,
-                                // bukan dengan memaksa video memenuhi rasio kanvas.
+                                // Bentuk kanvas output terlebih dahulu. Setelah kanvas terbentuk,
+                                // zoom/crop diterapkan pada kanvas tersebut, bukan pada sumber 16:9.
+                                // Dengan urutan ini, rasio kanvas tetap (misalnya 3:4) sementara
+                                // isi video dapat diperbesar dan area kosong tetap hitam.
+                                if (selectedPreviewRatio.isNotBlank()) {
+                                    val ratioParts = selectedPreviewRatio.split(":")
+                                    val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
+                                    add(
+                                        Presentation.createForAspectRatio(
+                                            outputAspect,
+                                            Presentation.LAYOUT_SCALE_TO_FIT
+                                        )
+                                    )
+                                }
+
+                                // Zoom diterapkan SETELAH kanvas dibuat agar video membesar
+                                // di dalam kanvas tetap, tanpa mengubah rasio output.
                                 if (previewScale > 1.001f ||
                                     previewTranslateX != 0f || previewTranslateY != 0f
                                 ) {
                                     val half = (1f / previewScale).coerceIn(0.05f, 1f)
                                     val frameW = playerView.width.coerceAtLeast(1).toFloat()
                                     val frameH = playerView.height.coerceAtLeast(1).toFloat()
-                                    // Arah crop berlawanan dengan arah geser pada preview.
                                     val centerX = (-2f * previewTranslateX / frameW / previewScale)
                                         .coerceIn(-1f + half, 1f - half)
                                     val centerY = (2f * previewTranslateY / frameH / previewScale)
@@ -2597,25 +2607,12 @@ class MainActivity : AppCompatActivity() {
                                     )
                                 }
 
-                                // Rotasi tetap memakai transformasi terpisah; skala sudah
-                                // ditangani oleh Crop agar tidak dikembalikan ke ukuran awal.
+                                // Rotasi tetap dipertahankan sebagai efek terpisah.
                                 if (previewRotation % 360f != 0f) {
                                     add(
                                         androidx.media3.effect.ScaleAndRotateTransformation.Builder()
                                             .setRotationDegrees(previewRotation)
                                             .build()
-                                    )
-                                }
-
-                                // Rasio hanya diterapkan bila pengguna memilihnya.
-                                if (selectedPreviewRatio.isNotBlank()) {
-                                    val ratioParts = selectedPreviewRatio.split(":")
-                                    val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
-                                    add(
-                                        Presentation.createForAspectRatio(
-                                            outputAspect,
-                                            Presentation.LAYOUT_SCALE_TO_FIT
-                                        )
                                     )
                                 }
                             }
