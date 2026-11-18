@@ -2551,6 +2551,20 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // Diagnostik sementara: memastikan nilai transform preview terbaca saat Export ditekan.
+        Toast.makeText(
+            this,
+            String.format(
+                Locale.US,
+                "Diagnostik ekspor — Zoom: %.2fx | Rotasi: %.1f° | Geser: %.0f, %.0f",
+                previewScale,
+                previewRotation,
+                previewTranslateX,
+                previewTranslateY
+            ),
+            Toast.LENGTH_LONG
+        ).show()
+
         val editedItems = try {
             videoClipManager.clips.map { clip ->
                 val mediaItem = MediaItem.Builder()
