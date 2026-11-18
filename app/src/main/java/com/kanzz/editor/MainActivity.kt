@@ -121,6 +121,7 @@ class MainActivity : AppCompatActivity() {
     // Mencegah callback refresh preview lama menimpa hasil edit yang lebih baru.
     private var previewRefreshGeneration = 0
     private var previewQualityShortSide = 720
+    private var selectedPreviewRatio = "9:16"
 
     // Proxy preview cache dan proses transcode berurutan.
     private var proxyTransformer: Transformer? = null
@@ -286,6 +287,7 @@ class MainActivity : AppCompatActivity() {
 
         previewQualityShortSide = prefs.getInt("preview_quality_short_side", 720)
         previewProxyFps = prefs.getInt("preview_proxy_fps", 30)
+        selectedPreviewRatio = prefs.getString("preview_ratio_${currentProject?.id ?: "default"}", "9:16") ?: "9:16"
 
         handler.post(playbackUpdater)
         handler.post(timelineFrameUpdater)
@@ -1669,6 +1671,10 @@ class MainActivity : AppCompatActivity() {
                         } else showMessage("Pilih klip video terlebih dahulu.")
                     }
 
+                    "Rasio" -> {
+                        showAspectRatioPicker()
+                    }
+
                     "Audio" -> {
                         openAudioPicker()
                     }
@@ -1762,6 +1768,88 @@ class MainActivity : AppCompatActivity() {
             toggle,
             LinearLayout.LayoutParams(-1, dp(22))
         )
+    }
+
+    private fun showAspectRatioPicker() {
+        val ratios = listOf("9:16", "16:9", "1:1", "4:3", "3:4")
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(dp(8), dp(18), dp(8), dp(18))
+        }
+
+        ratios.forEach { ratio ->
+            val parts = ratio.split(":")
+            val widthRatio = parts[0].toFloat()
+            val heightRatio = parts[1].toFloat()
+            val maxSide = dp(48)
+            val boxWidth: Int
+            val boxHeight: Int
+            if (widthRatio >= heightRatio) {
+                boxWidth = maxSide
+                boxHeight = (maxSide * heightRatio / widthRatio).toInt().coerceAtLeast(dp(18))
+            } else {
+                boxHeight = maxSide
+                boxWidth = (maxSide * widthRatio / heightRatio).toInt().coerceAtLeast(dp(18))
+            }
+
+            val item = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                isClickable = true
+                isFocusable = true
+                setPadding(dp(3), dp(4), dp(3), dp(4))
+            }
+            val shape = TextView(this).apply {
+                text = ratio
+                textSize = 10f
+                gravity = Gravity.CENTER
+                setTextColor(if (selectedPreviewRatio == ratio) green else Color.WHITE)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(38, 38, 38))
+                    setStroke(dp(2), if (selectedPreviewRatio == ratio) green else Color.LTGRAY)
+                    cornerRadius = dp(3).toFloat()
+                }
+            }
+            item.addView(shape, LinearLayout.LayoutParams(boxWidth, boxHeight))
+            val label = TextView(this).apply {
+                text = ratio
+                textSize = 10f
+                gravity = Gravity.CENTER
+                setTextColor(Color.LTGRAY)
+                setPadding(0, dp(6), 0, 0)
+            }
+            item.addView(label, LinearLayout.LayoutParams(-1, dp(22)))
+            item.setOnClickListener {
+                applyPreviewAspectRatio(ratio)
+                (item.parent as? android.view.ViewGroup)?.let { parent ->
+                    (parent.parent as? androidx.appcompat.app.AlertDialog)?.dismiss()
+                }
+            }
+            content.addView(item, LinearLayout.LayoutParams(0, dp(92), 1f))
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Pilih Rasio")
+            .setView(content)
+            .setNegativeButton("Tutup", null)
+            .show()
+    }
+
+    private fun applyPreviewAspectRatio(ratio: String) {
+        selectedPreviewRatio = ratio
+        val parts = ratio.split(":")
+        val aspect = parts[0].toFloat() / parts[1].toFloat()
+        if (::playerView.isInitialized) {
+            val contentFrame = playerView.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(
+                androidx.media3.ui.R.id.exo_content_frame
+            )
+            contentFrame?.setAspectRatio(aspect)
+            playerView.invalidate()
+        }
+        val projectKey = currentProject?.id ?: "default"
+        prefs.edit().putString("preview_ratio_$projectKey", ratio).apply()
+        Toast.makeText(this, "Rasio preview: $ratio", Toast.LENGTH_SHORT).show()
     }
 
     private fun showTransitionPicker(transition: VideoTransition) {
