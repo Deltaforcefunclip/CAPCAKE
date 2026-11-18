@@ -1408,8 +1408,32 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(-1, dp(100))
         )
 
-        root.addView(
+        // Overlay playhead meneruskan garis dari timeline video ke area audio.
+        val audioTimelineFrame = FrameLayout(this)
+        audioTimelineFrame.addView(
             audioTracksScroll,
+            FrameLayout.LayoutParams(-1, -1)
+        )
+        val audioPlayheadLine = object : View(this) {
+            private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                strokeWidth = dp(2).toFloat()
+            }
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val centerX = width / 2f
+                canvas.drawLine(centerX, 0f, centerX, height.toFloat(), linePaint)
+            }
+        }.apply {
+            isClickable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        audioTimelineFrame.addView(
+            audioPlayheadLine,
+            FrameLayout.LayoutParams(dp(3), -1, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
+        )
+        root.addView(
+            audioTimelineFrame,
             LinearLayout.LayoutParams(-1, dp(136))
         )
 
@@ -2419,28 +2443,51 @@ class MainActivity : AppCompatActivity() {
                 onClipMoved = {
                     syncAudioPlayback()
                 },
+                onTimelineScrolled = { position ->
+                    pendingScrubPositionMs = position
+                    if (!isTimelineScrubbing) {
+                        isTimelineScrubbing = true
+                        if (player.isPlaying) player.pause()
+                        player.setScrubbingModeEnabled(true)
+                        updatePlayButton()
+                    }
+                    seekTimelinePosition(position)
+                    handler.removeCallbacks(scrubFinishRunnable)
+                    handler.postDelayed(scrubFinishRunnable, 140L)
+                    updateTime()
+                    timeline.postInvalidateOnAnimation()
+                    audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
+                },
                 onClipDropped = { clip, rawY ->
                     val targetEntry = audioTrackViews.entries.firstOrNull { (laneId, view) ->
                         val location = IntArray(2)
                         view.getLocationOnScreen(location)
                         rawY >= location[1] && rawY <= location[1] + view.height
                     }
-                    if (targetEntry != null && targetEntry.key != audioClipManager.lanes.firstOrNull { lane ->
-                            lane.clips.any { it.id == clip.id }
-                        }?.id) {
+                    val sourceLaneId = audioClipManager.lanes.firstOrNull { lane ->
+                        lane.clips.any { it.id == clip.id }
+                    }?.id
+                    if (targetEntry != null && targetEntry.key != sourceLaneId) {
+                        val oldScrollY = audioTracksScroll.scrollY
                         pushUndoSnapshot()
                         val moved = audioClipManager.moveClipToLane(clip.id, targetEntry.key)
                         if (!moved) {
-                            undoStack.removeLast()
-                            Toast.makeText(this, "Layer tujuan masih ditempati audio lain.", Toast.LENGTH_SHORT).show()
+                            if (undoStack.isNotEmpty()) undoStack.removeLast()
+                            Toast.makeText(this, "Layer tujuan masih bertabrakan dengan audio lain.", Toast.LENGTH_SHORT).show()
+                            saveCurrentProject()
                         } else {
-                            // Perbarui tampilan dan simpan posisi/layer baru.
+                            selectedAudioClipId = clip.id
                             saveCurrentProject()
                             refreshAudioTracks()
+                            audioTracksScroll.post {
+                                audioTracksScroll.scrollTo(0, oldScrollY)
+                                selectAudioClip(clip.id)
+                                audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
+                            }
                             syncAudioPlayback()
                         }
-                    } else if (targetEntry != null) {
-                        // Lepas di layer asal: simpan perubahan posisi horizontal.
+                    } else {
+                        // Posisi horizontal tetap disimpan meskipun clip dilepas di layer asal.
                         saveCurrentProject()
                     }
                 }
