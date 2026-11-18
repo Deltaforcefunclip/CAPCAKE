@@ -123,7 +123,7 @@ class MainActivity : AppCompatActivity() {
     // Mencegah callback refresh preview lama menimpa hasil edit yang lebih baru.
     private var previewRefreshGeneration = 0
     private var previewQualityShortSide = 720
-    private var selectedPreviewRatio = "9:16"
+    private var selectedPreviewRatio = ""
     private var previewRatioOverlay: View? = null
     private var previewScale = 1f
     private var previewRotation = 0f
@@ -296,7 +296,7 @@ class MainActivity : AppCompatActivity() {
 
         previewQualityShortSide = prefs.getInt("preview_quality_short_side", 720)
         previewProxyFps = prefs.getInt("preview_proxy_fps", 30)
-        selectedPreviewRatio = prefs.getString("preview_ratio_${currentProject?.id ?: "default"}", "9:16") ?: "9:16"
+        selectedPreviewRatio = prefs.getString("preview_ratio_${currentProject?.id ?: "default"}", "") ?: ""
 
         handler.post(playbackUpdater)
         handler.post(timelineFrameUpdater)
@@ -719,7 +719,7 @@ class MainActivity : AppCompatActivity() {
     private fun openEditor() {
         editorOpen = true
         val ratioProjectKey = currentProject?.id ?: "default"
-        selectedPreviewRatio = prefs.getString("preview_ratio_$ratioProjectKey", "9:16") ?: "9:16"
+        selectedPreviewRatio = prefs.getString("preview_ratio_$ratioProjectKey", "") ?: ""
 
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -816,6 +816,8 @@ class MainActivity : AppCompatActivity() {
             }
             override fun onDraw(canvas: Canvas) {
                 super.onDraw(canvas)
+                // Tanpa pilihan rasio, preview memakai ukuran asli dan tidak diberi mask.
+                if (selectedPreviewRatio.isBlank()) return
                 val parts = selectedPreviewRatio.split(":")
                 val ratio = parts[0].toFloat() / parts[1].toFloat()
                 val viewRatio = width.toFloat() / height.coerceAtLeast(1)
@@ -2566,6 +2568,19 @@ class MainActivity : AppCompatActivity() {
                             emptyList(),
                             buildList {
                                 add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3f)))
+                                // Rasio hanya diterapkan bila pengguna memilihnya.
+                                // Terapkan kanvas lebih dulu, lalu zoom/rotasi agar efek zoom
+                                // tidak dinormalisasi kembali oleh Presentation.
+                                if (selectedPreviewRatio.isNotBlank()) {
+                                    val ratioParts = selectedPreviewRatio.split(":")
+                                    val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
+                                    add(
+                                        Presentation.createForAspectRatio(
+                                            outputAspect,
+                                            Presentation.LAYOUT_SCALE_TO_FIT
+                                        )
+                                    )
+                                }
                                 if (previewScale != 1f || previewRotation % 360f != 0f) {
                                     add(
                                         androidx.media3.effect.ScaleAndRotateTransformation.Builder()
@@ -2574,14 +2589,6 @@ class MainActivity : AppCompatActivity() {
                                             .build()
                                     )
                                 }
-                                val ratioParts = selectedPreviewRatio.split(":")
-                                val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
-                                add(
-                                    Presentation.createForAspectRatio(
-                                        outputAspect,
-                                        Presentation.LAYOUT_SCALE_TO_FIT
-                                    )
-                                )
                             }
                         )
                     )
