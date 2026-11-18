@@ -36,6 +36,7 @@ import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.effect.SpeedChangeEffect
+import androidx.media3.effect.Presentation
 import androidx.media3.transformer.Effects
 import org.json.JSONArray
 import org.json.JSONObject
@@ -117,6 +118,7 @@ class MainActivity : AppCompatActivity() {
     private var playbackListener: Player.Listener? = null
     // Mencegah callback refresh preview lama menimpa hasil edit yang lebih baru.
     private var previewRefreshGeneration = 0
+    private var previewQualityShortSide = 720
 
     // Scrubbing preview memakai optimasi decoder bawaan Media3.
     private var pendingScrubPositionMs = 0L
@@ -254,6 +256,12 @@ class MainActivity : AppCompatActivity() {
             // Tetap preload awal item berikutnya; renderer prewarming menyiapkan decoder video.
             preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
         }
+
+        previewQualityShortSide = prefs.getInt("preview_quality_short_side", 720)
+        player.setVideoEffects(
+            if (previewQualityShortSide <= 0) emptyList()
+            else listOf(Presentation.createForShortSide(previewQualityShortSide))
+        )
 
         handler.post(playbackUpdater)
         handler.post(timelineFrameUpdater)
@@ -776,11 +784,7 @@ class MainActivity : AppCompatActivity() {
         }
         previewFrame.addView(previewQualityButton, previewButtonParams)
         previewQualityButton.setOnClickListener {
-            androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("Preview (PV)")
-                .setMessage("Tombol pengaturan kualitas preview sudah tersedia. Pengaturan resolusi preview akan dihubungkan pada tahap berikutnya.")
-                .setPositiveButton("OK", null)
-                .show()
+            showPreviewQualityDialog()
         }
 
         val screenWidth =
@@ -1102,6 +1106,34 @@ class MainActivity : AppCompatActivity() {
         playbackListener = listener
         player.addListener(listener)
         player.prepare()
+    }
+
+    private fun showPreviewQualityDialog() {
+        val values = intArrayOf(0, 1080, 720, 480)
+        val labels = arrayOf("Original", "1080p", "720p (Disarankan)", "480p (Paling ringan)")
+        val selected = values.indexOf(previewQualityShortSide).coerceAtLeast(0)
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Kualitas Preview")
+            .setSingleChoiceItems(labels, selected) { dialog, which ->
+                val chosen = values[which]
+                previewQualityShortSide = chosen
+                prefs.edit().putInt("preview_quality_short_side", chosen).apply()
+
+                // Efek hanya mengubah ukuran frame yang dirender pada preview.
+                // MediaItem sumber dan jalur ekspor tetap memakai video asli.
+                player.setVideoEffects(
+                    if (chosen <= 0) emptyList()
+                    else listOf(Presentation.createForShortSide(chosen))
+                )
+                dialog.dismiss()
+                showMessage(
+                    if (chosen <= 0) "Preview: Original"
+                    else "Preview: ${labels[which]}"
+                )
+            }
+            .setNegativeButton("Tutup", null)
+            .show()
     }
 
     /** Satu potongan timeline = satu MediaItem preview. */
