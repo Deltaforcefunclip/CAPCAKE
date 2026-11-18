@@ -275,13 +275,17 @@ class MainActivity : AppCompatActivity() {
     // AUDIO PICKER
     // =====================================
 
+    private var pendingLibraryCategory: String? = null
+
     private val pickAudio =
         registerForActivityResult(
             ActivityResultContracts.OpenDocument()
         ) { uri ->
-
-            if (uri != null) {
-                importAudio(uri)
+            val category = pendingLibraryCategory
+            pendingLibraryCategory = null
+            if (uri != null && category != null) {
+                saveAudioToLibrary(uri, category)
+                showAudioLibrary(category)
             }
         }
 
@@ -633,6 +637,174 @@ class MainActivity : AppCompatActivity() {
     // =====================================
     // IMPORT AUDIO
     // =====================================
+
+
+    // =====================================
+    // PERPUSTAKAAN AUDIO INTERNAL CAPCAKE
+    // =====================================
+
+    private fun audioLibraryDirectory(category: String): File {
+        val folder = File(filesDir, "audio_library/$category")
+        if (!folder.exists()) folder.mkdirs()
+        return folder
+    }
+
+    private fun showAudioLibraryMenu() {
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Audio")
+            .setItems(arrayOf("Sound Effect", "Music")) { _, which ->
+                showAudioLibrary(if (which == 0) "sound_effect" else "music")
+            }
+            .setNegativeButton("Batal", null)
+            .show()
+    }
+
+    private fun saveAudioToLibrary(uri: Uri, category: String) {
+        try {
+            val displayName = contentResolver.query(
+                uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            } ?: "Audio_${System.currentTimeMillis()}"
+            val safeName = displayName.replace(Regex("[\\\\/:*?\\"<>|]"), "_")
+                .ifBlank { "Audio_${System.currentTimeMillis()}" }
+            val dot = safeName.lastIndexOf('.')
+            val base = if (dot > 0) safeName.substring(0, dot) else safeName
+            val ext = if (dot > 0) safeName.substring(dot) else ""
+            var destination = File(audioLibraryDirectory(category), safeName)
+            var index = 1
+            while (destination.exists()) {
+                destination = File(audioLibraryDirectory(category), "${base}_${index++}${ext}")
+            }
+            contentResolver.openInputStream(uri)?.use { input ->
+                destination.outputStream().use { output -> input.copyTo(output) }
+            } ?: throw IllegalStateException("Tidak dapat membaca file.")
+            showMessage("Audio disimpan di perpustakaan CAPCAKE.")
+        } catch (e: Exception) {
+            showMessage("Gagal menyimpan audio: ${e.message ?: "file tidak terbaca"}")
+        }
+    }
+
+    private fun showAudioLibrary(category: String) {
+        val title = if (category == "sound_effect") "Sound Effect" else "Music"
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+        }
+        val addButton = TextView(this).apply {
+            text = "＋  Tambah"
+            textSize = 16f
+            setTextColor(green)
+            gravity = Gravity.CENTER
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            setBackgroundColor(Color.rgb(43, 43, 43))
+        }
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            isVerticalScrollBarEnabled = true
+            addView(list, android.view.ViewGroup.LayoutParams(-1, -2))
+        }
+        root.addView(addButton, LinearLayout.LayoutParams(-1, dp(48)))
+        root.addView(scroll, LinearLayout.LayoutParams(-1, dp(300)))
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle(title)
+            .setView(root)
+            .setNegativeButton("Tutup", null)
+            .create()
+
+        fun refreshList() {
+            list.removeAllViews()
+            val files = audioLibraryDirectory(category).listFiles()
+                ?.filter { it.isFile }
+                ?.sortedBy { it.name.lowercase(Locale.ROOT) }
+                ?: emptyList()
+            if (files.isEmpty()) {
+                list.addView(TextView(this).apply {
+                    text = "Belum ada audio. Tekan + Tambah untuk memasukkan file."
+                    textSize = 13f
+                    setTextColor(Color.LTGRAY)
+                    gravity = Gravity.CENTER
+                    setPadding(dp(12), dp(28), dp(12), dp(28))
+                })
+            }
+            files.forEach { file ->
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(8), dp(2), dp(2), dp(2))
+                    setBackgroundColor(Color.rgb(29, 29, 29))
+                }
+                val name = TextView(this).apply {
+                    text = file.name
+                    textSize = 14f
+                    setTextColor(Color.WHITE)
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(8), dp(10), dp(4), dp(10))
+                    setOnClickListener {
+                        importAudio(Uri.fromFile(file))
+                        dialog.dismiss()
+                    }
+                }
+                val menu = TextView(this).apply {
+                    text = "⋮"
+                    textSize = 24f
+                    setTextColor(Color.LTGRAY)
+                    gravity = Gravity.CENTER
+                    setOnClickListener {
+                        androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                            .setItems(arrayOf("Ubah nama file", "Hapus file")) { _, which ->
+                                if (which == 0) {
+                                    val input = EditText(this@MainActivity).apply {
+                                        setText(file.name)
+                                        setSingleLine(true)
+                                    }
+                                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                                        .setTitle("Ubah nama file")
+                                        .setView(input)
+                                        .setNegativeButton("Batal", null)
+                                        .setPositiveButton("Simpan") { _, _ ->
+                                            val newName = input.text.toString().trim()
+                                                .replace(Regex("[\\\\/:*?\\"<>|]"), "_")
+                                            if (newName.isBlank()) showMessage("Nama file tidak boleh kosong.")
+                                            else {
+                                                val target = File(file.parentFile, newName)
+                                                if (target.exists()) showMessage("Nama file sudah digunakan.")
+                                                else if (file.renameTo(target)) refreshList()
+                                                else showMessage("Gagal mengubah nama file.")
+                                            }
+                                        }.show()
+                                } else {
+                                    androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                                        .setMessage("Hapus ${file.name} dari perpustakaan audio?")
+                                        .setNegativeButton("Batal", null)
+                                        .setPositiveButton("Hapus") { _, _ ->
+                                            if (file.delete()) refreshList()
+                                            else showMessage("Gagal menghapus file.")
+                                        }.show()
+                                }
+                            }.show()
+                    }
+                }
+                row.addView(name, LinearLayout.LayoutParams(0, dp(48), 1f))
+                row.addView(menu, LinearLayout.LayoutParams(dp(42), dp(48)))
+                val params = LinearLayout.LayoutParams(-1, -2)
+                params.bottomMargin = dp(4)
+                list.addView(row, params)
+            }
+        }
+
+        addButton.setOnClickListener {
+            pendingLibraryCategory = category
+            pickAudio.launch(arrayOf("audio/*"))
+        }
+        refreshList()
+        dialog.show()
+        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.88f).toInt(), -2)
+    }
 
     private fun openAudioPicker() {
 
@@ -1846,7 +2018,7 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Audio" -> {
-                        openAudioPicker()
+                        showAudioLibraryMenu()
                     }
 
                     "Pisah" -> {
