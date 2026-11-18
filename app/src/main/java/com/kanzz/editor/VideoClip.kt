@@ -114,6 +114,28 @@ class VideoClipManager {
     }
 
     /**
+     * Trim tepi klip berdasarkan delta waktu timeline.
+     * Delta kiri positif memangkas awal; delta kanan negatif memangkas akhir.
+     * Main track dirapatkan ulang setelah trim.
+     */
+    fun trimClipEdges(clipId: String, leftDeltaTimelineMs: Long, rightDeltaTimelineMs: Long): Boolean {
+        val clip = find(clipId) ?: return false
+        val speed = clip.speed.coerceIn(0.25f, 3f)
+        val requestedLeft = (leftDeltaTimelineMs * speed).toLong()
+        val requestedRight = (rightDeltaTimelineMs * speed).toLong()
+
+        val left = requestedLeft.coerceIn(0L, (clip.durationMs - 1L).coerceAtLeast(0L))
+        val remainingAfterLeft = (clip.durationMs - left).coerceAtLeast(1L)
+        val right = requestedRight.coerceIn(-(remainingAfterLeft - 1L), 0L)
+        if (left == 0L && right == 0L) return false
+
+        clip.sourceStartMs += left
+        clip.durationMs = (remainingAfterLeft + right).coerceAtLeast(1L)
+        recalculateTimeline()
+        return true
+    }
+
+    /**
      * Memindahkan klip pada main track dengan perilaku magnetic/ripple.
      * Klip lain otomatis bergeser dan tidak pernah menyisakan celah.
      */
