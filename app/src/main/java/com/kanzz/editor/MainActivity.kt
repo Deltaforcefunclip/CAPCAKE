@@ -2256,6 +2256,7 @@ class TimelineView(
     // Setelah pinch zoom dimulai, gerakan satu jari yang tersisa tidak boleh dianggap scrub.
     private var isPinchGesture = false
     private var isDraggingClip = false
+    private var isScrubbingTimeline = false
     // Posisi awal jari dan klip dikunci saat sentuhan dimulai.
     // Target drag dihitung dari selisih gerakan jari, bukan xToTime(),
     // agar perubahan offset/playhead tidak menarik klip kembali.
@@ -2512,7 +2513,7 @@ class TimelineView(
         // jari (onChange). Callback player bisa datang terlambat dari seek
         // sebelumnya; jika diterapkan, controller.centerPlayhead() akan
         // mengembalikan offset ke waktu lama dan timeline tampak meloncat.
-        if (isDraggingClip || isTimelineScrubbing) return
+        if (isDraggingClip || isScrubbingTimeline) return
 
         controller.setPosition(value)
 
@@ -2948,6 +2949,7 @@ class TimelineView(
                             val dx = event.x - lastX
                             if (abs(event.x - downX) > dp(3)) moved = true
                             if (moved) {
+                                isScrubbingTimeline = true
                                 offset -= dx
                                 clampOffset()
                                 lastX = event.x
@@ -2969,6 +2971,7 @@ class TimelineView(
 
             MotionEvent.ACTION_UP -> {
                 pointerDown = false
+                isScrubbingTimeline = false
                 removeCallbacks(dragLongPress)
 
                 // Pinch selesai hanya saat pointer terakhir terangkat. Abaikan ACTION_UP
@@ -3026,6 +3029,7 @@ class TimelineView(
 
             MotionEvent.ACTION_CANCEL -> {
                 pointerDown = false
+                isScrubbingTimeline = false
                 isPinchGesture = false
                 removeCallbacks(dragLongPress)
                 isDraggingClip = false
