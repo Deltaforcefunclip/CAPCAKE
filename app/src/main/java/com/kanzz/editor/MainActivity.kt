@@ -749,6 +749,40 @@ class MainActivity : AppCompatActivity() {
 
         playerView.player = player
 
+        // Tombol Preview (PV), melayang di bawah tombol EXPORT.
+        val previewQualityButton = TextView(this).apply {
+            text = "PV"
+            textSize = 15f
+            setTextColor(green)
+            gravity = Gravity.CENTER
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(28, 28, 28))
+                setStroke(dp(1), green)
+                cornerRadius = dp(7).toFloat()
+            }
+            elevation = dp(8).toFloat()
+            contentDescription = "Pengaturan preview"
+            isClickable = true
+            isFocusable = true
+        }
+        val previewButtonParams = FrameLayout.LayoutParams(
+            dp(46),
+            dp(42),
+            Gravity.TOP or Gravity.END
+        ).apply {
+            topMargin = dp(8)
+            marginEnd = dp(8)
+        }
+        previewFrame.addView(previewQualityButton, previewButtonParams)
+        previewQualityButton.setOnClickListener {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("Preview (PV)")
+                .setMessage("Tombol pengaturan kualitas preview sudah tersedia. Pengaturan resolusi preview akan dihubungkan pada tahap berikutnya.")
+                .setPositiveButton("OK", null)
+                .show()
+        }
+
         val screenWidth =
             resources.displayMetrics.widthPixels
 
