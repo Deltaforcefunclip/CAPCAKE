@@ -1969,6 +1969,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         overlay.setOnTouchListener { _, event ->
+            // Gestur zoom/geser/rotasi hanya aktif setelah pengguna memilih rasio kanvas.
+            if (selectedPreviewRatio.isBlank()) return@setOnTouchListener false
             scaleDetector.onTouchEvent(event)
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
