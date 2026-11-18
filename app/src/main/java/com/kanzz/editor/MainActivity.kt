@@ -1152,7 +1152,7 @@ class MainActivity : AppCompatActivity() {
         val selected = values.indexOf(previewQualityShortSide).coerceAtLeast(0)
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Preview Proxy (Opsional)")
-            .setMessage("Proxy tidak dibuat otomatis. Potong video terlebih dahulu agar proses lebih singkat, lalu buat proxy saat diperlukan.")
+            
             .setSingleChoiceItems(labels, selected) { dialog, which ->
                 val chosen = values[which]
                 dialog.dismiss()
