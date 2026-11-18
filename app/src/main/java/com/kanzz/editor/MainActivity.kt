@@ -2426,8 +2426,9 @@ class TimelineView(
             item
         }
         val target = dragTargetStartMs.coerceAtLeast(0L)
+        val movingCenter = target + moving.timelineDurationMs / 2L
         val insertIndex = compacted.indexOfFirst { (clip, start) ->
-            target < start + clip.timelineDurationMs / 2L
+            movingCenter <= start + clip.timelineDurationMs / 2L
         }.let { if (it < 0) compacted.size else it }
 
         val ordered = compacted.map { it.first }.toMutableList()
