@@ -48,6 +48,8 @@ import java.security.MessageDigest
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
+import kotlin.math.atan2
+import kotlin.math.sqrt
 
 data class VideoProject(
     var id: String,
@@ -122,6 +124,13 @@ class MainActivity : AppCompatActivity() {
     private var previewRefreshGeneration = 0
     private var previewQualityShortSide = 720
     private var selectedPreviewRatio = "9:16"
+    private var previewRatioOverlay: View? = null
+    private var previewScale = 1f
+    private var previewRotation = 0f
+    private var previewTranslateX = 0f
+    private var previewTranslateY = 0f
+    private var previewMagnetVertical = false
+    private var previewMagnetHorizontal = false
 
     // Proxy preview cache dan proses transcode berurutan.
     private var proxyTransformer: Transformer? = null
@@ -784,10 +793,67 @@ class MainActivity : AppCompatActivity() {
         )
 
         playerView.player = player
-        val initialRatioParts = selectedPreviewRatio.split(":")
-        playerView.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(
-            androidx.media3.ui.R.id.exo_content_frame
-        )?.setAspectRatio(initialRatioParts[0].toFloat() / initialRatioParts[1].toFloat())
+        // Rasio menjadi batas kanvas, bukan mengubah ukuran PlayerView.
+        // Dengan begitu video tetap memenuhi area preview dan bisa digeser/di-zoom.
+        previewScale = prefs.getFloat("preview_scale_${ratioProjectKey}", 1f)
+        previewRotation = prefs.getFloat("preview_rotation_${ratioProjectKey}", 0f)
+        previewTranslateX = prefs.getFloat("preview_tx_${ratioProjectKey}", 0f)
+        previewTranslateY = prefs.getFloat("preview_ty_${ratioProjectKey}", 0f)
+        val ratioOverlay = object : View(this) {
+            private val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = green
+                style = Paint.Style.STROKE
+                strokeWidth = dp(2).toFloat()
+            }
+            private val shadePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.argb(115, 0, 0, 0)
+                style = Paint.Style.FILL
+            }
+            private val guidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                alpha = 220
+                strokeWidth = dp(1).toFloat()
+            }
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val parts = selectedPreviewRatio.split(":")
+                val ratio = parts[0].toFloat() / parts[1].toFloat()
+                val viewRatio = width.toFloat() / height.coerceAtLeast(1)
+                val boxW: Float
+                val boxH: Float
+                if (ratio >= viewRatio) {
+                    boxW = width.toFloat()
+                    boxH = boxW / ratio
+                } else {
+                    boxH = height.toFloat()
+                    boxW = boxH * ratio
+                }
+                val left = (width - boxW) / 2f
+                val top = (height - boxH) / 2f
+                val right = left + boxW
+                val bottom = top + boxH
+                canvas.drawRect(0f, 0f, width.toFloat(), top, shadePaint)
+                canvas.drawRect(0f, bottom, width.toFloat(), height.toFloat(), shadePaint)
+                canvas.drawRect(0f, top, left, bottom, shadePaint)
+                canvas.drawRect(right, top, width.toFloat(), bottom, shadePaint)
+                canvas.drawRect(left, top, right, bottom, borderPaint)
+                if (previewMagnetVertical) {
+                    canvas.drawLine(width / 2f, top, width / 2f, bottom, guidePaint)
+                }
+                if (previewMagnetHorizontal) {
+                    canvas.drawLine(left, height / 2f, right, height / 2f, guidePaint)
+                }
+                if (previewMagnetVertical && previewMagnetHorizontal) {
+                    canvas.drawCircle(width / 2f, height / 2f, dp(5).toFloat(), guidePaint)
+                }
+            }
+        }.apply {
+            setLayerType(View.LAYER_TYPE_SOFTWARE, null)
+        }
+        previewRatioOverlay = ratioOverlay
+        previewFrame.addView(ratioOverlay, FrameLayout.LayoutParams(-1, -1))
+        setupPreviewTransformGesture(ratioOverlay)
+        applyPreviewTransform()
 
         // Tombol Preview (PV), melayang di bawah tombol EXPORT.
         val previewQualityButton = TextView(this).apply {
@@ -1846,16 +1912,118 @@ class MainActivity : AppCompatActivity() {
         selectedPreviewRatio = ratio
         val parts = ratio.split(":")
         val aspect = parts[0].toFloat() / parts[1].toFloat()
-        if (::playerView.isInitialized) {
-            val contentFrame = playerView.findViewById<androidx.media3.ui.AspectRatioFrameLayout>(
-                androidx.media3.ui.R.id.exo_content_frame
-            )
-            contentFrame?.setAspectRatio(aspect)
-            playerView.invalidate()
-        }
+        previewRatioOverlay?.invalidate()
+        if (::playerView.isInitialized) playerView.invalidate()
         val projectKey = currentProject?.id ?: "default"
         prefs.edit().putString("preview_ratio_$projectKey", ratio).apply()
         Toast.makeText(this, "Rasio preview: $ratio", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun setupPreviewTransformGesture(overlay: View) {
+        var lastX = 0f
+        var lastY = 0f
+        var lastAngle = 0f
+        var downX = 0f
+        var downY = 0f
+        var moved = false
+        val scaleDetector = ScaleGestureDetector(this,
+            object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                override fun onScale(detector: ScaleGestureDetector): Boolean {
+                    previewScale = (previewScale * detector.scaleFactor).coerceIn(0.35f, 5f)
+                    applyPreviewTransform()
+                    return true
+                }
+            })
+
+        fun angle(event: MotionEvent): Float {
+            if (event.pointerCount < 2) return 0f
+            return Math.toDegrees(atan2(
+                (event.getY(1) - event.getY(0)).toDouble(),
+                (event.getX(1) - event.getX(0)).toDouble()
+            )).toFloat()
+        }
+        fun normalizeAngle(value: Float): Float {
+            var result = value
+            while (result > 180f) result -= 360f
+            while (result < -180f) result += 360f
+            return result
+        }
+
+        overlay.setOnTouchListener { _, event ->
+            scaleDetector.onTouchEvent(event)
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    lastX = event.x
+                    lastY = event.y
+                    downX = event.x
+                    downY = event.y
+                    moved = false
+                    true
+                }
+                MotionEvent.ACTION_POINTER_DOWN -> {
+                    if (event.pointerCount >= 2) lastAngle = angle(event)
+                    moved = true
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    if (event.pointerCount >= 2) {
+                        val currentAngle = angle(event)
+                        previewRotation += normalizeAngle(currentAngle - lastAngle)
+                        lastAngle = currentAngle
+                        applyPreviewTransform()
+                        moved = true
+                    } else if (event.pointerCount == 1) {
+                        val dx = event.x - lastX
+                        val dy = event.y - lastY
+                        if (abs(event.x - downX) > dp(5) || abs(event.y - downY) > dp(5)) moved = true
+                        previewTranslateX += dx
+                        previewTranslateY += dy
+                        val snap = dp(12).toFloat()
+                        previewMagnetVertical = abs(previewTranslateX) < snap
+                        previewMagnetHorizontal = abs(previewTranslateY) < snap
+                        if (previewMagnetVertical) previewTranslateX = 0f
+                        if (previewMagnetHorizontal) previewTranslateY = 0f
+                        lastX = event.x
+                        lastY = event.y
+                        applyPreviewTransform()
+                    }
+                    true
+                }
+                MotionEvent.ACTION_POINTER_UP -> {
+                    if (event.pointerCount > 2) lastAngle = angle(event)
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    previewMagnetVertical = false
+                    previewMagnetHorizontal = false
+                    previewRatioOverlay?.invalidate()
+                    if (!moved && event.actionMasked == MotionEvent.ACTION_UP) {
+                        playerView.performClick()
+                    } else {
+                        val key = currentProject?.id ?: "default"
+                        prefs.edit()
+                            .putFloat("preview_scale_$key", previewScale)
+                            .putFloat("preview_rotation_$key", previewRotation)
+                            .putFloat("preview_tx_$key", previewTranslateX)
+                            .putFloat("preview_ty_$key", previewTranslateY)
+                            .apply()
+                    }
+                    true
+                }
+                else -> true
+            }
+        }
+    }
+
+    private fun applyPreviewTransform() {
+        if (!::playerView.isInitialized) return
+        val content = playerView.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame) ?: return
+        content.scaleX = previewScale
+        content.scaleY = previewScale
+        content.rotation = previewRotation
+        content.translationX = previewTranslateX
+        content.translationY = previewTranslateY
+        previewRatioOverlay?.invalidate()
     }
 
     private fun showTransitionPicker(transition: VideoTransition) {
