@@ -854,6 +854,7 @@ class MainActivity : AppCompatActivity() {
             setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         }
         previewRatioOverlay = ratioOverlay
+        ratioOverlay.isEnabled = selectedPreviewRatio.isNotBlank()
         previewFrame.addView(ratioOverlay, FrameLayout.LayoutParams(-1, -1))
         setupPreviewTransformGesture(ratioOverlay)
         applyPreviewTransform()
@@ -1915,11 +1916,26 @@ class MainActivity : AppCompatActivity() {
         selectedPreviewRatio = ratio
         val parts = ratio.split(":")
         val aspect = parts[0].toFloat() / parts[1].toFloat()
+        val projectKey = currentProject?.id ?: "default"
+        if (ratio.isBlank()) {
+            // Tanpa kanvas rasio, preview kembali ke tampilan asli dan transform tidak aktif.
+            previewScale = 1f
+            previewRotation = 0f
+            previewTranslateX = 0f
+            previewTranslateY = 0f
+            prefs.edit()
+                .putFloat("preview_scale_$projectKey", 1f)
+                .putFloat("preview_rotation_$projectKey", 0f)
+                .putFloat("preview_tx_$projectKey", 0f)
+                .putFloat("preview_ty_$projectKey", 0f)
+                .apply()
+        }
+        previewRatioOverlay?.isEnabled = ratio.isNotBlank()
         previewRatioOverlay?.invalidate()
         if (::playerView.isInitialized) playerView.invalidate()
-        val projectKey = currentProject?.id ?: "default"
         prefs.edit().putString("preview_ratio_$projectKey", ratio).apply()
-        Toast.makeText(this, "Rasio preview: $ratio", Toast.LENGTH_SHORT).show()
+        applyPreviewTransform()
+        Toast.makeText(this, "Rasio preview: " + (if (ratio.isBlank()) "Asli" else ratio), Toast.LENGTH_SHORT).show()
     }
 
     private fun setupPreviewTransformGesture(overlay: View) {
@@ -2031,11 +2047,12 @@ class MainActivity : AppCompatActivity() {
     private fun applyPreviewTransform() {
         if (!::playerView.isInitialized) return
         val content = playerView.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame) ?: return
-        content.scaleX = previewScale
-        content.scaleY = previewScale
-        content.rotation = previewRotation
-        content.translationX = previewTranslateX
-        content.translationY = previewTranslateY
+        val transformEnabled = selectedPreviewRatio.isNotBlank()
+        content.scaleX = if (transformEnabled) previewScale else 1f
+        content.scaleY = if (transformEnabled) previewScale else 1f
+        content.rotation = if (transformEnabled) previewRotation else 0f
+        content.translationX = if (transformEnabled) previewTranslateX else 0f
+        content.translationY = if (transformEnabled) previewTranslateY else 0f
         previewRatioOverlay?.invalidate()
     }
 
@@ -2585,17 +2602,16 @@ class MainActivity : AppCompatActivity() {
                                     )
                                 }
 
-                                // Samakan skala ekspor dengan ukuran video yang terlihat di dalam
-                                // kotak rasio preview. PlayerView bisa jauh lebih lebar/tinggi
-                                // daripada kotak kanvas (contoh preview 16:9 untuk kanvas 3:4).
+                                // Pemetaan FIT yang benar: satu dimensi memenuhi kanvas,
+                                // dimensi lainnya mengikuti rasio sumber.
                                 if (selectedPreviewRatio.isNotBlank()) {
                                     val ratioParts = selectedPreviewRatio.split(":")
                                     val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
                                     val frameW = playerView.width.coerceAtLeast(1).toFloat()
                                     val frameH = playerView.height.coerceAtLeast(1).toFloat()
+                                    val frameAspect = frameW / frameH
                                     val boxW: Float
                                     val boxH: Float
-                                    val frameAspect = frameW / frameH
                                     if (outputAspect >= frameAspect) {
                                         boxW = frameW
                                         boxH = boxW / outputAspect
@@ -2613,16 +2629,20 @@ class MainActivity : AppCompatActivity() {
                                         frameAspect
                                     }
 
-                                    // Ukuran video hasil FIT pada preview dibandingkan dengan
-                                    // ukuran video hasil FIT pada kanvas ekspor.
                                     val previewFitWidth = minOf(frameW, frameH * sourceAspect)
-                                    val previewFitHeight = previewFitWidth / sourceAspect
-                                    val exportFitWidthFraction =
-                                        minOf(1f, outputAspect / sourceAspect)
-                                    val exportFitHeightFraction =
-                                        exportFitWidthFraction * outputAspect / sourceAspect
+                                    val previewFitHeight = minOf(frameH, frameW / sourceAspect)
                                     val previewWidthFraction = previewFitWidth / boxW
                                     val previewHeightFraction = previewFitHeight / boxH
+
+                                    val exportFitWidthFraction: Float
+                                    val exportFitHeightFraction: Float
+                                    if (sourceAspect >= outputAspect) {
+                                        exportFitWidthFraction = 1f
+                                        exportFitHeightFraction = outputAspect / sourceAspect
+                                    } else {
+                                        exportFitHeightFraction = 1f
+                                        exportFitWidthFraction = sourceAspect / outputAspect
+                                    }
                                     val correctionX = previewWidthFraction /
                                         exportFitWidthFraction.coerceAtLeast(0.0001f)
                                     val correctionY = previewHeightFraction /
@@ -2648,24 +2668,6 @@ class MainActivity : AppCompatActivity() {
                                             )
                                         )
                                     }
-                                } else if (previewScale > 1.001f ||
-                                    previewTranslateX != 0f || previewTranslateY != 0f
-                                ) {
-                                    val half = (1f / previewScale).coerceIn(0.05f, 1f)
-                                    val frameW = playerView.width.coerceAtLeast(1).toFloat()
-                                    val frameH = playerView.height.coerceAtLeast(1).toFloat()
-                                    val centerX = (-2f * previewTranslateX / frameW / previewScale)
-                                        .coerceIn(-1f + half, 1f - half)
-                                    val centerY = (2f * previewTranslateY / frameH / previewScale)
-                                        .coerceIn(-1f + half, 1f - half)
-                                    add(
-                                        Crop(
-                                            (centerX - half).coerceIn(-1f, 1f),
-                                            (centerX + half).coerceIn(-1f, 1f),
-                                            (centerY - half).coerceIn(-1f, 1f),
-                                            (centerY + half).coerceIn(-1f, 1f)
-                                        )
-                                    )
                                 }
 
                                 // Rotasi tetap dipertahankan sebagai efek terpisah.
