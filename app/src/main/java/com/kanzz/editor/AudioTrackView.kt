@@ -90,7 +90,12 @@ class AudioTrackView(
                 downX = event.x; downY = event.y; lastTouchX = event.x
                 longPressTriggered = false; touchedClip = clipAt(event.x)
                 selectedClipId = touchedClip?.id; onClipSelected(touchedClip)
-                if (touchedClip != null) handler.postDelayed(longPressRunnable, 500L)
+                if (touchedClip != null) {
+                    // Kunci gesture pada clip agar ScrollView tidak mengambil
+                    // gerakan vertikal sebelum long-press selesai.
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    handler.postDelayed(longPressRunnable, 500L)
+                }
                 invalidate(); return true
             }
             MotionEvent.ACTION_MOVE -> {
