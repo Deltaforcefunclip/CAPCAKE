@@ -118,16 +118,24 @@ class MainActivity : AppCompatActivity() {
     // PLAYBACK UPDATER
     // =====================================
 
-    private val playbackUpdater = object : Runnable {
-
+    // Sinkronisasi posisi visual timeline mengikuti frame playback.
+    // Dipisah dari sinkronisasi audio/properti agar pekerjaan berat tetap 10 kali/detik.
+    private val timelineFrameUpdater = object : Runnable {
         override fun run() {
-
-            if (::timeLabel.isInitialized) {
+            if (::timeLabel.isInitialized && player.isPlaying) {
                 updateTime()
+            }
+            handler.postDelayed(this, 16L)
+        }
+    }
+
+    private val playbackUpdater = object : Runnable {
+        override fun run() {
+            if (::timeLabel.isInitialized) {
+                if (!player.isPlaying) updateTime()
                 syncVideoClipProperties()
                 syncAudioPlayback()
             }
-
             handler.postDelayed(this, 100L)
         }
     }
@@ -216,6 +224,7 @@ class MainActivity : AppCompatActivity() {
         player = ExoPlayer.Builder(this).build()
 
         handler.post(playbackUpdater)
+        handler.post(timelineFrameUpdater)
 
         loadProjects()
         showHome()
@@ -860,10 +869,15 @@ class MainActivity : AppCompatActivity() {
                     timeline.selectClip(clipId)
                     timeline.updateSelection(false)
                     if (current.timelineStartMs != targetStartMs) {
+                        val oldPosition = currentTimelinePosition()
                         pushUndoSnapshot()
-                        videoClipManager.moveToTimelinePosition(clipId, targetStartMs)
-                        refreshEditedPreview(videoClipManager.find(clipId)?.timelineStartMs ?: 0L)
-                        saveCurrentProject()
+                        if (videoClipManager.moveToTimelinePosition(clipId, targetStartMs)) {
+                            refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
+                            saveCurrentProject()
+                        } else if (undoStack.isNotEmpty()) {
+                            // Jangan tinggalkan entri Undo untuk gerakan yang tidak mengubah urutan.
+                            undoStack.removeLast()
+                        }
                     }
                     updateToolMenu()
                 }
@@ -2152,6 +2166,8 @@ class TimelineView(
     }
 
     private var frames = mutableListOf<Bitmap>()
+    private var framesSourceDurationMs = 0L
+    private var framesSourceUri: String? = null
     private val transitionHitBoxes = mutableListOf<Pair<RectF, VideoTransition>>()
 
     private val green = Color.rgb(24, 213, 138)
@@ -2356,6 +2372,8 @@ class TimelineView(
                 }
 
                 frames = newFrames
+                framesSourceDurationMs = videoDuration.coerceAtLeast(1L)
+                framesSourceUri = uri.toString()
 
                 invalidate()
             }
@@ -2388,6 +2406,106 @@ class TimelineView(
 
     private fun timeToX(time: Long): Float {
         return controller.timeToX(time)
+    }
+
+    /**
+     * Saat drag berlangsung, hitung susunan magnetic secara langsung tanpa
+     * mengubah data project sampai jari dilepas.
+     */
+    private fun displayedClipPositions(): List<Pair<VideoClip, Long>> {
+        if (!isDraggingClip || pressedClip == null) {
+            return videoClips.clips.map { it to it.timelineStartMs }
+        }
+
+        val moving = pressedClip!!
+        val remaining = videoClips.clips.filter { it.id != moving.id }
+        var cursor = 0L
+        val compacted = remaining.map { clip ->
+            val item = clip to cursor
+            cursor += clip.timelineDurationMs
+            item
+        }
+        val target = dragTargetStartMs.coerceAtLeast(0L)
+        val insertIndex = compacted.indexOfFirst { (clip, start) ->
+            target < start + clip.timelineDurationMs / 2L
+        }.let { if (it < 0) compacted.size else it }
+
+        val ordered = compacted.map { it.first }.toMutableList()
+        ordered.add(insertIndex, moving)
+
+        cursor = 0L
+        return ordered.map { clip ->
+            val item = clip to cursor
+            cursor += clip.timelineDurationMs
+            item
+        }
+    }
+
+    /** Gambar thumbnail berdasarkan waktu sumber klip, bukan berdasarkan posisi layar. */
+    private fun drawClipThumbnails(
+        canvas: Canvas,
+        clip: VideoClip,
+        clipStartMs: Long,
+        trackTop: Float,
+        trackBottom: Float,
+        alpha: Int = 255
+    ) {
+        val clipEndMs = clipStartMs + clip.timelineDurationMs
+        val clipLeft = timeToX(clipStartMs)
+        val clipRight = timeToX(clipEndMs)
+
+        canvas.save()
+        canvas.clipRect(clipLeft, trackTop, clipRight, trackBottom)
+
+        paint.style = Paint.Style.FILL
+        paint.alpha = alpha
+        paint.color = Color.rgb(43, 105, 85)
+        canvas.drawRoundRect(
+            RectF(clipLeft, trackTop, clipRight, trackBottom),
+            5f * density, 5f * density, paint
+        )
+
+        if (frames.isNotEmpty() && framesSourceDurationMs > 0L &&
+            clip.sourceUri == framesSourceUri
+        ) {
+            val tileWidth = dp(70).toFloat().coerceAtLeast(1f)
+            val tileDurationMs = (tileWidth / pixelsPerMs.coerceAtLeast(0.000001f))
+                .toLong().coerceAtLeast(1L)
+            val visibleStart = controller.xToTime(0f)
+            val visibleEnd = controller.xToTime(width.toFloat())
+            val localVisibleStart = (visibleStart - clipStartMs).coerceAtLeast(0L)
+            val firstTile = localVisibleStart / tileDurationMs
+            var tileTime = clipStartMs + firstTile * tileDurationMs
+            if (tileTime + tileDurationMs <= visibleStart) tileTime += tileDurationMs
+
+            while (tileTime < clipEndMs && tileTime <= visibleEnd) {
+                val sampleTime = minOf(
+                    clipEndMs - 1L,
+                    tileTime + tileDurationMs / 2L
+                )
+                val sourceTime = clip.sourceStartMs +
+                    ((sampleTime - clipStartMs).coerceAtLeast(0L) *
+                        clip.speed.coerceIn(0.25f, 3f)).toLong()
+                val frameIndex = (
+                    sourceTime.coerceAtLeast(0L) * frames.size /
+                        framesSourceDurationMs
+                    ).toInt().coerceIn(0, frames.lastIndex)
+                val bitmap = frames[frameIndex]
+                val tileEnd = minOf(clipEndMs, tileTime + tileDurationMs)
+                val destination = RectF(
+                    timeToX(tileTime),
+                    trackTop,
+                    timeToX(tileEnd),
+                    trackBottom
+                )
+                paint.alpha = alpha
+                canvas.drawBitmap(bitmap, null, destination, paint)
+                tileTime += tileDurationMs
+            }
+        }
+
+        paint.alpha = 255
+        canvas.restore()
     }
 
     private fun centerTime(): Long {
@@ -2423,10 +2541,7 @@ class TimelineView(
         paint.textSize = 10f * density
         paint.strokeWidth = 1f * density
 
-        val visibleStart =
-            ((offset + width / 2f) / pixelsPerMs)
-                .toLong()
-                .coerceAtLeast(0L)
+        val visibleStart = controller.xToTime(0f)
 
         val interval =
             max(5000L, (10000f / pixelsPerMs).toLong())
@@ -2477,69 +2592,42 @@ class TimelineView(
             paint
         )
 
-        // THUMBNAILS
-
-        val clip = canvas.save()
-
-        canvas.clipRect(
-            0f,
-            trackTop,
-            width.toFloat(),
-            trackBottom
-        )
-
-        if (frames.isNotEmpty()) {
-
-            // Thumbnail memakai ukuran tetap; zoom hanya menambah/mengurangi jumlah pengulangan frame.
-            val tileWidth = dp(70).toFloat().coerceAtLeast(1f)
-            val visibleLeft = max(0f, timeToX(0L))
-            val visibleRight = min(width.toFloat(), timeToX(duration))
-            var tileLeft = visibleLeft - ((visibleLeft % tileWidth))
-            var tileIndex = 0
-            while (tileLeft < visibleRight) {
-                val bitmap = frames[tileIndex % frames.size]
-                val destination = RectF(tileLeft, trackTop, tileLeft + tileWidth, trackBottom)
-                paint.alpha = 255
-                canvas.drawBitmap(bitmap, null, destination, paint)
-                tileLeft += tileWidth
-                tileIndex++
-            }
-
-        } else {
-
-            paint.color = Color.rgb(43, 105, 85)
-
-            canvas.drawRoundRect(
-                RectF(
-                    left,
-                    trackTop,
-                    max(left, right),
-                    trackBottom
-                ),
-                5f,
-                5f,
-                paint
-            )
-        }
-
-        canvas.restoreToCount(clip)
-
-        // BATAS KLIP DAN TOMBOL TRANSISI
+        // GAMBAR KLIP: thumbnail melekat pada waktu klip, sehingga ikut bergerak
+        // ketika playhead berjalan dan tidak lagi diam di koordinat layar.
         transitionHitBoxes.clear()
-        videoClips.clips.forEachIndexed { index, videoClip ->
-            val clipLeft = timeToX(videoClip.timelineStartMs)
-            val clipRight = timeToX(videoClip.timelineEndMs)
-            paint.color = if (videoClip.id == selectedClipId) green else Color.WHITE
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = if (videoClip.id == selectedClipId) 3f * density else 1f * density
-            canvas.drawRect(
-                RectF(clipLeft, trackTop, clipRight, trackBottom),
-                paint
+        val displayedClips = displayedClipPositions()
+        displayedClips.forEachIndexed { index, (videoClip, clipStartMs) ->
+            val clipEndMs = clipStartMs + videoClip.timelineDurationMs
+            val clipLeft = timeToX(clipStartMs)
+            val clipRight = timeToX(clipEndMs)
+            val isMoving = isDraggingClip && videoClip.id == pressedClip?.id
+
+            drawClipThumbnails(
+                canvas,
+                videoClip,
+                clipStartMs,
+                trackTop,
+                trackBottom,
+                if (isMoving) 220 else 255
             )
+
+            paint.alpha = if (isMoving) 230 else 255
+            paint.color = if (isMoving || videoClip.id == selectedClipId) green else Color.WHITE
+            paint.style = Paint.Style.STROKE
+            paint.strokeWidth = if (videoClip.id == selectedClipId || isMoving) {
+                3f * density
+            } else {
+                1f * density
+            }
+            canvas.drawRoundRect(
+                RectF(clipLeft, trackTop, clipRight, trackBottom),
+                4f * density, 4f * density, paint
+            )
+            paint.alpha = 255
             paint.style = Paint.Style.FILL
 
-            // Handle trim putih pada klip terpilih.
-            if (videoClip.id == selectedClipId) {
+            // Handle trim putih pada klip terpilih (non-drag).
+            if (videoClip.id == selectedClipId && !isDraggingClip) {
                 val handleWidth = 5f * density
                 paint.color = Color.WHITE
                 canvas.drawRoundRect(
@@ -2552,11 +2640,10 @@ class TimelineView(
                 )
             }
 
-            if (index < videoClips.clips.lastIndex) {
-                val next = videoClips.clips[index + 1]
+            if (index < displayedClips.lastIndex) {
+                val next = displayedClips[index + 1].first
                 val transition = videoClips.transitionBetween(videoClip.id, next.id)
                     ?: VideoTransition(leftClipId = videoClip.id, rightClipId = next.id)
-                        .also { videoClips.transitions.add(it) }
                 val x = clipRight
                 val box = RectF(
                     x - 9f * density,
@@ -2573,18 +2660,8 @@ class TimelineView(
             }
         }
 
-        // Preview posisi saat klip sedang di-drag.
-        if (isDraggingClip && pressedClip != null) {
-            val ghostLeft = timeToX(dragTargetStartMs)
-            val ghostRight = timeToX(dragTargetStartMs + pressedClip!!.timelineDurationMs)
-            paint.color = green
-            paint.style = Paint.Style.STROKE
-            paint.strokeWidth = 3f * density
-            canvas.drawRect(
-                RectF(ghostLeft, trackTop, ghostRight, trackBottom),
-                paint
-            )
-            paint.style = Paint.Style.FILL
+        // Garis kuning menandai titik snap saat klip sedang digeser.
+        if (isDraggingClip) {
             dragSnapTargetMs?.let { snapTime ->
                 val snapX = timeToX(snapTime)
                 paint.color = Color.YELLOW
@@ -2592,8 +2669,6 @@ class TimelineView(
                 canvas.drawLine(snapX, trackTop, snapX, trackBottom, paint)
             }
         }
-
-        // Stroke hijau hanya ditampilkan pada klip yang dipilih.
 
         // FIXED CENTER PLAYHEAD
 
