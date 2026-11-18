@@ -19,6 +19,8 @@ import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
+import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.C
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
@@ -764,6 +766,7 @@ class MainActivity : AppCompatActivity() {
         timeline.updateSelection(true)
         if (::playerView.isInitialized) playerView.foreground = null
         refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
+        timeline.loadThumbnails(uri, durationMs)
         saveCurrentProject()
         updateToolMenu()
 
@@ -2672,11 +2675,25 @@ class MainActivity : AppCompatActivity() {
                             .build()
                     )
                     .build()
+                val audioProcessors = if (clip.volume < 0.999f) {
+                    val mixer = ChannelMixingAudioProcessor()
+                    for (channelCount in 1..6) {
+                        mixer.putChannelMixingMatrix(
+                            ChannelMixingMatrix.createForConstantPower(
+                                channelCount,
+                                channelCount
+                            ).scaleBy(clip.volume.coerceIn(0f, 1f))
+                        )
+                    }
+                    listOf(mixer)
+                } else {
+                    emptyList()
+                }
                 EditedMediaItem.Builder(mediaItem)
                     .setRemoveAudio(muteAudio)
                     .setEffects(
                         Effects(
-                            emptyList(),
+                            audioProcessors,
                             buildList {
                                 add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3f)))
 
@@ -3047,9 +3064,8 @@ class TimelineView(
         }
     }
 
-    private var frames = mutableListOf<Bitmap>()
-    private var framesSourceDurationMs = 0L
-    private var framesSourceUri: String? = null
+    private data class ThumbnailSet(val frames: List<Bitmap>, val durationMs: Long)
+    private val thumbnailSets = mutableMapOf<String, ThumbnailSet>()
     private val transitionHitBoxes = mutableListOf<Pair<RectF, VideoTransition>>()
 
     private val green = Color.rgb(24, 213, 138)
@@ -3246,13 +3262,13 @@ class TimelineView(
 
             post {
 
-                frames.forEach {
-                    if (!it.isRecycled) it.recycle()
+                val key = uri.toString()
+                thumbnailSets.put(
+                    key,
+                    ThumbnailSet(newFrames, videoDuration.coerceAtLeast(1L))
+                )?.frames?.forEach { oldFrame ->
+                    if (!oldFrame.isRecycled) oldFrame.recycle()
                 }
-
-                frames = newFrames
-                framesSourceDurationMs = videoDuration.coerceAtLeast(1L)
-                framesSourceUri = uri.toString()
 
                 invalidate()
             }
@@ -3352,9 +3368,10 @@ class TimelineView(
             5f * density, 5f * density, paint
         )
 
-        if (frames.isNotEmpty() && framesSourceDurationMs > 0L &&
-            clip.sourceUri == framesSourceUri
-        ) {
+        val thumbnailSet = thumbnailSets[clip.sourceUri]
+        val frames = thumbnailSet?.frames.orEmpty()
+        val framesSourceDurationMs = thumbnailSet?.durationMs ?: 0L
+        if (frames.isNotEmpty() && framesSourceDurationMs > 0L) {
             val tileWidth = dp(70).toFloat().coerceAtLeast(1f)
             val tileDurationMs = (tileWidth / pixelsPerMs.coerceAtLeast(0.000001f))
                 .toLong().coerceAtLeast(1L)
