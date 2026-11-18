@@ -914,7 +914,10 @@ class MainActivity : AppCompatActivity() {
                     timeline.selectClip(clipId)
                     timeline.updateSelection(false)
                     if (current.timelineStartMs != targetStartMs) {
-                        val oldPosition = currentTimelinePosition()
+                        // Selama drag, player hanya dipakai untuk preview klip di bawah
+                        // playhead. Posisi timeline yang harus dipertahankan adalah posisi
+                        // playhead tetap, bukan waktu sumber klip preview sementara.
+                        val oldPosition = timelineController.positionMs
                         pushUndoSnapshot()
                         if (videoClipManager.moveToTimelinePosition(clipId, targetStartMs)) {
                             refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
@@ -2535,6 +2538,11 @@ class TimelineView(
     // =====================================
 
     fun updatePositionFromPlayer(value: Long) {
+
+        // Saat klip sedang di-drag, player memang di-seek untuk preview isi klip
+        // yang berada di bawah playhead. Jangan biarkan waktu sumber preview itu
+        // menggeser viewport timeline dan menarik klip kembali ke posisi playhead.
+        if (isDraggingClip) return
 
         controller.setPosition(value)
 
