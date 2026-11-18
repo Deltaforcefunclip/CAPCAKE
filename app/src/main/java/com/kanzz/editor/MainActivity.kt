@@ -767,8 +767,7 @@ class MainActivity : AppCompatActivity() {
                                         .setView(input)
                                         .setNegativeButton("Batal", null)
                                         .setPositiveButton("Simpan") { _, _ ->
-                                            val newName = input.text.toString().trim()
-                                                filterNot { ch -> ch == 92.toChar() || ch == '/' || ch == ':' || ch == '*' || ch == '?' || ch == 34.toChar() || ch == '<' || ch == '>' || ch == '|' }
+                                            val newName = input.text.toString().trim().filterNot { ch -> ch == 92.toChar() || ch == '/' || ch == ':' || ch == '*' || ch == '?' || ch == 34.toChar() || ch == '<' || ch == '>' || ch == '|' }
                                             if (newName.isBlank()) showMessage("Nama file tidak boleh kosong.")
                                             else {
                                                 val target = File(file.parentFile, newName)
