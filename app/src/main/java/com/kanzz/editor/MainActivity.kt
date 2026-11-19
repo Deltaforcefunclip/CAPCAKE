@@ -78,6 +78,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var textTracksScroll: ScrollView
     private lateinit var audioTimelineFrame: FrameLayout
     private lateinit var previewTextOverlay: TextView
+    private lateinit var textSelectionOverlay: View
     private lateinit var thisTextTracksContainer: LinearLayout
     private lateinit var genericLayerPlaceholder: TextView
     private val textClipManager = TextClipManager()
@@ -144,6 +145,15 @@ class MainActivity : AppCompatActivity() {
     private var previewTranslateY = 0f
     private var previewMagnetVertical = false
     private var previewMagnetHorizontal = false
+    private var textGestureMode = 0
+    private var textGestureDownX = 0f
+    private var textGestureDownY = 0f
+    private var textGestureStartX = 0f
+    private var textGestureStartY = 0f
+    private var textGestureStartScale = 1f
+    private var textGestureStartRotation = 0f
+    private var textGestureStartDistance = 1f
+    private var textGestureStartAngle = 0f
 
     // Proxy preview cache dan proses transcode berurutan.
     private var proxyTransformer: Transformer? = null
@@ -1250,7 +1260,109 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
             setPadding(dp(18), dp(12), dp(18), dp(12))
         }
-        previewFrame.addView(previewTextOverlay, FrameLayout.LayoutParams(-1, -1))
+        previewFrame.addView(
+            previewTextOverlay,
+            FrameLayout.LayoutParams(-2, -2, Gravity.CENTER)
+        )
+        textSelectionOverlay = object : View(this) {
+            private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = green; style = Paint.Style.STROKE; strokeWidth = dp(1.5f)
+            }
+            private val handle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
+            private val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = green; strokeWidth = dp(1f) }
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val clip = textClipManager.find(selectedTextClipId) ?: return
+                if (previewTextOverlay.visibility != View.VISIBLE) return
+                val cx = width / 2f + clip.positionX
+                val cy = height / 2f + clip.positionY
+                val halfW = previewTextOverlay.width * clip.scale / 2f + dp(5)
+                val halfH = previewTextOverlay.height * clip.scale / 2f + dp(5)
+                canvas.save()
+                canvas.translate(cx, cy)
+                canvas.rotate(clip.rotation)
+                canvas.drawRect(-halfW, -halfH, halfW, halfH, border)
+                val points = arrayOf(
+                    -halfW to -halfH, halfW to -halfH,
+                    -halfW to halfH, halfW to halfH
+                )
+                points.forEach { (x, y) -> canvas.drawCircle(x, y, dp(4), handle) }
+                canvas.drawLine(0f, -halfH, 0f, -halfH - dp(25), guide)
+                canvas.drawCircle(0f, -halfH - dp(25), dp(5), handle)
+                canvas.restore()
+                if (abs(clip.positionX) < dp(1)) canvas.drawLine(width / 2f, 0f, width / 2f, height.toFloat(), guide)
+                if (abs(clip.positionY) < dp(1)) canvas.drawLine(0f, height / 2f, width.toFloat(), height / 2f, guide)
+            }
+        }.apply {
+            isClickable = true
+            setOnTouchListener { view, event ->
+                val clip = textClipManager.find(selectedTextClipId) ?: return@setOnTouchListener false
+                val cx = width / 2f + clip.positionX
+                val cy = height / 2f + clip.positionY
+                val halfW = previewTextOverlay.width * clip.scale / 2f + dp(5)
+                val halfH = previewTextOverlay.height * clip.scale / 2f + dp(5)
+                fun local(x: Float, y: Float): Pair<Float, Float> {
+                    val dx = x - cx; val dy = y - cy
+                    val a = Math.toRadians((-clip.rotation).toDouble())
+                    return Pair(
+                        ((dx * kotlin.math.cos(a) - dy * kotlin.math.sin(a)) / clip.scale),
+                        ((dx * kotlin.math.sin(a) + dy * kotlin.math.cos(a)) / clip.scale)
+                    )
+                }
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        val p = local(event.x, event.y)
+                        val hw = halfW / clip.scale; val hh = halfH / clip.scale
+                        val rotateHit = abs(p.first) < dp(24) && p.second < -hh - dp(10) && p.second > -hh - dp(45)
+                        val scaleHit = abs(p.first) > hw - dp(20) && abs(p.second) > hh - dp(20)
+                        textGestureMode = when { rotateHit -> 3; scaleHit -> 2; abs(p.first) <= hw && abs(p.second) <= hh -> 1; else -> 0 }
+                        textGestureDownX = event.x; textGestureDownY = event.y
+                        textGestureStartX = clip.positionX; textGestureStartY = clip.positionY
+                        textGestureStartScale = clip.scale; textGestureStartRotation = clip.rotation
+                        textGestureStartDistance = kotlin.math.sqrt((event.x-cx)*(event.x-cx)+(event.y-cy)*(event.y-cy)).coerceAtLeast(1f)
+                        textGestureStartAngle = Math.toDegrees(kotlin.math.atan2((event.y-cy).toDouble(),(event.x-cx).toDouble())).toFloat()
+                        if (textGestureMode != 0) parent?.requestDisallowInterceptTouchEvent(true)
+                        textGestureMode != 0
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        when (textGestureMode) {
+                            1 -> {
+                                clip.positionX = textGestureStartX + event.x - textGestureDownX
+                                clip.positionY = textGestureStartY + event.y - textGestureDownY
+                                val snap = dp(7).toFloat()
+                                if (abs(clip.positionX) < snap) clip.positionX = 0f
+                                if (abs(clip.positionY) < snap) clip.positionY = 0f
+                            }
+                            2 -> {
+                                val dist = kotlin.math.sqrt((event.x-cx)*(event.x-cx)+(event.y-cy)*(event.y-cy))
+                                clip.scale = (textGestureStartScale * dist / textGestureStartDistance).coerceIn(0.2f, 6f)
+                            }
+                            3 -> {
+                                val angle = Math.toDegrees(kotlin.math.atan2((event.y-cy).toDouble(),(event.x-cx).toDouble())).toFloat()
+                                var rotation = textGestureStartRotation + angle - textGestureStartAngle
+                                val nearest = kotlin.math.round(rotation / 90f) * 90f
+                                if (abs(rotation-nearest) < 2.5f) rotation = nearest
+                                clip.rotation = rotation
+                            }
+                        }
+                        updateTextPreview()
+                        textSelectionOverlay.invalidate()
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (textGestureMode != 0) {
+                            textGestureMode = 0
+                            parent?.requestDisallowInterceptTouchEvent(false)
+                            saveCurrentProject()
+                            pushUndoSnapshot()
+                            true
+                        } else false
+                    }
+                    else -> textGestureMode != 0
+                }
+            }
+        }
+        previewFrame.addView(textSelectionOverlay, FrameLayout.LayoutParams(-1, -1))
         setupPreviewTransformGesture(ratioOverlay)
         applyPreviewTransform()
 
@@ -2622,6 +2734,7 @@ class MainActivity : AppCompatActivity() {
                     for (i in 0 until thisTextTracksContainer.childCount) {
                         (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(clip?.id)
                     }
+                    updateTextPreview()
                     updateToolMenu()
                 },
                 onChanged = {
@@ -2741,9 +2854,27 @@ class MainActivity : AppCompatActivity() {
     private fun updateTextPreview() {
         if (!::previewTextOverlay.isInitialized) return
         val position = currentTimelinePosition()
-        val active = textClipManager.clips.lastOrNull { position >= it.startTimeMs && position < it.endTimeMs }
+        val selected = textClipManager.find(selectedTextClipId)
+        val active = selected ?: textClipManager.clips.lastOrNull { position >= it.startTimeMs && position < it.endTimeMs }
         previewTextOverlay.text = active?.text ?: ""
+        previewTextOverlay.setTextColor(active?.color ?: Color.WHITE)
+        previewTextOverlay.alpha = active?.opacity ?: 1f
+        previewTextOverlay.typeface = when (active?.fontName) {
+            "Serif" -> android.graphics.Typeface.create("serif", if (active.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            "Monospace" -> android.graphics.Typeface.create("monospace", if (active.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            "Sans" -> android.graphics.Typeface.create("sans-serif", if (active.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+            else -> android.graphics.Typeface.create("sans-serif", if (active?.bold == true) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
+        }
         previewTextOverlay.visibility = if (active == null) View.GONE else View.VISIBLE
+        previewTextOverlay.scaleX = active?.scale ?: 1f
+        previewTextOverlay.scaleY = active?.scale ?: 1f
+        previewTextOverlay.rotation = active?.rotation ?: 0f
+        previewTextOverlay.translationX = active?.positionX ?: 0f
+        previewTextOverlay.translationY = active?.positionY ?: 0f
+        if (::textSelectionOverlay.isInitialized) {
+            textSelectionOverlay.visibility = if (selected != null) View.VISIBLE else View.GONE
+            textSelectionOverlay.invalidate()
+        }
     }
 
     private fun encodeTextClips(): String {
