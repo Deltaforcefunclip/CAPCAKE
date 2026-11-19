@@ -76,7 +76,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioTracksContainer: LinearLayout
     private lateinit var audioTracksScroll: ScrollView
     private lateinit var textTracksScroll: ScrollView
-    private lateinit var textAddLayerButton: TextView
+    private lateinit var textAddLayerButton: View
     private lateinit var audioTimelineFrame: FrameLayout
     private lateinit var previewTextOverlay: TextView
     private lateinit var thisTextTracksContainer: LinearLayout
@@ -1596,6 +1596,8 @@ class MainActivity : AppCompatActivity() {
             audioPlayheadLine,
             FrameLayout.LayoutParams(dp(3), -1, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
         )
+        // Pastikan ikon tambah berada di atas garis playhead.
+        textAddLayerButton.bringToFront()
         root.addView(
             audioTimelineFrame,
             LinearLayout.LayoutParams(-1, dp(136))
