@@ -3067,7 +3067,10 @@ class MainActivity : AppCompatActivity() {
             if (currentClip != null) {
                 if (apply) {
                     if (currentClip.fontName != fontPickerOriginalFont) {
+                        val chosenFont = currentClip.fontName
+                        currentClip.fontName = fontPickerOriginalFont ?: chosenFont
                         pushUndoSnapshot()
+                        currentClip.fontName = chosenFont
                         saveCurrentProject()
                     }
                 } else {
@@ -3085,6 +3088,7 @@ class MainActivity : AppCompatActivity() {
         add.setOnClickListener { pickFonts.launch(arrayOf("*/*")) }
 
         fun refresh() {
+            val previousScrollY = scroll.scrollY
             grid.removeAllViews()
             val builtIns = listOf("Default", "Sans", "Serif", "Monospace")
             val custom = fontLibraryDirectory().listFiles()
@@ -3165,6 +3169,7 @@ class MainActivity : AppCompatActivity() {
                 if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, dp(44), 1f))
                 grid.addView(row, LinearLayout.LayoutParams(-1, dp(47)))
             }
+            scroll.post { scroll.scrollTo(0, previousScrollY) }
         }
 
         refresh()
