@@ -26,12 +26,21 @@ data class TextClip(
 class TextClipManager {
     val clips = mutableListOf<TextClip>()
 
-    fun add(clip: TextClip) {
-        val occupied = clips.filter { it.startTimeMs < clip.endTimeMs && it.endTimeMs > clip.startTimeMs }
-            .map { it.trackIndex }.toSet()
+    // Pilih layer pertama yang kosong pada rentang waktu clip baru.
+    // Clip yang berakhir sebelum playhead tidak menghalangi clip baru.
+    fun firstAvailableLane(startTimeMs: Long, durationMs: Long): Int {
+        val endTimeMs = startTimeMs + durationMs
         var lane = 0
-        while (lane in occupied) lane++
-        clip.trackIndex = lane
+        while (clips.any { existing ->
+                existing.trackIndex == lane &&
+                    startTimeMs < existing.endTimeMs &&
+                    endTimeMs > existing.startTimeMs
+            }) lane++
+        return lane
+    }
+
+    fun add(clip: TextClip) {
+        clip.trackIndex = firstAvailableLane(clip.startTimeMs, clip.durationMs)
         clips.add(clip)
         sort()
     }
