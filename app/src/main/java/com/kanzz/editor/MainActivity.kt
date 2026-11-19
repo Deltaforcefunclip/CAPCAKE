@@ -1444,9 +1444,7 @@ class MainActivity : AppCompatActivity() {
                 updateToolMenu()            },
             onViewportChanged = {
                 audioTrackViews.values.forEach { it.invalidate() }
-                if (::thisTextTracksContainer.isInitialized) {
-                    for (i in 0 until thisTextTracksContainer.childCount) thisTextTracksContainer.getChildAt(i).invalidate()
-                }
+                invalidateTextTrackViews()
             },
             onPreviewMoveClip = { clipId, targetStartMs ->
                 previewClipMoveAt(clipId, targetStartMs)
@@ -2593,13 +2591,24 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun invalidateTextTrackViews() {
+        if (!::thisTextTracksContainer.isInitialized) return
+        for (i in 0 until thisTextTracksContainer.childCount) {
+            thisTextTracksContainer.getChildAt(i).postInvalidateOnAnimation()
+        }
+    }
+
     private fun refreshTextTracks() {
         if (!::thisTextTracksContainer.isInitialized) return
         thisTextTracksContainer.removeAllViews()
         val laneCount = (textClipManager.clips.maxOfOrNull { it.trackIndex } ?: 0) + 1
         repeat(laneCount.coerceAtLeast(1)) { lane ->
             val laneClips = textClipManager.clips.filter { it.trackIndex == lane }
-            val view = TextTrackView(this, timelineController, laneClips,
+            val view = TextTrackView(
+                this,
+                timelineController,
+                laneClips,
+                allClips = { textClipManager.clips },
                 onSelected = { clip ->
                     selectedTextClipId = clip?.id
                     selectedAudioClipId = null
@@ -2612,8 +2621,57 @@ class MainActivity : AppCompatActivity() {
                 onChanged = {
                     saveCurrentProject()
                     updateTextPreview()
-                    thisTextTracksContainer.invalidate()
-                })
+                    invalidateTextTrackViews()
+                },
+                onTimelineScrolled = { position ->
+                    pendingScrubPositionMs = position
+                    if (!isTimelineScrubbing) {
+                        isTimelineScrubbing = true
+                        if (player.isPlaying) player.pause()
+                        player.setScrubbingModeEnabled(true)
+                        updatePlayButton()
+                    }
+                    seekTimelinePosition(position)
+                    handler.removeCallbacks(scrubFinishRunnable)
+                    handler.postDelayed(scrubFinishRunnable, 140L)
+                    updateTime()
+                    timeline.postInvalidateOnAnimation()
+                    invalidateTextTrackViews()
+                },
+                onClipDropped = { clip, rawY ->
+                    val targetLane = (0 until thisTextTracksContainer.childCount)
+                        .mapNotNull { index ->
+                            val targetView = thisTextTracksContainer.getChildAt(index)
+                            val location = IntArray(2)
+                            targetView.getLocationOnScreen(location)
+                            val top = location[1].toFloat()
+                            val bottom = top + targetView.height
+                            if (rawY >= top - dp(6) && rawY <= bottom + dp(6)) {
+                                Triple(index, targetView, kotlin.math.abs(rawY - (top + bottom) / 2f))
+                            } else null
+                        }
+                        .minByOrNull { it.third }
+                        ?.first
+                    if (targetLane != null && targetLane != clip.trackIndex) {
+                        val oldScrollY = textTracksScroll.scrollY
+                        pushUndoSnapshot()
+                        if (textClipManager.moveClipToLane(clip.id, targetLane)) {
+                            selectedTextClipId = clip.id
+                            saveCurrentProject()
+                            refreshTextTracks()
+                            textTracksScroll.post {
+                                textTracksScroll.scrollTo(0, oldScrollY)
+                                invalidateTextTrackViews()
+                            }
+                        } else {
+                            if (undoStack.isNotEmpty()) undoStack.removeLast()
+                            Toast.makeText(this, "Layer tujuan masih bertabrakan dengan teks lain.", Toast.LENGTH_SHORT).show()
+                        }
+                    } else {
+                        saveCurrentProject()
+                    }
+                }
+            )
             view.select(selectedTextClipId)
             thisTextTracksContainer.addView(view, LinearLayout.LayoutParams(-1, dp(36)))
         }
@@ -3232,7 +3290,7 @@ class MainActivity : AppCompatActivity() {
         // Audio track memakai controller waktu yang sama; gambar ulang setiap frame
         // agar klip tetap melekat pada waktunya saat playhead bergerak.
         audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
-        if (::textTracksScroll.isInitialized) textTracksScroll.postInvalidateOnAnimation()
+        invalidateTextTrackViews()
         updateTextPreview()
 
         currentProject?.position = position
