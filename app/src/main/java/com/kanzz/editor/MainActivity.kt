@@ -3174,8 +3174,74 @@ class MainActivity : AppCompatActivity() {
         }
 
         try {
-            val sequence = EditedMediaItemSequence.Builder(editedItems).build()
-            val composition = Composition.Builder(listOf(sequence)).build()
+            // Urutan utama berisi video beserta audio asli dari setiap klip video.
+            val sequences = mutableListOf<EditedMediaItemSequence>()
+            sequences.add(EditedMediaItemSequence.withAudioAndVideoFrom(editedItems))
+
+            // Setiap layer audio menjadi sequence terpisah agar beberapa layer dapat
+            // bercampur bersamaan, sementara addGap menjaga posisi klip di timeline.
+            audioClipManager.lanes.forEach { lane ->
+                val laneClips = lane.clips
+                    .filter { it.durationMs > 0L && it.filePath.isNotBlank() }
+                    .sortedBy { it.startTimeMs }
+                if (laneClips.isNotEmpty()) {
+                    val audioSequence = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
+                    var cursorMs = 0L
+
+                    laneClips.forEach { clip ->
+                        val clipStartMs = clip.startTimeMs.coerceAtLeast(0L)
+                        val gapMs = (clipStartMs - cursorMs).coerceAtLeast(0L)
+                        if (gapMs > 0L) {
+                            audioSequence.addGap(gapMs * 1000L)
+                        }
+
+                        val audioMediaItem = MediaItem.Builder()
+                            .setUri(Uri.parse(clip.filePath))
+                            .setClippingConfiguration(
+                                MediaItem.ClippingConfiguration.Builder()
+                                    .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                                    .setEndPositionMs(
+                                        (clip.sourceStartMs + clip.durationMs)
+                                            .coerceAtLeast(clip.sourceStartMs + 1L)
+                                    )
+                                    .build()
+                            )
+                            .build()
+
+                        val audioProcessors = if (clip.volume < 0.999f) {
+                            val mixer = ChannelMixingAudioProcessor()
+                            for (channelCount in 1..6) {
+                                mixer.putChannelMixingMatrix(
+                                    ChannelMixingMatrix.createForConstantPower(
+                                        channelCount,
+                                        channelCount
+                                    ).scaleBy(clip.volume.coerceIn(0f, 1f))
+                                )
+                            }
+                            listOf(mixer)
+                        } else {
+                            emptyList()
+                        }
+
+                        val audioEditedItem = EditedMediaItem.Builder(audioMediaItem)
+                            .setRemoveVideo(true)
+                            .setEffects(
+                                Effects(
+                                    audioProcessors,
+                                    listOf(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3.25f)))
+                                )
+                            )
+                            .build()
+
+                        audioSequence.addItem(audioEditedItem)
+                        cursorMs = maxOf(cursorMs, clipStartMs + clip.durationMs)
+                    }
+
+                    sequences.add(audioSequence.build())
+                }
+            }
+
+            val composition = Composition.Builder(sequences).build()
             val transformer = Transformer.Builder(this).addListener(listener).build()
             exportTransformer = transformer
             transformer.start(composition, output.absolutePath)
