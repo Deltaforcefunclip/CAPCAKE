@@ -18,7 +18,14 @@ data class TextClip(
     var startTimeMs: Long,
     var durationMs: Long = 2000L,
     var fontName: String = "Default",
-    var trackIndex: Int = 0
+    var trackIndex: Int = 0,
+    var positionX: Float = 0f,
+    var positionY: Float = 0f,
+    var scale: Float = 1f,
+    var rotation: Float = 0f,
+    var color: Int = Color.WHITE,
+    var opacity: Float = 1f,
+    var bold: Boolean = true
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
