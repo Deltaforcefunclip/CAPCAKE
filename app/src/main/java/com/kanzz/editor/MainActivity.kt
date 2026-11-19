@@ -703,6 +703,7 @@ class MainActivity : AppCompatActivity() {
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(16), dp(8), dp(16), dp(8))
+            setBackgroundColor(Color.BLACK)
         }
         val addButton = TextView(this).apply {
             text = "＋  Tambah"
@@ -726,6 +727,16 @@ class MainActivity : AppCompatActivity() {
             .setView(root)
             .setNegativeButton("Tutup", null)
             .create()
+
+        // Paksa seluruh permukaan popup memakai hitam dengan garis tepi abu-abu gelap.
+        dialog.setOnShowListener {
+            val popupBackground = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.BLACK)
+                setStroke(dp(1), Color.rgb(55, 55, 55))
+                cornerRadius = dp(12).toFloat()
+            }
+            dialog.window?.setBackgroundDrawable(popupBackground)
+        }
 
         var previewPlayer: android.media.MediaPlayer? = null
         var previewFile: File? = null
