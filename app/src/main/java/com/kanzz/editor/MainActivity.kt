@@ -284,8 +284,8 @@ class MainActivity : AppCompatActivity() {
             val category = pendingLibraryCategory
             pendingLibraryCategory = null
             if (uri != null && category != null) {
+                // Penyalinan file dilakukan di background; dialog baru dibuka setelah selesai.
                 saveAudioToLibrary(uri, category)
-                showAudioLibrary(category)
             }
         }
 
@@ -660,28 +660,40 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveAudioToLibrary(uri: Uri, category: String) {
-        try {
-            val displayName = contentResolver.query(
-                uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
-            )?.use { cursor ->
-                if (cursor.moveToFirst()) cursor.getString(0) else null
-            } ?: "Audio_${System.currentTimeMillis()}"
-            val safeName = displayName.filterNot { ch -> ch == 92.toChar() || ch == '/' || ch == ':' || ch == '*' || ch == '?' || ch == 34.toChar() || ch == '<' || ch == '>' || ch == '|' }
-                .ifBlank { "Audio_${System.currentTimeMillis()}" }
-            val dot = safeName.lastIndexOf('.')
-            val base = if (dot > 0) safeName.substring(0, dot) else safeName
-            val ext = if (dot > 0) safeName.substring(dot) else ""
-            var destination = File(audioLibraryDirectory(category), safeName)
-            var index = 1
-            while (destination.exists()) {
-                destination = File(audioLibraryDirectory(category), "${base}_${index++}${ext}")
+        executor.execute {
+            var errorMessage: String? = null
+            try {
+                val displayName = contentResolver.query(
+                    uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null
+                )?.use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getString(0) else null
+                } ?: "Audio_${System.currentTimeMillis()}"
+                val safeName = displayName.filterNot { ch ->
+                    ch == 92.toChar() || ch == '/' || ch == ':' || ch == '*' ||
+                        ch == '?' || ch == 34.toChar() || ch == '<' || ch == '>' || ch == '|'
+                }.ifBlank { "Audio_${System.currentTimeMillis()}" }
+                val dot = safeName.lastIndexOf('.')
+                val base = if (dot > 0) safeName.substring(0, dot) else safeName
+                val ext = if (dot > 0) safeName.substring(dot) else ""
+                var destination = File(audioLibraryDirectory(category), safeName)
+                var index = 1
+                while (destination.exists()) {
+                    destination = File(audioLibraryDirectory(category), "${base}_${index++}${ext}")
+                }
+                contentResolver.openInputStream(uri)?.use { input ->
+                    destination.outputStream().use { output -> input.copyTo(output) }
+                } ?: throw IllegalStateException("Tidak dapat membaca file.")
+            } catch (e: Exception) {
+                errorMessage = e.message ?: "file tidak terbaca"
             }
-            contentResolver.openInputStream(uri)?.use { input ->
-                destination.outputStream().use { output -> input.copyTo(output) }
-            } ?: throw IllegalStateException("Tidak dapat membaca file.")
-            // File tersimpan otomatis di penyimpanan internal aplikasi; tanpa dialog sukses.
-        } catch (e: Exception) {
-            showMessage("Gagal menyimpan audio: ${e.message ?: "file tidak terbaca"}")
+
+            runOnUiThread {
+                if (errorMessage == null) {
+                    showAudioLibrary(category)
+                } else {
+                    showMessage("Gagal menyimpan audio: $errorMessage")
+                }
+            }
         }
     }
 
@@ -853,6 +865,9 @@ class MainActivity : AppCompatActivity() {
 
         addButton.setOnClickListener {
             pendingLibraryCategory = category
+            // Tutup dialog lama sebelum membuka pemilih file agar tidak ada dialog
+            // bertumpuk setelah proses impor selesai.
+            dialog.dismiss()
             pickAudio.launch(arrayOf("audio/*"))
         }
         refreshList()
@@ -910,16 +925,18 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val displayName = contentResolver.query(
-            uri,
-            arrayOf(OpenableColumns.DISPLAY_NAME),
-            null,
-            null,
-            null
-        )?.use { cursor ->
-            if (cursor.moveToFirst()) {
-                cursor.getString(0)
-            } else null
+        val displayName = if (uri.scheme == "file") {
+            File(uri.path ?: "").name.takeIf { it.isNotBlank() }
+        } else {
+            contentResolver.query(
+                uri,
+                arrayOf(OpenableColumns.DISPLAY_NAME),
+                null,
+                null,
+                null
+            )?.use { cursor ->
+                if (cursor.moveToFirst()) cursor.getString(0) else null
+            }
         } ?: "Audio"
 
         val clip = AudioClip(
