@@ -1316,6 +1316,7 @@ class MainActivity : AppCompatActivity() {
                         val rotateHit = abs(p.first) < dp(24) && p.second < -hh - dp(10) && p.second > -hh - dp(45)
                         val scaleHit = abs(p.first) > hw - dp(20) && abs(p.second) > hh - dp(20)
                         textGestureMode = when { rotateHit -> 3; scaleHit -> 2; abs(p.first) <= hw && abs(p.second) <= hh -> 1; else -> 0 }
+                        if (textGestureMode != 0) pushUndoSnapshot()
                         textGestureDownX = event.x; textGestureDownY = event.y
                         textGestureStartX = clip.positionX; textGestureStartY = clip.positionY
                         textGestureStartScale = clip.scale; textGestureStartRotation = clip.rotation
@@ -1354,7 +1355,6 @@ class MainActivity : AppCompatActivity() {
                             textGestureMode = 0
                             parent?.requestDisallowInterceptTouchEvent(false)
                             saveCurrentProject()
-                            pushUndoSnapshot()
                             true
                         } else false
                     }
@@ -2879,7 +2879,16 @@ class MainActivity : AppCompatActivity() {
 
     private fun encodeTextClips(): String {
         val array = JSONArray()
-        textClipManager.clips.forEach { clip -> array.put(JSONObject().apply { put("id", clip.id); put("text", clip.text); put("startTimeMs", clip.startTimeMs); put("durationMs", clip.durationMs); put("fontName", clip.fontName); put("trackIndex", clip.trackIndex) }) }
+        textClipManager.clips.forEach { clip ->
+            array.put(JSONObject().apply {
+                put("id", clip.id); put("text", clip.text)
+                put("startTimeMs", clip.startTimeMs); put("durationMs", clip.durationMs)
+                put("fontName", clip.fontName); put("trackIndex", clip.trackIndex)
+                put("positionX", clip.positionX); put("positionY", clip.positionY)
+                put("scale", clip.scale); put("rotation", clip.rotation)
+                put("color", clip.color); put("opacity", clip.opacity); put("bold", clip.bold)
+            })
+        }
         return array.toString()
     }
 
@@ -2888,7 +2897,25 @@ class MainActivity : AppCompatActivity() {
         if (json.isNullOrBlank()) return
         runCatching {
             val array = JSONArray(json)
-            for (i in 0 until array.length()) { val item = array.getJSONObject(i); textClipManager.add(TextClip(item.optString("id"), item.optString("text"), item.optLong("startTimeMs"), item.optLong("durationMs", 2000L), item.optString("fontName", "Default"), item.optInt("trackIndex", 0))) }
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                val clip = TextClip(
+                    id = item.optString("id"), text = item.optString("text"),
+                    startTimeMs = item.optLong("startTimeMs"),
+                    durationMs = item.optLong("durationMs", 2000L),
+                    fontName = item.optString("fontName", "Default"),
+                    trackIndex = item.optInt("trackIndex", 0),
+                    positionX = item.optDouble("positionX", 0.0).toFloat(),
+                    positionY = item.optDouble("positionY", 0.0).toFloat(),
+                    scale = item.optDouble("scale", 1.0).toFloat(),
+                    rotation = item.optDouble("rotation", 0.0).toFloat(),
+                    color = item.optInt("color", Color.WHITE),
+                    opacity = item.optDouble("opacity", 1.0).toFloat(),
+                    bold = item.optBoolean("bold", true)
+                )
+                textClipManager.clips.add(clip)
+            }
+            textClipManager.compactLanes()
         }.onFailure { textClipManager.clips.clear() }
     }
 
