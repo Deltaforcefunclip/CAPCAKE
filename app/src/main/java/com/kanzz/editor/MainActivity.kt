@@ -4073,9 +4073,35 @@ class MainActivity : AppCompatActivity() {
 
                                             val previewW = fontPickerAnchorView.width.coerceAtLeast(1).toFloat()
                                             val previewH = fontPickerAnchorView.height.coerceAtLeast(1).toFloat()
-                                            val sx = canvas.width / previewW
-                                            val sy = canvas.height / previewH
-                                            val fontScale = min(sx, sy)
+
+                                            // TextView preview berada di viewport PlayerView yang bisa
+                                            // memiliki letterbox. Skala harus dihitung dari area video
+                                            // yang benar-benar terlihat, bukan seluruh viewport hitam.
+                                            val outputAspect = if (selectedPreviewRatio.isNotBlank()) {
+                                                val parts = selectedPreviewRatio.split(":")
+                                                parts[0].toFloat() / parts[1].toFloat()
+                                            } else {
+                                                val size = player.videoSize
+                                                if (size.width > 0 && size.height > 0) {
+                                                    size.width.toFloat() * size.pixelWidthHeightRatio /
+                                                        size.height.toFloat()
+                                                } else {
+                                                    canvas.width.toFloat() / canvas.height.coerceAtLeast(1)
+                                                }
+                                            }
+                                            val previewAspect = previewW / previewH
+                                            val previewContentW: Float
+                                            val previewContentH: Float
+                                            if (outputAspect >= previewAspect) {
+                                                previewContentW = previewW
+                                                previewContentH = previewW / outputAspect
+                                            } else {
+                                                previewContentH = previewH
+                                                previewContentW = previewH * outputAspect
+                                            }
+                                            val sx = canvas.width / previewContentW.coerceAtLeast(1f)
+                                            val sy = canvas.height / previewContentH.coerceAtLeast(1f)
+                                            val fontScale = (sx + sy) / 2f
 
                                             activeTexts.forEach { textClip ->
                                                 textPaint.color = textClip.color
