@@ -61,13 +61,15 @@ class TextClipManager {
 class TextTrackView(
     context: Context,
     private val controller: SharedTimelineController,
-    private val clips: List<TextClip>,
+    private val laneIndex: Int,
     private val allClips: () -> List<TextClip>,
     private val onSelected: (TextClip?) -> Unit,
     private val onChanged: () -> Unit,
     private val onTimelineScrolled: (Long) -> Unit,
-    private val onClipDropped: (TextClip, Float) -> Unit
+    private val onClipDropped: (TextClip, Float) -> Unit,
+    private val onClipDrag: (TextClip, Float) -> Unit
 ) : View(context) {
+    private val clips: List<TextClip> get() = allClips().filter { it.trackIndex == laneIndex }
     private val density = resources.displayMetrics.density
     private val handler = Handler(Looper.getMainLooper())
     private val clipPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFFE5674E.toInt() }
@@ -232,6 +234,7 @@ class TextTrackView(
                     clip.startTimeMs = proposed
                     snapGuideTimeMs = if (useSnap) snap.targetTimeMs else null
                     onChanged()
+                    onClipDrag(clip, event.rawY)
                 } else {
                     snapGuideTimeMs = null
                 }
