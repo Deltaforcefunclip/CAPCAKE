@@ -76,6 +76,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioTracksContainer: LinearLayout
     private lateinit var audioTracksScroll: ScrollView
     private lateinit var textTracksScroll: ScrollView
+    private lateinit var textAddLayerButton: TextView
     private lateinit var audioTimelineFrame: FrameLayout
     private lateinit var previewTextOverlay: TextView
     private lateinit var thisTextTracksContainer: LinearLayout
@@ -1533,7 +1534,27 @@ class MainActivity : AppCompatActivity() {
         // Overlay playhead meneruskan garis dari timeline video ke area audio.
         audioTimelineFrame = FrameLayout(this)
         audioTimelineFrame.addView(audioTracksScroll, FrameLayout.LayoutParams(-1, -1))
-        audioTimelineFrame.addView(textTracksScroll, FrameLayout.LayoutParams(-1, -1))
+        audioTimelineFrame.addView(
+            textTracksScroll,
+            FrameLayout.LayoutParams(-1, -1).apply { bottomMargin = dp(42) }
+        )
+        textAddLayerButton = TextView(this).apply {
+            text = "+"
+            textSize = 27f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.TRANSPARENT)
+            visibility = View.GONE
+            setOnClickListener {
+                textExtraLaneCount++
+                refreshTextTracks()
+                textTracksScroll.post { textTracksScroll.fullScroll(View.FOCUS_DOWN) }
+            }
+        }
+        audioTimelineFrame.addView(
+            textAddLayerButton,
+            FrameLayout.LayoutParams(-1, dp(42), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+        )
         genericLayerPlaceholder = TextView(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), 0, dp(12), 0)
@@ -2587,6 +2608,7 @@ class MainActivity : AppCompatActivity() {
         if (!::audioTracksScroll.isInitialized || !::textTracksScroll.isInitialized) return
         audioTracksScroll.visibility = if (activeLayerGroup == "AUDIO") View.VISIBLE else View.GONE
         textTracksScroll.visibility = if (activeLayerGroup == "TEXT") View.VISIBLE else View.GONE
+        if (::textAddLayerButton.isInitialized) textAddLayerButton.visibility = if (activeLayerGroup == "TEXT") View.VISIBLE else View.GONE
         if (::genericLayerPlaceholder.isInitialized) {
             genericLayerPlaceholder.visibility = if (activeLayerGroup == "OVERLAY" || activeLayerGroup == "STICKER") View.VISIBLE else View.GONE
             genericLayerPlaceholder.text = if (activeLayerGroup == "OVERLAY") "Overlay Layer" else "Sticker Layer"
@@ -2604,7 +2626,7 @@ class MainActivity : AppCompatActivity() {
         if (!::thisTextTracksContainer.isInitialized) return
         thisTextTracksContainer.removeAllViews()
         val naturalCount = (textClipManager.clips.maxOfOrNull { it.trackIndex } ?: 0) + 1
-        val laneCount = maxOf(naturalCount, 1 + textExtraLaneCount)
+        val laneCount = naturalCount + textExtraLaneCount
         repeat(laneCount.coerceAtLeast(1)) { lane ->
             val view = TextTrackView(
                 this,
@@ -2679,19 +2701,6 @@ class MainActivity : AppCompatActivity() {
             view.select(selectedTextClipId)
             thisTextTracksContainer.addView(view, LinearLayout.LayoutParams(-1, dp(36)))
         }
-        val addLaneButton = TextView(this).apply {
-            text = "+"
-            textSize = 27f
-            gravity = android.view.Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.TRANSPARENT)
-            setOnClickListener {
-                textExtraLaneCount++
-                refreshTextTracks()
-                textTracksScroll.post { textTracksScroll.fullScroll(View.FOCUS_DOWN) }
-            }
-        }
-        thisTextTracksContainer.addView(addLaneButton, LinearLayout.LayoutParams(-1, dp(42)))
         updateLayerGroupVisibility()
     }
 
