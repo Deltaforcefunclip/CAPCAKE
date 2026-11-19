@@ -79,6 +79,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioTimelineFrame: FrameLayout
     private lateinit var previewTextOverlay: TextView
     private lateinit var thisTextTracksContainer: LinearLayout
+    private lateinit var genericLayerPlaceholder: TextView
     private val textClipManager = TextClipManager()
     private var selectedTextClipId: String? = null
     private var activeLayerGroup = "AUDIO"
@@ -1530,6 +1531,15 @@ class MainActivity : AppCompatActivity() {
         audioTimelineFrame = FrameLayout(this)
         audioTimelineFrame.addView(audioTracksScroll, FrameLayout.LayoutParams(-1, -1))
         audioTimelineFrame.addView(textTracksScroll, FrameLayout.LayoutParams(-1, -1))
+        genericLayerPlaceholder = TextView(this).apply {
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), 0, dp(12), 0)
+            textSize = 12f
+            setTextColor(Color.LTGRAY)
+            setBackgroundColor(Color.rgb(32, 32, 32))
+            visibility = View.GONE
+        }
+        audioTimelineFrame.addView(genericLayerPlaceholder, FrameLayout.LayoutParams(-1, dp(36)))
         val audioPlayheadLine = object : View(this) {
             private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
@@ -2572,14 +2582,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateLayerGroupVisibility() {
         if (!::audioTracksScroll.isInitialized || !::textTracksScroll.isInitialized) return
-        audioTracksScroll.visibility = if (activeLayerGroup == "AUDIO" && audioClipManager.lanes.isNotEmpty()) View.VISIBLE else View.GONE
-        textTracksScroll.visibility = if (activeLayerGroup == "TEXT" && textClipManager.clips.isNotEmpty()) View.VISIBLE else View.GONE
+        audioTracksScroll.visibility = if (activeLayerGroup == "AUDIO") View.VISIBLE else View.GONE
+        textTracksScroll.visibility = if (activeLayerGroup == "TEXT") View.VISIBLE else View.GONE
+        if (::genericLayerPlaceholder.isInitialized) {
+            genericLayerPlaceholder.visibility = if (activeLayerGroup == "OVERLAY" || activeLayerGroup == "STICKER") View.VISIBLE else View.GONE
+            genericLayerPlaceholder.text = if (activeLayerGroup == "OVERLAY") "Overlay Layer" else "Sticker Layer"
+        }
     }
 
     private fun refreshTextTracks() {
         if (!::thisTextTracksContainer.isInitialized) return
         thisTextTracksContainer.removeAllViews()
-        if (textClipManager.clips.isNotEmpty()) {
+        run {
             val view = TextTrackView(this, timelineController, textClipManager.clips,
                 onSelected = { clip ->
                     selectedTextClipId = clip?.id
