@@ -1,7 +1,7 @@
 package com.kanzz.editor
 
 import android.content.Context
-import android.graphics.Canvas
+import android.graphics.Canvas\nimport android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
@@ -13,14 +13,25 @@ data class TextClip(
     var text: String,
     var startTimeMs: Long,
     var durationMs: Long = 2000L,
-    var fontName: String = "Default"
+    var fontName: String = "Default",
+    var trackIndex: Int = 0
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
 
 class TextClipManager {
     val clips = mutableListOf<TextClip>()
-    fun add(clip: TextClip) { clips.add(clip); clips.sortBy { it.startTimeMs } }
+    fun add(clip: TextClip) {
+        // Tempatkan pada layer paling rendah yang tidak memiliki klip aktif
+        // pada rentang waktu klip baru.
+        val occupied = clips.filter { it.startTimeMs < clip.endTimeMs && it.endTimeMs > clip.startTimeMs }
+            .map { it.trackIndex }.toSet()
+        var lane = 0
+        while (lane in occupied) lane++
+        clip.trackIndex = lane
+        clips.add(clip)
+        clips.sortWith(compareBy<TextClip> { it.trackIndex }.thenBy { it.startTimeMs })
+    }
     fun find(id: String?) = clips.firstOrNull { it.id == id }
     fun remove(id: String?) { clips.removeAll { it.id == id } }
 }
@@ -28,7 +39,7 @@ class TextClipManager {
 class TextTrackView(
     context: Context,
     private val controller: SharedTimelineController,
-    private val clips: MutableList<TextClip>,
+    private val clips: List<TextClip>,
     private val onSelected: (TextClip?) -> Unit,
     private val onChanged: () -> Unit
 ) : View(context) {
@@ -37,7 +48,7 @@ class TextTrackView(
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF101010.toInt(); textSize = 10f * density; isFakeBoldText = true
     }
-    private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }\n    private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density
     }
     private var selectedId: String? = null
@@ -62,7 +73,15 @@ class TextTrackView(
             if (right < 0f || left > width) return@forEach
             val rect = RectF(left, 3f * density, right.coerceAtLeast(left + 8f), height - 3f * density)
             canvas.drawRoundRect(rect, 4f * density, 4f * density, clipPaint)
-            if (clip.id == selectedId) canvas.drawRoundRect(rect, 4f * density, 4f * density, outlinePaint)
+            if (clip.id == selectedId) {
+                canvas.drawRoundRect(rect, 4f * density, 4f * density, outlinePaint)
+                // Handle trim dibuat jelas terlihat di kedua ujung klip.
+                val handleW = 6f * density
+                val handleTop = rect.top + 4f * density
+                val handleBottom = rect.bottom - 4f * density
+                canvas.drawRoundRect(RectF(rect.left + 2f * density, handleTop, rect.left + handleW, handleBottom), 2f * density, 2f * density, handlePaint)
+                canvas.drawRoundRect(RectF(rect.right - handleW, handleTop, rect.right - 2f * density, handleBottom), 2f * density, 2f * density, handlePaint)
+            }
             canvas.save()
             canvas.clipRect(rect)
             val label = clip.text.replace('\n', ' ')
@@ -82,7 +101,7 @@ class TextTrackView(
                     originDuration = clip.durationMs
                     val left = controller.timeToX(clip.startTimeMs)
                     val right = controller.timeToX(clip.endTimeMs)
-                    val edge = 14f * density
+                    val edge = 18f * density
                     mode = when {
                         event.x - left <= edge -> 2
                         right - event.x <= edge -> 3
