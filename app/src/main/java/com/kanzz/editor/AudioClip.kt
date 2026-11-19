@@ -49,8 +49,20 @@ class AudioClipManager {
         val source = lanes.firstOrNull { lane -> lane.clips.any { it.id == clipId } }
         if (source?.id == target.id) return true
         source?.clips?.removeAll { it.id == clipId }
-        // Pertahankan lane kosong agar urutan layer tidak bergeser.
         if (target.clips.none { it.id == clipId }) target.clips.add(clip)
+        // Layer kosong otomatis dibuang agar tidak meninggalkan ruang kosong.
+        lanes.removeAll { it.clips.isEmpty() }
+        return true
+    }
+
+    fun createLaneAndMoveClip(clipId: String): Boolean {
+        val clip = clips.firstOrNull { it.id == clipId } ?: return false
+        val source = lanes.firstOrNull { lane -> lane.clips.any { it.id == clipId } }
+        val newLane = AudioLane()
+        newLane.clips.add(clip)
+        lanes.add(newLane)
+        source?.clips?.removeAll { it.id == clipId }
+        lanes.removeAll { it.clips.isEmpty() }
         return true
     }
 
