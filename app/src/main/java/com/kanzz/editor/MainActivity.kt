@@ -1266,18 +1266,18 @@ class MainActivity : AppCompatActivity() {
         )
         textSelectionOverlay = object : View(this) {
             private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = green; style = Paint.Style.STROKE; strokeWidth = dp(1.5f)
+                color = green; style = Paint.Style.STROKE; strokeWidth = dp(2).toFloat()
             }
             private val handle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
-            private val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = green; strokeWidth = dp(1f) }
+            private val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = green; strokeWidth = dp(1).toFloat() }
             override fun onDraw(canvas: Canvas) {
                 super.onDraw(canvas)
                 val clip = textClipManager.find(selectedTextClipId) ?: return
                 if (previewTextOverlay.visibility != View.VISIBLE) return
                 val cx = width / 2f + clip.positionX
                 val cy = height / 2f + clip.positionY
-                val halfW = previewTextOverlay.width * clip.scale / 2f + dp(5)
-                val halfH = previewTextOverlay.height * clip.scale / 2f + dp(5)
+                val halfW = previewTextOverlay.width * clip.scale / 2f + dp(5).toFloat()
+                val halfH = previewTextOverlay.height * clip.scale / 2f + dp(5).toFloat()
                 canvas.save()
                 canvas.translate(cx, cy)
                 canvas.rotate(clip.rotation)
@@ -1286,9 +1286,9 @@ class MainActivity : AppCompatActivity() {
                     -halfW to -halfH, halfW to -halfH,
                     -halfW to halfH, halfW to halfH
                 )
-                points.forEach { (x, y) -> canvas.drawCircle(x, y, dp(4), handle) }
-                canvas.drawLine(0f, -halfH, 0f, -halfH - dp(25), guide)
-                canvas.drawCircle(0f, -halfH - dp(25), dp(5), handle)
+                points.forEach { (x, y) -> canvas.drawCircle(x, y, dp(4).toFloat(), handle) }
+                canvas.drawLine(0f, -halfH, 0f, -halfH - dp(25).toFloat(), guide)
+                canvas.drawCircle(0f, -halfH - dp(25).toFloat(), dp(5).toFloat(), handle)
                 canvas.restore()
                 if (abs(clip.positionX) < dp(1)) canvas.drawLine(width / 2f, 0f, width / 2f, height.toFloat(), guide)
                 if (abs(clip.positionY) < dp(1)) canvas.drawLine(0f, height / 2f, width.toFloat(), height / 2f, guide)
@@ -1299,14 +1299,14 @@ class MainActivity : AppCompatActivity() {
                 val clip = textClipManager.find(selectedTextClipId) ?: return@setOnTouchListener false
                 val cx = width / 2f + clip.positionX
                 val cy = height / 2f + clip.positionY
-                val halfW = previewTextOverlay.width * clip.scale / 2f + dp(5)
-                val halfH = previewTextOverlay.height * clip.scale / 2f + dp(5)
+                val halfW = previewTextOverlay.width * clip.scale / 2f + dp(5).toFloat()
+                val halfH = previewTextOverlay.height * clip.scale / 2f + dp(5).toFloat()
                 fun local(x: Float, y: Float): Pair<Float, Float> {
                     val dx = x - cx; val dy = y - cy
                     val a = Math.toRadians((-clip.rotation).toDouble())
                     return Pair(
-                        ((dx * kotlin.math.cos(a) - dy * kotlin.math.sin(a)) / clip.scale),
-                        ((dx * kotlin.math.sin(a) + dy * kotlin.math.cos(a)) / clip.scale)
+                        ((dx * kotlin.math.cos(a) - dy * kotlin.math.sin(a)) / clip.scale).toFloat(),
+                        ((dx * kotlin.math.sin(a) + dy * kotlin.math.cos(a)) / clip.scale).toFloat()
                     )
                 }
                 when (event.actionMasked) {
