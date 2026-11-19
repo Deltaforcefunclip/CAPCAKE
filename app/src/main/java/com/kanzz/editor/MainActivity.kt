@@ -81,6 +81,9 @@ class MainActivity : AppCompatActivity() {
     private lateinit var textSelectionOverlay: View
     private lateinit var thisTextTracksContainer: LinearLayout
     private lateinit var genericLayerPlaceholder: TextView
+    private lateinit var fontPickerPanel: LinearLayout
+    private var fontPickerOriginalFont: String? = null
+    private var fontPickerClipId: String? = null
     private val textClipManager = TextClipManager()
     private var selectedTextClipId: String? = null
     private var textDragUndoSaved = false
@@ -1685,8 +1688,19 @@ class MainActivity : AppCompatActivity() {
         refreshAudioTracks()
         refreshTextTracks()
 
-        // BOTTOM TOOLS
+        // PANEL FONT berada tepat di atas menu utama dan hanya tampil saat memilih font.
+        fontPickerPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(10), dp(6), dp(10), dp(6))
+            setBackgroundColor(Color.rgb(15, 15, 15))
+            visibility = View.GONE
+        }
+        root.addView(
+            fontPickerPanel,
+            LinearLayout.LayoutParams(-1, dp(280))
+        )
 
+        // BOTTOM TOOLS / MENU UTAMA
         toolsContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -2985,42 +2999,177 @@ class MainActivity : AppCompatActivity() {
 
     private fun showTextFontLibrary() {
         val clip = selectedTextClip() ?: return
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)); setBackgroundColor(Color.BLACK) }
-        val add = TextView(this).apply { text = "＋  Tambah"; textSize = 16f; setTextColor(green); gravity = Gravity.CENTER; setPadding(dp(12), dp(12), dp(12), dp(12)); setBackgroundColor(Color.rgb(43, 43, 43)) }
-        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
-        val scroll = ScrollView(this).apply { isFillViewport = true; addView(list, android.view.ViewGroup.LayoutParams(-1, -2)) }
-        root.addView(add, LinearLayout.LayoutParams(-1, dp(48))); root.addView(scroll, LinearLayout.LayoutParams(-1, dp(300)))
-        val title = TextView(this).apply { text = "Font"; textSize = 20f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE); setPadding(dp(20), dp(16), dp(20), dp(8)) }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setCustomTitle(title).setView(root).setNegativeButton("Tutup", null).create()
-        dialog.setOnShowListener { dialog.window?.setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply { setColor(Color.rgb(15, 15, 15)); setStroke(dp(1), Color.rgb(55, 55, 55)); cornerRadius = dp(12).toFloat() }) }
-        fun refresh() {
-            list.removeAllViews()
-            val builtIns = listOf("Default", "Sans", "Serif", "Monospace")
-            val custom = fontLibraryDirectory().listFiles()?.filter { it.isFile && (it.extension.equals("ttf", true) || it.extension.equals("otf", true)) }?.sortedBy { it.nameWithoutExtension.lowercase(Locale.ROOT) } ?: emptyList()
-            (builtIns.map { Pair(it, null as File?) } + custom.map { Pair(it.nameWithoutExtension, it) }).forEach { item ->
-                val label = item.first; val file = item.second
-                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(2), dp(2), dp(2)); setBackgroundColor(Color.rgb(29, 29, 29)) }
-                val name = TextView(this).apply { text = label; textSize = 16f; setTextColor(Color.WHITE); gravity = Gravity.CENTER_VERTICAL; typeface = getLibraryTypeface(file?.name ?: label, clip.bold); setPadding(dp(10), dp(4), dp(4), dp(4)); setOnClickListener { pushUndoSnapshot(); clip.fontName = file?.name ?: label; updateTextPreview(); saveCurrentProject(); dialog.dismiss() } }
-                row.addView(name, LinearLayout.LayoutParams(0, dp(44), 1f))
-                if (file != null) {
-                    val menu = TextView(this).apply { text = "⋮"; textSize = 22f; setTextColor(Color.LTGRAY); gravity = Gravity.CENTER; setOnClickListener {
-                        androidx.appcompat.app.AlertDialog.Builder(this@MainActivity).setItems(arrayOf("Ubah nama", "Hapus")) { _, which ->
-                            if (which == 0) {
-                                val input = EditText(this@MainActivity).apply { setText(file.nameWithoutExtension); setSingleLine(true) }
-                                androidx.appcompat.app.AlertDialog.Builder(this@MainActivity).setTitle("Ubah nama font").setView(input).setNegativeButton("Batal", null).setPositiveButton("Simpan") { _, _ ->
-                                    val base = input.text.toString().trim().replace(Regex("[^A-Za-z0-9._ -]"), "_"); val target = File(file.parentFile, base + "." + file.extension)
-                                    if (base.isBlank()) showMessage("Nama font tidak boleh kosong.") else if (target.exists()) showMessage("Nama font sudah digunakan.") else if (file.renameTo(target)) refresh() else showMessage("Gagal mengubah nama font.")
-                                }.show()
-                            } else androidx.appcompat.app.AlertDialog.Builder(this@MainActivity).setMessage("Hapus font " + label + "?").setNegativeButton("Batal", null).setPositiveButton("Hapus") { _, _ -> if (file.delete()) refresh() else showMessage("Gagal menghapus font.") }.show()
-                        }.show()
-                    } }
-                    row.addView(menu, LinearLayout.LayoutParams(dp(38), dp(44)))
+        if (!::fontPickerPanel.isInitialized) return
+
+        // Simpan font awal hanya saat panel baru dibuka. Saat kembali dari import,
+        // pilihan sementara tetap dipertahankan sampai pengguna konfirmasi/batal.
+        if (fontPickerPanel.visibility != View.VISIBLE || fontPickerClipId != clip.id) {
+            fontPickerOriginalFont = clip.fontName
+            fontPickerClipId = clip.id
+        }
+        fontPickerPanel.removeAllViews()
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val title = TextView(this).apply {
+            text = "Font"
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, dp(30), 1f))
+        val add = TextView(this).apply {
+            text = "＋ Tambah"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(green)
+            setPadding(dp(10), 0, dp(10), 0)
+            setBackgroundColor(Color.rgb(43, 43, 43))
+        }
+        header.addView(add, LinearLayout.LayoutParams(-2, dp(30)))
+        fontPickerPanel.addView(header, LinearLayout.LayoutParams(-1, dp(34)))
+
+        // Satu ScrollView memuat dua kolom; keduanya bergerak bersama saat digulir.
+        val grid = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            isVerticalScrollBarEnabled = true
+            addView(grid, android.view.ViewGroup.LayoutParams(-1, -2))
+        }
+        fontPickerPanel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val cancel = TextView(this).apply {
+            text = "✕ Batal"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.LTGRAY)
+            setBackgroundColor(Color.rgb(43, 43, 43))
+        }
+        val confirm = TextView(this).apply {
+            text = "✓ Terapkan"
+            textSize = 14f
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+            setBackgroundColor(green)
+        }
+        actions.addView(cancel, LinearLayout.LayoutParams(0, dp(34), 1f).apply { marginEnd = dp(6) })
+        actions.addView(confirm, LinearLayout.LayoutParams(0, dp(34), 1f).apply { marginStart = dp(6) })
+        fontPickerPanel.addView(actions, LinearLayout.LayoutParams(-1, dp(40)))
+
+        fun finishPicker(apply: Boolean) {
+            val currentClip = textClipManager.find(fontPickerClipId)
+            if (currentClip != null) {
+                if (apply) {
+                    if (currentClip.fontName != fontPickerOriginalFont) {
+                        pushUndoSnapshot()
+                        saveCurrentProject()
+                    }
+                } else {
+                    currentClip.fontName = fontPickerOriginalFont ?: currentClip.fontName
+                    updateTextPreview()
                 }
-                val params = LinearLayout.LayoutParams(-1, dp(44)); params.bottomMargin = dp(3); list.addView(row, params)
+            }
+            fontPickerPanel.visibility = View.GONE
+            fontPickerClipId = null
+            fontPickerOriginalFont = null
+        }
+
+        cancel.setOnClickListener { finishPicker(false) }
+        confirm.setOnClickListener { finishPicker(true) }
+        add.setOnClickListener { pickFonts.launch(arrayOf("*/*")) }
+
+        fun refresh() {
+            grid.removeAllViews()
+            val builtIns = listOf("Default", "Sans", "Serif", "Monospace")
+            val custom = fontLibraryDirectory().listFiles()
+                ?.filter { it.isFile && (it.extension.equals("ttf", true) || it.extension.equals("otf", true)) }
+                ?.sortedBy { it.nameWithoutExtension.lowercase(Locale.ROOT) } ?: emptyList()
+            val items = builtIns.map { Pair(it, null as File?) } + custom.map { Pair(it.nameWithoutExtension, it) }
+            items.chunked(2).forEach { pair ->
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                }
+                pair.forEach { item ->
+                    val label = item.first
+                    val file = item.second
+                    val cell = LinearLayout(this).apply {
+                        orientation = LinearLayout.HORIZONTAL
+                        gravity = Gravity.CENTER_VERTICAL
+                        setPadding(dp(5), dp(2), dp(2), dp(2))
+                        setBackgroundColor(Color.rgb(29, 29, 29))
+                    }
+                    val sample = TextView(this).apply {
+                        text = "CAPCAKE 123\n$label"
+                        textSize = 11f
+                        maxLines = 2
+                        setTextColor(if (clip.fontName == (file?.name ?: label)) green else Color.WHITE)
+                        gravity = Gravity.CENTER_VERTICAL
+                        typeface = getLibraryTypeface(file?.name ?: label, clip.bold)
+                        setOnClickListener {
+                            clip.fontName = file?.name ?: label
+                            updateTextPreview()
+                            refresh()
+                        }
+                    }
+                    cell.addView(sample, LinearLayout.LayoutParams(0, dp(42), 1f))
+                    if (file != null) {
+                        val menu = TextView(this).apply {
+                            text = "⋮"
+                            textSize = 18f
+                            setTextColor(Color.LTGRAY)
+                            gravity = Gravity.CENTER
+                            setOnClickListener {
+                                androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                                    .setItems(arrayOf("Ubah nama", "Hapus")) { _, which ->
+                                        if (which == 0) {
+                                            val input = EditText(this@MainActivity).apply {
+                                                setText(file.nameWithoutExtension)
+                                                setSingleLine(true)
+                                            }
+                                            androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                                                .setTitle("Ubah nama font").setView(input)
+                                                .setNegativeButton("Batal", null)
+                                                .setPositiveButton("Simpan") { _, _ ->
+                                                    val base = input.text.toString().trim().replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                                                    val target = File(file.parentFile, base + "." + file.extension)
+                                                    if (base.isBlank()) showMessage("Nama font tidak boleh kosong.")
+                                                    else if (target.exists()) showMessage("Nama font sudah digunakan.")
+                                                    else if (file.renameTo(target)) refresh()
+                                                    else showMessage("Gagal mengubah nama font.")
+                                                }.show()
+                                        } else {
+                                            androidx.appcompat.app.AlertDialog.Builder(this@MainActivity)
+                                                .setMessage("Hapus font $label?")
+                                                .setNegativeButton("Batal", null)
+                                                .setPositiveButton("Hapus") { _, _ ->
+                                                    if (file.delete()) refresh() else showMessage("Gagal menghapus font.")
+                                                }.show()
+                                        }
+                                    }.show()
+                            }
+                        }
+                        cell.addView(menu, LinearLayout.LayoutParams(dp(26), dp(42)))
+                    }
+                    row.addView(cell, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                        if (pair.indexOf(item) == 0) marginEnd = dp(3) else marginStart = dp(3)
+                        bottomMargin = dp(3)
+                    })
+                }
+                if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, dp(44), 1f))
+                grid.addView(row, LinearLayout.LayoutParams(-1, dp(47)))
             }
         }
-        add.setOnClickListener { dialog.dismiss(); pickFonts.launch(arrayOf("*/*")) }
-        refresh(); dialog.show(); dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.88f).toInt(), -2)
+
+        refresh()
+        fontPickerPanel.visibility = View.VISIBLE
+        fontPickerPanel.bringToFront()
     }
 
     private fun duplicateSelectedText() {
