@@ -62,6 +62,21 @@ class TextClipManager {
         return true
     }
 
+    fun moveClipToNewBottomLane(id: String): Boolean {
+        val clip = find(id) ?: return false
+        clip.trackIndex = (clips.maxOfOrNull { it.trackIndex } ?: -1) + 1
+        compactLanes()
+        return true
+    }
+
+    // Rapikan nomor layer setelah clip dipindahkan; layer kosong dihapus.
+    fun compactLanes() {
+        val laneOrder = clips.map { it.trackIndex }.distinct().sorted()
+        val remap = laneOrder.mapIndexed { index, oldLane -> oldLane to index }.toMap()
+        clips.forEach { clip -> clip.trackIndex = remap[clip.trackIndex] ?: 0 }
+        sort()
+    }
+
     private fun sort() {
         clips.sortWith(compareBy<TextClip> { it.trackIndex }.thenBy { it.startTimeMs })
     }
