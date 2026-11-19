@@ -1718,7 +1718,7 @@ class MainActivity : AppCompatActivity() {
         editorOverlayRoot.addView(root, FrameLayout.LayoutParams(-1, -1))
         editorOverlayRoot.addView(
             fontPickerPanel,
-            FrameLayout.LayoutParams(-1, dp(224), Gravity.TOP)
+            FrameLayout.LayoutParams(-1, dp(420), Gravity.TOP)
         )
         root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             positionFontPickerPanel()
@@ -3120,9 +3120,9 @@ class MainActivity : AppCompatActivity() {
                         setBackgroundColor(Color.rgb(29, 29, 29))
                     }
                     val sample = TextView(this).apply {
-                        text = "CAPCAKE 123\n$label"
-                        textSize = 11f
-                        maxLines = 2
+                        text = label
+                        textSize = 16f
+                        maxLines = 1
                         setTextColor(if (clip.fontName == (file?.name ?: label)) green else Color.WHITE)
                         gravity = Gravity.CENTER_VERTICAL
                         typeface = getLibraryTypeface(file?.name ?: label, clip.bold)
@@ -3132,7 +3132,7 @@ class MainActivity : AppCompatActivity() {
                             refresh()
                         }
                     }
-                    cell.addView(sample, LinearLayout.LayoutParams(0, dp(42), 1f))
+                    cell.addView(sample, LinearLayout.LayoutParams(0, dp(50), 1f))
                     if (file != null) {
                         val menu = TextView(this).apply {
                             text = "⋮"
@@ -3169,15 +3169,15 @@ class MainActivity : AppCompatActivity() {
                                     }.show()
                             }
                         }
-                        cell.addView(menu, LinearLayout.LayoutParams(dp(26), dp(42)))
+                        cell.addView(menu, LinearLayout.LayoutParams(dp(26), dp(50)))
                     }
-                    row.addView(cell, LinearLayout.LayoutParams(0, dp(44), 1f).apply {
+                    row.addView(cell, LinearLayout.LayoutParams(0, dp(52), 1f).apply {
                         if (pair.indexOf(item) == 0) marginEnd = dp(3) else marginStart = dp(3)
                         bottomMargin = dp(3)
                     })
                 }
-                if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, dp(44), 1f))
-                grid.addView(row, LinearLayout.LayoutParams(-1, dp(47)))
+                if (pair.size == 1) row.addView(View(this), LinearLayout.LayoutParams(0, dp(52), 1f))
+                grid.addView(row, LinearLayout.LayoutParams(-1, dp(55)))
             }
             scroll.post { scroll.scrollTo(0, previousScrollY) }
         }
@@ -3191,7 +3191,7 @@ class MainActivity : AppCompatActivity() {
     private fun positionFontPickerPanel() {
         if (!::fontPickerPanel.isInitialized || !::toolsContainer.isInitialized) return
         val params = fontPickerPanel.layoutParams as? FrameLayout.LayoutParams ?: return
-        val panelHeight = dp(224)
+        val panelHeight = dp(420)
         // Panel berakhir tepat pada batas atas menu utama tanpa menggeser layout.
         params.topMargin = (toolsContainer.top - panelHeight).coerceAtLeast(0)
         params.height = panelHeight
