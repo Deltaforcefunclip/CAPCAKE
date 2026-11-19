@@ -4145,7 +4145,7 @@ class MainActivity : AppCompatActivity() {
 
                                                     val centerX = canvas.width / 2f + textClip.positionX * sx
                                                     val centerY = canvas.height / 2f + textClip.positionY * sy
-                                                    val lines = textClip.text.split('\\n')
+                                                    val lines = textClip.text.split('\n')
                                                     val lineHeight = textPaint.fontSpacing
                                                     val firstBaseline = centerY -
                                                         ((lines.size - 1) * lineHeight / 2f) -
