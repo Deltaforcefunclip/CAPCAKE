@@ -301,6 +301,8 @@ class MainActivity : AppCompatActivity() {
 
     private var pendingLibraryCategory: String? = null
 
+    private val pickFonts = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris -> if (uris.isNotEmpty()) importFontFiles(uris) }
+
     private val pickAudio =
         registerForActivityResult(
             ActivityResultContracts.OpenDocument()
@@ -2891,15 +2893,90 @@ class MainActivity : AppCompatActivity() {
             }.show()
     }
 
-    private fun showTextFontPicker() {
+    private fun fontLibraryDirectory(): File = File(filesDir, "font_library").apply { if (!exists()) mkdirs() }
+
+    private fun getLibraryTypeface(fileName: String, bold: Boolean): Typeface {
+        if (fileName == "Default" || fileName == "Sans" || fileName.isBlank()) return Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
+        if (fileName == "Serif" || fileName == "Monospace") return Typeface.create(fileName.lowercase(Locale.ROOT), if (bold) Typeface.BOLD else Typeface.NORMAL)
+        val file = File(fontLibraryDirectory(), fileName)
+        if (!file.exists()) return Typeface.DEFAULT
+        return runCatching { Typeface.createFromFile(file) }.getOrDefault(Typeface.DEFAULT).let { if (bold) Typeface.create(it, Typeface.BOLD) else it }
+    }
+
+    private fun importFontFiles(uris: List<Uri>) {
+        var added = 0
+        var skipped = 0
+        val dir = fontLibraryDirectory()
+        uris.forEach { uri ->
+            runCatching {
+                val displayName = contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use { c -> if (c.moveToFirst()) c.getString(0) else null } ?: "font.ttf"
+                if (displayName.endsWith(".zip", true)) {
+                    contentResolver.openInputStream(uri)?.use { input -> java.util.zip.ZipInputStream(input).use { zip ->
+                        var entry = zip.nextEntry
+                        while (entry != null) {
+                            if (!entry.isDirectory && (entry.name.endsWith(".ttf", true) || entry.name.endsWith(".otf", true))) {
+                                val name = entry.name.substringAfterLast("/").replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                                var target = File(dir, name); var n = 1
+                                while (target.exists()) { target = File(dir, name.substringBeforeLast(".") + "_" + n + "." + name.substringAfterLast(".")); n++ }
+                                target.outputStream().use { zip.copyTo(it) }
+                                if (runCatching { Typeface.createFromFile(target) }.isSuccess) added++ else { target.delete(); skipped++ }
+                            }
+                            zip.closeEntry(); entry = zip.nextEntry
+                        }
+                    } } ?: throw IllegalStateException("File tidak dapat dibaca")
+                } else if (displayName.endsWith(".ttf", true) || displayName.endsWith(".otf", true)) {
+                    val name = displayName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                    var target = File(dir, name); var n = 1
+                    while (target.exists()) { target = File(dir, name.substringBeforeLast(".") + "_" + n + "." + name.substringAfterLast(".")); n++ }
+                    contentResolver.openInputStream(uri)?.use { input -> target.outputStream().use { input.copyTo(it) } } ?: throw IllegalStateException("File tidak dapat dibaca")
+                    if (runCatching { Typeface.createFromFile(target) }.isSuccess) added++ else { target.delete(); skipped++ }
+                } else skipped++
+            }.onFailure { skipped++ }
+        }
+        showTextFontLibrary()
+        Toast.makeText(this, added.toString() + " font ditambahkan" + if (skipped > 0) " • " + skipped + " file dilewati" else "", Toast.LENGTH_LONG).show()
+    }
+
+    private fun showTextFontPicker() = showTextFontLibrary()
+
+    private fun showTextFontLibrary() {
         val clip = selectedTextClip() ?: return
-        val fonts = arrayOf("Sans", "Serif", "Monospace")
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Font")
-            .setSingleChoiceItems(fonts, fonts.indexOf(clip.fontName).coerceAtLeast(0)) { dialog, which ->
-                pushUndoSnapshot(); clip.fontName = fonts[which]
-                updateTextPreview(); saveCurrentProject(); dialog.dismiss()
-            }.setNegativeButton("Batal", null).show()
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(16), dp(8), dp(16), dp(8)); setBackgroundColor(Color.BLACK) }
+        val add = TextView(this).apply { text = "＋  Tambah"; textSize = 16f; setTextColor(green); gravity = Gravity.CENTER; setPadding(dp(12), dp(12), dp(12), dp(12)); setBackgroundColor(Color.rgb(43, 43, 43)) }
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        val scroll = ScrollView(this).apply { isFillViewport = true; addView(list, android.view.ViewGroup.LayoutParams(-1, -2)) }
+        root.addView(add, LinearLayout.LayoutParams(-1, dp(48))); root.addView(scroll, LinearLayout.LayoutParams(-1, dp(300)))
+        val title = TextView(this).apply { text = "Font"; textSize = 20f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE); setPadding(dp(20), dp(16), dp(20), dp(8)) }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setCustomTitle(title).setView(root).setNegativeButton("Tutup", null).create()
+        dialog.setOnShowListener { dialog.window?.setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply { setColor(Color.rgb(15, 15, 15)); setStroke(dp(1), Color.rgb(55, 55, 55)); cornerRadius = dp(12).toFloat() }) }
+        fun refresh() {
+            list.removeAllViews()
+            val builtIns = listOf("Default", "Sans", "Serif", "Monospace")
+            val custom = fontLibraryDirectory().listFiles()?.filter { it.isFile && (it.extension.equals("ttf", true) || it.extension.equals("otf", true)) }?.sortedBy { it.nameWithoutExtension.lowercase(Locale.ROOT) } ?: emptyList()
+            (builtIns.map { Pair(it, null as File?) } + custom.map { Pair(it.nameWithoutExtension, it) }).forEach { item ->
+                val label = item.first; val file = item.second
+                val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(dp(8), dp(2), dp(2), dp(2)); setBackgroundColor(Color.rgb(29, 29, 29)) }
+                val name = TextView(this).apply { text = label; textSize = 16f; setTextColor(Color.WHITE); gravity = Gravity.CENTER_VERTICAL; typeface = getLibraryTypeface(file?.name ?: label, clip.bold); setPadding(dp(10), dp(4), dp(4), dp(4)); setOnClickListener { pushUndoSnapshot(); clip.fontName = file?.name ?: label; updateTextPreview(); saveCurrentProject(); dialog.dismiss() } }
+                row.addView(name, LinearLayout.LayoutParams(0, dp(44), 1f))
+                if (file != null) {
+                    val menu = TextView(this).apply { text = "⋮"; textSize = 22f; setTextColor(Color.LTGRAY); gravity = Gravity.CENTER; setOnClickListener {
+                        androidx.appcompat.app.AlertDialog.Builder(this@MainActivity).setItems(arrayOf("Ubah nama", "Hapus")) { _, which ->
+                            if (which == 0) {
+                                val input = EditText(this@MainActivity).apply { setText(file.nameWithoutExtension); setSingleLine(true) }
+                                androidx.appcompat.app.AlertDialog.Builder(this@MainActivity).setTitle("Ubah nama font").setView(input).setNegativeButton("Batal", null).setPositiveButton("Simpan") { _, _ ->
+                                    val base = input.text.toString().trim().replace(Regex("[^A-Za-z0-9._ -]"), "_"); val target = File(file.parentFile, base + "." + file.extension)
+                                    if (base.isBlank()) showMessage("Nama font tidak boleh kosong.") else if (target.exists()) showMessage("Nama font sudah digunakan.") else if (file.renameTo(target)) refresh() else showMessage("Gagal mengubah nama font.")
+                                }.show()
+                            } else androidx.appcompat.app.AlertDialog.Builder(this@MainActivity).setMessage("Hapus font " + label + "?").setNegativeButton("Batal", null).setPositiveButton("Hapus") { _, _ -> if (file.delete()) refresh() else showMessage("Gagal menghapus font.") }.show()
+                        }.show()
+                    } }
+                    row.addView(menu, LinearLayout.LayoutParams(dp(38), dp(44)))
+                }
+                val params = LinearLayout.LayoutParams(-1, dp(44)); params.bottomMargin = dp(3); list.addView(row, params)
+            }
+        }
+        add.setOnClickListener { dialog.dismiss(); pickFonts.launch(arrayOf("*/*")) }
+        refresh(); dialog.show(); dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.88f).toInt(), -2)
     }
 
     private fun duplicateSelectedText() {
@@ -2982,12 +3059,7 @@ class MainActivity : AppCompatActivity() {
         previewTextOverlay.text = active?.text ?: ""
         previewTextOverlay.setTextColor(active?.color ?: Color.WHITE)
         previewTextOverlay.alpha = active?.opacity ?: 1f
-        previewTextOverlay.typeface = when (active?.fontName) {
-            "Serif" -> android.graphics.Typeface.create("serif", if (active.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-            "Monospace" -> android.graphics.Typeface.create("monospace", if (active.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-            "Sans" -> android.graphics.Typeface.create("sans-serif", if (active.bold) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-            else -> android.graphics.Typeface.create("sans-serif", if (active?.bold == true) android.graphics.Typeface.BOLD else android.graphics.Typeface.NORMAL)
-        }
+        previewTextOverlay.typeface = active?.let { getLibraryTypeface(it.fontName, it.bold) } ?: Typeface.DEFAULT
         previewTextOverlay.visibility = if (active == null) View.GONE else View.VISIBLE
         previewTextOverlay.scaleX = active?.scale ?: 1f
         previewTextOverlay.scaleY = active?.scale ?: 1f
