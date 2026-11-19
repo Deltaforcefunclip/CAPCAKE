@@ -1444,6 +1444,9 @@ class MainActivity : AppCompatActivity() {
                 updateToolMenu()            },
             onViewportChanged = {
                 audioTrackViews.values.forEach { it.invalidate() }
+                if (::thisTextTracksContainer.isInitialized) {
+                    for (i in 0 until thisTextTracksContainer.childCount) thisTextTracksContainer.getChildAt(i).invalidate()
+                }
             },
             onPreviewMoveClip = { clipId, targetStartMs ->
                 previewClipMoveAt(clipId, targetStartMs)
@@ -2593,8 +2596,10 @@ class MainActivity : AppCompatActivity() {
     private fun refreshTextTracks() {
         if (!::thisTextTracksContainer.isInitialized) return
         thisTextTracksContainer.removeAllViews()
-        run {
-            val view = TextTrackView(this, timelineController, textClipManager.clips,
+        val laneCount = (textClipManager.clips.maxOfOrNull { it.trackIndex } ?: 0) + 1
+        repeat(laneCount.coerceAtLeast(1)) { lane ->
+            val laneClips = textClipManager.clips.filter { it.trackIndex == lane }
+            val view = TextTrackView(this, timelineController, laneClips,
                 onSelected = { clip ->
                     selectedTextClipId = clip?.id
                     selectedAudioClipId = null
@@ -2666,7 +2671,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun encodeTextClips(): String {
         val array = JSONArray()
-        textClipManager.clips.forEach { clip -> array.put(JSONObject().apply { put("id", clip.id); put("text", clip.text); put("startTimeMs", clip.startTimeMs); put("durationMs", clip.durationMs); put("fontName", clip.fontName) }) }
+        textClipManager.clips.forEach { clip -> array.put(JSONObject().apply { put("id", clip.id); put("text", clip.text); put("startTimeMs", clip.startTimeMs); put("durationMs", clip.durationMs); put("fontName", clip.fontName); put("trackIndex", clip.trackIndex) }) }
         return array.toString()
     }
 
@@ -2675,7 +2680,7 @@ class MainActivity : AppCompatActivity() {
         if (json.isNullOrBlank()) return
         runCatching {
             val array = JSONArray(json)
-            for (i in 0 until array.length()) { val item = array.getJSONObject(i); textClipManager.add(TextClip(item.optString("id"), item.optString("text"), item.optLong("startTimeMs"), item.optLong("durationMs", 2000L), item.optString("fontName", "Default"))) }
+            for (i in 0 until array.length()) { val item = array.getJSONObject(i); textClipManager.add(TextClip(item.optString("id"), item.optString("text"), item.optLong("startTimeMs"), item.optLong("durationMs", 2000L), item.optString("fontName", "Default"), item.optInt("trackIndex", 0))) }
         }.onFailure { textClipManager.clips.clear() }
     }
 
