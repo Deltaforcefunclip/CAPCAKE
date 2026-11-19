@@ -1538,18 +1538,32 @@ class MainActivity : AppCompatActivity() {
             textTracksScroll,
             FrameLayout.LayoutParams(-1, -1).apply { bottomMargin = dp(42) }
         )
-        textAddLayerButton = TextView(this).apply {
-            text = "+"
-            textSize = 27f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            setBackgroundColor(Color.TRANSPARENT)
-            visibility = View.GONE
-            setOnClickListener {
+        textAddLayerButton = object : View(this) {
+            private val plusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = green
+                style = Paint.Style.STROKE
+                strokeWidth = dp(2).toFloat()
+                strokeCap = Paint.Cap.SQUARE
+            }
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val cx = width / 2f
+                val cy = height / 2f
+                val half = dp(8).toFloat()
+                canvas.drawLine(cx - half, cy, cx + half, cy, plusPaint)
+                canvas.drawLine(cx, cy - half, cx, cy + half, plusPaint)
+            }
+            override fun performClick(): Boolean {
+                super.performClick()
                 textExtraLaneCount++
                 refreshTextTracks()
                 textTracksScroll.post { textTracksScroll.fullScroll(View.FOCUS_DOWN) }
+                return true
             }
+        }.apply {
+            isClickable = true
+            contentDescription = "Tambah layer teks"
+            visibility = View.GONE
         }
         audioTimelineFrame.addView(
             textAddLayerButton,
