@@ -82,6 +82,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var thisTextTracksContainer: LinearLayout
     private lateinit var genericLayerPlaceholder: TextView
     private lateinit var fontPickerPanel: LinearLayout
+    private lateinit var editorOverlayRoot: FrameLayout
     private var fontPickerOriginalFont: String? = null
     private var fontPickerClipId: String? = null
     private val textClipManager = TextClipManager()
@@ -1688,17 +1689,15 @@ class MainActivity : AppCompatActivity() {
         refreshAudioTracks()
         refreshTextTracks()
 
-        // PANEL FONT berada tepat di atas menu utama dan hanya tampil saat memilih font.
+        // PANEL FONT dibuat sebagai overlay terpisah agar tidak mengubah ukuran
+        // root dan tidak mendorong menu utama ke luar layar.
         fontPickerPanel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(10), dp(6), dp(10), dp(6))
             setBackgroundColor(Color.rgb(15, 15, 15))
             visibility = View.GONE
+            elevation = dp(12).toFloat()
         }
-        root.addView(
-            fontPickerPanel,
-            LinearLayout.LayoutParams(-1, dp(280))
-        )
 
         // BOTTOM TOOLS / MENU UTAMA
         toolsContainer = LinearLayout(this).apply {
@@ -1713,7 +1712,18 @@ class MainActivity : AppCompatActivity() {
 
         updateToolMenu()
 
-        setContentView(root)
+        // Root dibungkus FrameLayout. Panel font ditempatkan sebagai overlay
+        // dengan sisi bawah tepat sejajar sisi atas menu utama.
+        editorOverlayRoot = FrameLayout(this)
+        editorOverlayRoot.addView(root, FrameLayout.LayoutParams(-1, -1))
+        editorOverlayRoot.addView(
+            fontPickerPanel,
+            FrameLayout.LayoutParams(-1, dp(224), Gravity.TOP)
+        )
+        root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
+            positionFontPickerPanel()
+        }
+        setContentView(editorOverlayRoot)
 
         // PREVIEW SELECTION
 
@@ -3174,6 +3184,18 @@ class MainActivity : AppCompatActivity() {
 
         refresh()
         fontPickerPanel.visibility = View.VISIBLE
+        positionFontPickerPanel()
+        fontPickerPanel.bringToFront()
+    }
+
+    private fun positionFontPickerPanel() {
+        if (!::fontPickerPanel.isInitialized || !::toolsContainer.isInitialized) return
+        val params = fontPickerPanel.layoutParams as? FrameLayout.LayoutParams ?: return
+        val panelHeight = dp(224)
+        // Panel berakhir tepat pada batas atas menu utama tanpa menggeser layout.
+        params.topMargin = (toolsContainer.top - panelHeight).coerceAtLeast(0)
+        params.height = panelHeight
+        fontPickerPanel.layoutParams = params
     }
 
     private fun duplicateSelectedText() {
