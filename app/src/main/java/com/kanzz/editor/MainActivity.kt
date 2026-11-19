@@ -41,6 +41,8 @@ import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.Crop
 import androidx.media3.effect.FrameDropEffect
+import androidx.media3.effect.CanvasOverlay
+import androidx.media3.effect.OverlayEffect
 import androidx.media3.transformer.Effects
 import org.json.JSONArray
 import org.json.JSONObject
@@ -82,6 +84,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var thisTextTracksContainer: LinearLayout
     private lateinit var genericLayerPlaceholder: TextView
     private lateinit var fontPickerPanel: LinearLayout
+    private lateinit var fontPickerAnchorView: View
     private lateinit var editorOverlayRoot: FrameLayout
     private var fontPickerOriginalFont: String? = null
     private var fontPickerClipId: String? = null
@@ -1176,6 +1179,7 @@ class MainActivity : AppCompatActivity() {
         val previewFrame = FrameLayout(this).apply {
             setBackgroundColor(Color.BLACK)
         }
+        fontPickerAnchorView = previewFrame
 
         playerView = PlayerView(this).apply {
 
@@ -3191,10 +3195,12 @@ class MainActivity : AppCompatActivity() {
     private fun positionFontPickerPanel() {
         if (!::fontPickerPanel.isInitialized || !::toolsContainer.isInitialized) return
         val params = fontPickerPanel.layoutParams as? FrameLayout.LayoutParams ?: return
-        val panelHeight = dp(420)
-        // Panel berakhir tepat pada batas atas menu utama tanpa menggeser layout.
-        params.topMargin = (toolsContainer.top - panelHeight).coerceAtLeast(0)
-        params.height = panelHeight
+        // Panel dimulai tepat setelah preview dan memanjang sampai menu utama.
+        // Kontrol Play tertutup panel, tetapi jendela preview tetap utuh.
+        val top = fontPickerAnchorView.bottom
+        val bottom = toolsContainer.top
+        params.topMargin = top.coerceAtLeast(0)
+        params.height = (bottom - top).coerceAtLeast(dp(180))
         fontPickerPanel.layoutParams = params
     }
 
@@ -4046,6 +4052,62 @@ class MainActivity : AppCompatActivity() {
                                             .setRotationDegrees(previewRotation)
                                             .build()
                                     )
+                                }
+
+                                // Overlay teks memakai waktu lokal klip untuk mencari waktu global timeline.
+                                if (textClipManager.clips.isNotEmpty()) {
+                                    val videoClip = clip
+                                    val overlay = object : CanvasOverlay(true) {
+                                        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                                            textAlign = Paint.Align.CENTER
+                                            style = Paint.Style.FILL
+                                        }
+
+                                        override fun onDraw(canvas: Canvas, presentationTimeUs: Long) {
+                                            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                                            val globalMs = videoClip.timelineStartMs + presentationTimeUs / 1000L
+                                            val activeTexts = textClipManager.clips.filter {
+                                                globalMs >= it.startTimeMs && globalMs < it.endTimeMs
+                                            }
+                                            if (activeTexts.isEmpty()) return
+
+                                            val previewW = fontPickerAnchorView.width.coerceAtLeast(1).toFloat()
+                                            val previewH = fontPickerAnchorView.height.coerceAtLeast(1).toFloat()
+                                            val sx = canvas.width / previewW
+                                            val sy = canvas.height / previewH
+                                            val fontScale = min(sx, sy)
+
+                                            activeTexts.forEach { textClip ->
+                                                textPaint.color = textClip.color
+                                                textPaint.alpha = (Color.alpha(textClip.color) *
+                                                    textClip.opacity.coerceIn(0f, 1f)).toInt()
+                                                textPaint.typeface = getLibraryTypeface(textClip.fontName, textClip.bold)
+                                                textPaint.textSize = previewTextOverlay.textSize *
+                                                    fontScale * textClip.scale.coerceIn(0.2f, 6f)
+                                                textPaint.setShadowLayer(
+                                                    3f * fontScale, 1f * fontScale,
+                                                    2f * fontScale, Color.BLACK
+                                                )
+
+                                                val centerX = canvas.width / 2f + textClip.positionX * sx
+                                                val centerY = canvas.height / 2f + textClip.positionY * sy
+                                                val lines = textClip.text.split('\n')
+                                                val lineHeight = textPaint.fontSpacing
+                                                val firstBaseline = centerY -
+                                                    ((lines.size - 1) * lineHeight / 2f) -
+                                                    (textPaint.ascent() + textPaint.descent()) / 2f
+                                                canvas.save()
+                                                canvas.rotate(textClip.rotation, centerX, centerY)
+                                                lines.forEachIndexed { index, line ->
+                                                    canvas.drawText(line, centerX,
+                                                        firstBaseline + index * lineHeight, textPaint)
+                                                }
+                                                canvas.restore()
+                                                textPaint.clearShadowLayer()
+                                            }
+                                        }
+                                    }
+                                    add(OverlayEffect(listOf(overlay)))
                                 }
                             }
                         )
