@@ -105,6 +105,7 @@ class MainActivity : AppCompatActivity() {
 
     // AUDIO CLIPS
     private val audioClipManager = AudioClipManager()
+    private val audioLibraryExecutor = Executors.newSingleThreadExecutor()
     private val videoClipManager = VideoClipManager()
 
     private var selectedVideoClipId: String? = null
@@ -660,7 +661,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun saveAudioToLibrary(uri: Uri, category: String) {
-        executor.execute {
+        audioLibraryExecutor.execute {
             var errorMessage: String? = null
             try {
                 val displayName = contentResolver.query(
