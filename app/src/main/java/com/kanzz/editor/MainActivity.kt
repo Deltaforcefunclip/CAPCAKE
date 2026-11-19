@@ -1236,6 +1236,8 @@ class MainActivity : AppCompatActivity() {
             setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         }
         previewRatioOverlay = ratioOverlay
+        ratioOverlay.isEnabled = selectedPreviewRatio.isNotBlank()
+        previewFrame.addView(ratioOverlay, FrameLayout.LayoutParams(-1, -1))
         previewTextOverlay = TextView(this).apply {
             gravity = Gravity.CENTER
             textAlignment = View.TEXT_ALIGNMENT_CENTER
@@ -1247,8 +1249,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(18), dp(12), dp(18), dp(12))
         }
         previewFrame.addView(previewTextOverlay, FrameLayout.LayoutParams(-1, -1))
-        ratioOverlay.isEnabled = selectedPreviewRatio.isNotBlank()
-        previewFrame.addView(ratioOverlay, FrameLayout.LayoutParams(-1, -1))
         setupPreviewTransformGesture(ratioOverlay)
         applyPreviewTransform()
 
@@ -2241,6 +2241,14 @@ class MainActivity : AppCompatActivity() {
                         } else showTextEditor()
                     }
 
+                    "Overlay", "Sticker" -> {
+                        activeLayerGroup = if (pair.second == "Overlay") "OVERLAY" else "STICKER"
+                        selectedAudioClipId = null
+                        selectedTextClipId = null
+                        updateLayerGroupVisibility()
+                        updateToolMenu()
+                    }
+
                     "Pisah" -> {
                         pushUndoSnapshot()
                         val second = audioClipManager.splitAudio(
@@ -2305,8 +2313,7 @@ class MainActivity : AppCompatActivity() {
         val toggle = TextView(this).apply {
 
             text = when {
-                selectedAudioClipId != null -> "KEMBALI KE MENU UTAMA"
-                videoSelected -> "KEMBALI KE MENU UTAMA"
+                selectedAudioClipId != null || selectedTextClipId != null || videoSelected -> "KEMBALI KE MENU UTAMA"
                 else -> "MENU VIDEO"
             }
 
@@ -2319,6 +2326,9 @@ class MainActivity : AppCompatActivity() {
             if (selectedAudioClipId != null) {
                 selectedAudioClipId = null
                 clearAudioTrackSelection()
+            } else if (selectedTextClipId != null) {
+                selectedTextClipId = null
+                refreshTextTracks()
             } else {
                 videoSelected = !videoSelected
             }
@@ -2612,7 +2622,7 @@ class MainActivity : AppCompatActivity() {
         val confirm = TextView(this).apply { text = "✓"; textSize = 26f; gravity = Gravity.CENTER; setTextColor(Color.BLACK); background = android.graphics.drawable.GradientDrawable().apply { setColor(0xFFE5674E.toInt()); cornerRadius = dp(7).toFloat() } }
         inputRow.addView(confirm, LinearLayout.LayoutParams(dp(48), dp(52)))
         val inputParams = LinearLayout.LayoutParams(0, dp(90), 1f); inputParams.marginStart = dp(8); inputRow.addView(input, inputParams)
-        root.addView(optionRow); root.addView(inputRow)
+        root.addView(inputRow); root.addView(optionRow)
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(root).setNegativeButton("Batal", null).create()
         confirm.setOnClickListener {
             val value = input.text.toString().trim()
