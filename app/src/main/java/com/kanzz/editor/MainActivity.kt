@@ -2893,7 +2893,51 @@ class MainActivity : AppCompatActivity() {
             }.show()
     }
 
-    private fun fontLibraryDirectory(): File = File(filesDir, "font_library").apply { if (!exists()) mkdirs() }
+    private fun fontLibraryDirectory(): File {
+        val dir = File(filesDir, "font_library").apply { if (!exists()) mkdirs() }
+        val installedMarker = File(dir, ".bundled_fonts_installed")
+
+        // Paket font bawaan diekstrak sekali ke penyimpanan internal aplikasi.
+        // File font yang sudah ditambahkan pengguna tidak ditimpa.
+        if (!installedMarker.exists()) {
+            var extracted = 0
+            runCatching {
+                assets.open("fonts/DAFTAR FONT.zip").use { input ->
+                    java.util.zip.ZipInputStream(input).use { zip ->
+                        var entry = zip.nextEntry
+                        while (entry != null) {
+                            val entryName = entry.name.substringAfterLast('/')
+                            if (!entry.isDirectory &&
+                                (entryName.endsWith(".ttf", true) || entryName.endsWith(".otf", true))
+                            ) {
+                                val safeName = entryName.replace(Regex("[^A-Za-z0-9._ -]"), "_")
+                                var target = File(dir, safeName)
+                                var suffix = 1
+                                while (target.exists()) {
+                                    val base = safeName.substringBeforeLast(".", safeName)
+                                    val ext = safeName.substringAfterLast(".", "")
+                                    target = File(dir, base + "_" + suffix++ + if (ext.isNotEmpty()) ".$ext" else "")
+                                }
+                                runCatching {
+                                    target.outputStream().use { output -> zip.copyTo(output) }
+                                    if (runCatching { Typeface.createFromFile(target) }.isSuccess) {
+                                        extracted++
+                                    } else {
+                                        target.delete()
+                                    }
+                                }.onFailure { target.delete() }
+                            }
+                            zip.closeEntry()
+                            entry = zip.nextEntry
+                        }
+                    }
+                }
+            }.onSuccess {
+                installedMarker.writeText("1")
+            }
+        }
+        return dir
+    }
 
     private fun getLibraryTypeface(fileName: String, bold: Boolean): Typeface {
         if (fileName == "Default" || fileName == "Sans" || fileName.isBlank()) return Typeface.create("sans-serif", if (bold) Typeface.BOLD else Typeface.NORMAL)
