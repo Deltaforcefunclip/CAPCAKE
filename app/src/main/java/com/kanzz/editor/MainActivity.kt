@@ -2182,7 +2182,11 @@ class MainActivity : AppCompatActivity() {
         toolsContainer.removeAllViews()
 
         val names = if (selectedTextClipId != null) {
-            listOf("⌫" to "Hapus")
+            listOf(
+                "✎" to "Edit Text", "Aa" to "Font", "▣" to "Salin",
+                "●" to "Warna", "▤" to "Gaya", "✂" to "Potong",
+                "✧" to "Animasi", "◐" to "Opasitas", "⌫" to "Hapus"
+            )
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -2267,6 +2271,10 @@ class MainActivity : AppCompatActivity() {
                 when (pair.second) {
 
                     "Potong" -> {
+                        if (selectedTextClipId != null) {
+                            splitSelectedText()
+                            return@setOnClickListener
+                        }
                         val clip = videoClipManager.find(selectedVideoClipId)
                         val editPosition = currentTimelinePosition()
                         pushUndoSnapshot()
@@ -2283,6 +2291,13 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
+                    "Edit Text" -> editSelectedText()
+                    "Font" -> showTextFontPicker()
+                    "Salin" -> duplicateSelectedText()
+                    "Warna" -> showTextColorPicker()
+                    "Gaya" -> toggleSelectedTextStyle()
+                    "Animasi" -> Toast.makeText(this, "Pengaturan animasi teks akan ditambahkan berikutnya.", Toast.LENGTH_SHORT).show()
+                    "Opasitas" -> showTextOpacityDialog()
                     "Hapus" -> {
                         if (selectedTextClipId != null) {
                             pushUndoSnapshot()
@@ -2317,6 +2332,10 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Duplikat" -> {
+                        if (selectedTextClipId != null) {
+                            duplicateSelectedText()
+                            return@setOnClickListener
+                        }
                         if (selectedAudioClipId != null) {
                             val original = audioClipManager.clips.firstOrNull { it.id == selectedAudioClipId }
                             if (original != null) {
@@ -2849,6 +2868,110 @@ class MainActivity : AppCompatActivity() {
         }
         dialog.show()
         input.post { val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager; imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT) }
+    }
+
+    private fun selectedTextClip(): TextClip? = textClipManager.find(selectedTextClipId)
+
+    private fun editSelectedText() {
+        val clip = selectedTextClip() ?: return
+        val input = EditText(this).apply {
+            setText(clip.text); setTextColor(Color.WHITE); textSize = 18f
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(Color.rgb(29, 29, 29))
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Edit Text").setView(input)
+            .setNegativeButton("Batal", null)
+            .setPositiveButton("Simpan") { _, _ ->
+                val value = input.text.toString()
+                if (value.isNotBlank()) {
+                    pushUndoSnapshot(); clip.text = value
+                    updateTextPreview(); refreshTextTracks(); saveCurrentProject()
+                }
+            }.show()
+    }
+
+    private fun showTextFontPicker() {
+        val clip = selectedTextClip() ?: return
+        val fonts = arrayOf("Sans", "Serif", "Monospace")
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Font")
+            .setSingleChoiceItems(fonts, fonts.indexOf(clip.fontName).coerceAtLeast(0)) { dialog, which ->
+                pushUndoSnapshot(); clip.fontName = fonts[which]
+                updateTextPreview(); saveCurrentProject(); dialog.dismiss()
+            }.setNegativeButton("Batal", null).show()
+    }
+
+    private fun duplicateSelectedText() {
+        val original = selectedTextClip() ?: return
+        pushUndoSnapshot()
+        val copy = original.copy(id = java.util.UUID.randomUUID().toString(), startTimeMs = original.endTimeMs)
+        textClipManager.add(copy)
+        selectedTextClipId = copy.id
+        refreshTextTracks(); updateTextPreview(); saveCurrentProject(); updateToolMenu()
+    }
+
+    private fun showTextColorPicker() {
+        val clip = selectedTextClip() ?: return
+        val labels = arrayOf("Putih", "Hitam", "Merah", "Kuning", "Hijau", "Biru")
+        val colors = intArrayOf(Color.WHITE, Color.BLACK, Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN)
+        androidx.appcompat.app.AlertDialog.Builder(this).setTitle("Warna teks")
+            .setItems(labels) { _, which ->
+                pushUndoSnapshot(); clip.color = colors[which]
+                updateTextPreview(); saveCurrentProject()
+            }.show()
+    }
+
+    private fun toggleSelectedTextStyle() {
+        val clip = selectedTextClip() ?: return
+        pushUndoSnapshot(); clip.bold = !clip.bold
+        updateTextPreview(); saveCurrentProject()
+        Toast.makeText(this, if (clip.bold) "Teks tebal" else "Teks normal", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun showTextOpacityDialog() {
+        val clip = selectedTextClip() ?: return
+        val seek = SeekBar(this).apply { max = 100; progress = (clip.opacity * 100).toInt().coerceIn(0, 100) }
+        val label = TextView(this).apply {
+            text = "Opasitas " + seek.progress + "%"; setTextColor(Color.WHITE); gravity = Gravity.CENTER
+        }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                label.text = "Opasitas " + value + "%"
+                clip.opacity = value / 100f
+                updateTextPreview()
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        val box = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(8))
+            addView(label); addView(seek)
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this).setTitle("Opasitas").setView(box)
+            .setNegativeButton("Batal") { _, _ -> updateTextPreview() }
+            .setPositiveButton("Simpan") { _, _ -> pushUndoSnapshot(); saveCurrentProject() }
+            .show()
+    }
+
+    private fun splitSelectedText() {
+        val clip = selectedTextClip() ?: return
+        val position = currentTimelinePosition()
+        if (position <= clip.startTimeMs || position >= clip.endTimeMs) {
+            Toast.makeText(this, "Geser playhead ke dalam clip teks untuk memotong.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        pushUndoSnapshot()
+        val oldEnd = clip.endTimeMs
+        val second = clip.copy(
+            id = java.util.UUID.randomUUID().toString(),
+            startTimeMs = position,
+            durationMs = oldEnd - position
+        )
+        clip.durationMs = position - clip.startTimeMs
+        textClipManager.add(second)
+        selectedTextClipId = second.id
+        refreshTextTracks(); updateTextPreview(); saveCurrentProject(); updateToolMenu()
     }
 
     private fun updateTextPreview() {
