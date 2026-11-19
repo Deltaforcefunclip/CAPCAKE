@@ -76,14 +76,12 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioTracksContainer: LinearLayout
     private lateinit var audioTracksScroll: ScrollView
     private lateinit var textTracksScroll: ScrollView
-    private lateinit var textAddLayerButton: View
     private lateinit var audioTimelineFrame: FrameLayout
     private lateinit var previewTextOverlay: TextView
     private lateinit var thisTextTracksContainer: LinearLayout
     private lateinit var genericLayerPlaceholder: TextView
     private val textClipManager = TextClipManager()
     private var selectedTextClipId: String? = null
-    private var textExtraLaneCount = 0
     private var textDragUndoSaved = false
     private var activeLayerGroup = "AUDIO"
     private val audioTrackViews = mutableMapOf<String, AudioTrackView>()
@@ -1536,38 +1534,7 @@ class MainActivity : AppCompatActivity() {
         audioTimelineFrame.addView(audioTracksScroll, FrameLayout.LayoutParams(-1, -1))
         audioTimelineFrame.addView(
             textTracksScroll,
-            FrameLayout.LayoutParams(-1, -1).apply { bottomMargin = dp(42) }
-        )
-        textAddLayerButton = object : View(this) {
-            private val plusPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                color = green
-                style = Paint.Style.STROKE
-                strokeWidth = dp(2).toFloat()
-                strokeCap = Paint.Cap.SQUARE
-            }
-            override fun onDraw(canvas: Canvas) {
-                super.onDraw(canvas)
-                val cx = width / 2f
-                val cy = height / 2f
-                val half = dp(8).toFloat()
-                canvas.drawLine(cx - half, cy, cx + half, cy, plusPaint)
-                canvas.drawLine(cx, cy - half, cx, cy + half, plusPaint)
-            }
-            override fun performClick(): Boolean {
-                super.performClick()
-                textExtraLaneCount++
-                refreshTextTracks()
-                textTracksScroll.post { textTracksScroll.fullScroll(View.FOCUS_DOWN) }
-                return true
-            }
-        }.apply {
-            isClickable = true
-            contentDescription = "Tambah layer teks"
-            visibility = View.GONE
-        }
-        audioTimelineFrame.addView(
-            textAddLayerButton,
-            FrameLayout.LayoutParams(-1, dp(42), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            FrameLayout.LayoutParams(-1, -1)
         )
         genericLayerPlaceholder = TextView(this).apply {
             gravity = Gravity.CENTER_VERTICAL
@@ -1596,8 +1563,6 @@ class MainActivity : AppCompatActivity() {
             audioPlayheadLine,
             FrameLayout.LayoutParams(dp(3), -1, Gravity.TOP or Gravity.CENTER_HORIZONTAL)
         )
-        // Pastikan ikon tambah berada di atas garis playhead.
-        textAddLayerButton.bringToFront()
         root.addView(
             audioTimelineFrame,
             LinearLayout.LayoutParams(-1, dp(136))
@@ -2624,7 +2589,6 @@ class MainActivity : AppCompatActivity() {
         if (!::audioTracksScroll.isInitialized || !::textTracksScroll.isInitialized) return
         audioTracksScroll.visibility = if (activeLayerGroup == "AUDIO") View.VISIBLE else View.GONE
         textTracksScroll.visibility = if (activeLayerGroup == "TEXT") View.VISIBLE else View.GONE
-        if (::textAddLayerButton.isInitialized) textAddLayerButton.visibility = if (activeLayerGroup == "TEXT") View.VISIBLE else View.GONE
         if (::genericLayerPlaceholder.isInitialized) {
             genericLayerPlaceholder.visibility = if (activeLayerGroup == "OVERLAY" || activeLayerGroup == "STICKER") View.VISIBLE else View.GONE
             genericLayerPlaceholder.text = if (activeLayerGroup == "OVERLAY") "Overlay Layer" else "Sticker Layer"
@@ -2641,8 +2605,7 @@ class MainActivity : AppCompatActivity() {
     private fun refreshTextTracks() {
         if (!::thisTextTracksContainer.isInitialized) return
         thisTextTracksContainer.removeAllViews()
-        val naturalCount = (textClipManager.clips.maxOfOrNull { it.trackIndex } ?: 0) + 1
-        val laneCount = naturalCount + textExtraLaneCount
+        val laneCount = (textClipManager.clips.maxOfOrNull { it.trackIndex } ?: 0) + 1
         repeat(laneCount.coerceAtLeast(1)) { lane ->
             val view = TextTrackView(
                 this,
@@ -2682,10 +2645,24 @@ class MainActivity : AppCompatActivity() {
                     invalidateTextTrackViews()
                 },
                 onClipDropped = { clip, rawY ->
-                    saveCurrentProject()
+                    val lastLaneView = (0 until thisTextTracksContainer.childCount)
+                        .lastOrNull()
+                        ?.let { thisTextTracksContainer.getChildAt(it) }
+                    val lastLocation = IntArray(2)
+                    lastLaneView?.getLocationOnScreen(lastLocation)
+                    val droppedBelowLastLane = lastLaneView != null &&
+                        rawY > lastLocation[1] + lastLaneView.height + dp(6)
+
+                    if (droppedBelowLastLane) {
+                        if (!textDragUndoSaved) pushUndoSnapshot()
+                        textClipManager.moveClipToNewBottomLane(clip.id)
+                    }
+                    textClipManager.compactLanes()
                     selectedTextClipId = clip.id
                     textDragUndoSaved = false
-                    invalidateTextTrackViews()
+                    refreshTextTracks()
+                    saveCurrentProject()
+                    updateTextPreview()
                     updateToolMenu()
                 },
                 onClipDrag = { clip, rawY ->
@@ -2825,6 +2802,27 @@ class MainActivity : AppCompatActivity() {
                     audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
                 },
                 onClipDropped = { clip, rawY ->
+                    val lastLaneEntry = audioTrackViews.entries.lastOrNull()
+                    val lastLaneLocation = IntArray(2)
+                    lastLaneEntry?.value?.getLocationOnScreen(lastLaneLocation)
+                    val droppedBelowLastLane = lastLaneEntry != null &&
+                        rawY > lastLaneLocation[1] + lastLaneEntry.value.height + dp(6)
+
+                    if (droppedBelowLastLane) {
+                        pushUndoSnapshot()
+                        val oldScrollY = audioTracksScroll.scrollY
+                        val moved = audioClipManager.createLaneAndMoveClip(clip.id)
+                        if (moved) {
+                            selectedAudioClipId = clip.id
+                            saveCurrentProject()
+                            refreshAudioTracks()
+                            audioTracksScroll.post {
+                                audioTracksScroll.scrollTo(0, oldScrollY)
+                                selectAudioClip(clip.id)
+                            }
+                            syncAudioPlayback()
+                        }
+                    } else {
                     val targetEntry = audioTrackViews.entries
                         .mapNotNull { entry ->
                             val location = IntArray(2)
@@ -2869,6 +2867,7 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         // Posisi horizontal tetap disimpan meskipun clip dilepas di layer asal.
                         saveCurrentProject()
+                    }
                     }
                 }
             )
