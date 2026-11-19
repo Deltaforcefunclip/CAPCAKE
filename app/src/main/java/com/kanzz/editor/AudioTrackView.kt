@@ -26,8 +26,19 @@ class AudioTrackView(
     private val selectedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density
     }
+    private val textStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFFFFF.toInt()
+        textSize = 10f * density
+        isFakeBoldText = true
+        style = Paint.Style.STROKE
+        strokeWidth = 1.8f * density
+        strokeJoin = Paint.Join.ROUND
+    }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = 0xFF101010.toInt(); textSize = 10f * density; isFakeBoldText = true
+        color = 0xFF101010.toInt()
+        textSize = 10f * density
+        isFakeBoldText = true
+        style = Paint.Style.FILL
     }
     private val snapGuidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFD54F.toInt(); strokeWidth = 1.5f * density
@@ -119,7 +130,10 @@ class AudioTrackView(
                 label += "…"
             }
             if (label.isNotEmpty()) {
-                canvas.drawText(label, startX + 8f * density, height / 2f + 3.5f * density, textPaint)
+                val textX = startX + 8f * density
+                val textY = height / 2f + 3.5f * density
+                canvas.drawText(label, textX, textY, textStrokePaint)
+                canvas.drawText(label, textX, textY, textPaint)
             }
             canvas.restore()
         }
