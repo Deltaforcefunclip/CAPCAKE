@@ -651,13 +651,58 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAudioLibraryMenu() {
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Audio")
-            .setItems(arrayOf("Sound Effect", "Music")) { _, which ->
-                showAudioLibrary(if (which == 0) "sound_effect" else "music")
-            }
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setBackgroundColor(Color.rgb(15, 15, 15))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setCustomTitle(TextView(this).apply {
+                text = "Audio"
+                textSize = 20f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                setPadding(dp(20), dp(16), dp(20), dp(8))
+            })
+            .setView(root)
             .setNegativeButton("Batal", null)
-            .show()
+            .create()
+
+        fun addCategoryCard(label: String, category: String) {
+            val card = TextView(this).apply {
+                text = label
+                textSize = 16f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(16), 0, dp(16), 0)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(29, 29, 29))
+                    setStroke(dp(1), Color.rgb(55, 55, 55))
+                    cornerRadius = dp(8).toFloat()
+                }
+                setOnClickListener {
+                    dialog.dismiss()
+                    showAudioLibrary(category)
+                }
+            }
+            val params = LinearLayout.LayoutParams(-1, dp(52))
+            params.bottomMargin = dp(10)
+            root.addView(card, params)
+        }
+
+        addCategoryCard("Sound Effect", "sound_effect")
+        addCategoryCard("Music", "music")
+
+        dialog.setOnShowListener {
+            val popupBackground = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(15, 15, 15))
+                setStroke(dp(1), Color.rgb(55, 55, 55))
+                cornerRadius = dp(12).toFloat()
+            }
+            dialog.window?.setBackgroundDrawable(popupBackground)
+        }
+        dialog.show()
     }
 
     private fun saveAudioToLibrary(uri: Uri, category: String) {
@@ -722,8 +767,15 @@ class MainActivity : AppCompatActivity() {
         root.addView(addButton, LinearLayout.LayoutParams(-1, dp(48)))
         root.addView(scroll, LinearLayout.LayoutParams(-1, dp(300)))
 
+        val titleView = TextView(this).apply {
+            text = title
+            textSize = 20f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            setPadding(dp(20), dp(16), dp(20), dp(8))
+        }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle(title)
+            .setCustomTitle(titleView)
             .setView(root)
             .setNegativeButton("Tutup", null)
             .create()
@@ -731,7 +783,7 @@ class MainActivity : AppCompatActivity() {
         // Paksa seluruh permukaan popup memakai hitam dengan garis tepi abu-abu gelap.
         dialog.setOnShowListener {
             val popupBackground = android.graphics.drawable.GradientDrawable().apply {
-                setColor(Color.BLACK)
+                setColor(Color.rgb(15, 15, 15))
                 setStroke(dp(1), Color.rgb(55, 55, 55))
                 cornerRadius = dp(12).toFloat()
             }
