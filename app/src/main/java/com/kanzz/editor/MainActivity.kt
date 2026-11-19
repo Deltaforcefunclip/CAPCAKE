@@ -75,6 +75,13 @@ class MainActivity : AppCompatActivity() {
     private lateinit var timelineController: SharedTimelineController
     private lateinit var audioTracksContainer: LinearLayout
     private lateinit var audioTracksScroll: ScrollView
+    private lateinit var textTracksScroll: ScrollView
+    private lateinit var audioTimelineFrame: FrameLayout
+    private lateinit var previewTextOverlay: TextView
+    private lateinit var thisTextTracksContainer: LinearLayout
+    private val textClipManager = TextClipManager()
+    private var selectedTextClipId: String? = null
+    private var activeLayerGroup = "AUDIO"
     private val audioTrackViews = mutableMapOf<String, AudioTrackView>()
     private val audioPlayers = mutableMapOf<String, ExoPlayer>()
     private var exportTransformer: Transformer? = null
@@ -118,8 +125,8 @@ class MainActivity : AppCompatActivity() {
     private var selectedAudioClipId: String? = null
     private var isCreatingProject = false
     private var editorOpen = false
-    private val undoStack = ArrayDeque<Pair<String, String>>()
-    private val redoStack = ArrayDeque<Pair<String, String>>()
+    private val undoStack = ArrayDeque<Triple<String, String, String>>()
+    private val redoStack = ArrayDeque<Triple<String, String, String>>()
 
     private val handler = Handler(Looper.getMainLooper())
 
@@ -204,6 +211,7 @@ class MainActivity : AppCompatActivity() {
                 if (!player.isPlaying) updateTime()
                 syncVideoClipProperties()
                 syncAudioPlayback()
+                updateTextPreview()
             }
             handler.postDelayed(this, 100L)
         }
@@ -234,6 +242,9 @@ class MainActivity : AppCompatActivity() {
 
                     // Project baru dimulai tanpa audio clip lama.
                     audioClipManager.clear()
+                    textClipManager.clips.clear()
+                    selectedTextClipId = null
+                    activeLayerGroup = "AUDIO"
                     videoClipManager.clips.clear()
                     videoClipManager.transitions.clear()
                     selectedVideoClipId = null
@@ -595,6 +606,9 @@ class MainActivity : AppCompatActivity() {
 
         // Audio clip belum disimpan ke data project.
         audioClipManager.clear()
+        textClipManager.clips.clear()
+        selectedTextClipId = null
+        activeLayerGroup = "AUDIO"
         videoClipManager.clips.clear()
         videoClipManager.transitions.clear()
         selectedVideoClipId = null
@@ -610,6 +624,7 @@ class MainActivity : AppCompatActivity() {
             prefs.getString("audio_timeline_${project.id}", null),
             audioClipManager
         )
+        restoreTextClips(prefs.getString("text_timeline_${project.id}", null))
 
         try {
 
@@ -1221,6 +1236,17 @@ class MainActivity : AppCompatActivity() {
             setLayerType(View.LAYER_TYPE_SOFTWARE, null)
         }
         previewRatioOverlay = ratioOverlay
+        previewTextOverlay = TextView(this).apply {
+            gravity = Gravity.CENTER
+            textAlignment = View.TEXT_ALIGNMENT_CENTER
+            setTextColor(Color.WHITE)
+            textSize = 32f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setShadowLayer(dp(3).toFloat(), dp(1).toFloat(), dp(2).toFloat(), Color.BLACK)
+            visibility = View.GONE
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+        }
+        previewFrame.addView(previewTextOverlay, FrameLayout.LayoutParams(-1, -1))
         ratioOverlay.isEnabled = selectedPreviewRatio.isNotBlank()
         previewFrame.addView(ratioOverlay, FrameLayout.LayoutParams(-1, -1))
         setupPreviewTransformGesture(ratioOverlay)
@@ -1371,6 +1397,17 @@ class MainActivity : AppCompatActivity() {
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             addView(audioTracksContainer, android.view.ViewGroup.LayoutParams(-1, -2))
         }
+        val textTracksContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+        }
+        textTracksScroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            isFillViewport = false
+            addView(textTracksContainer, android.view.ViewGroup.LayoutParams(-1, -2))
+            visibility = View.GONE
+        }
+        thisTextTracksContainer = textTracksContainer
 
         // VIDEO TIMELINE
 
@@ -1490,11 +1527,9 @@ class MainActivity : AppCompatActivity() {
         )
 
         // Overlay playhead meneruskan garis dari timeline video ke area audio.
-        val audioTimelineFrame = FrameLayout(this)
-        audioTimelineFrame.addView(
-            audioTracksScroll,
-            FrameLayout.LayoutParams(-1, -1)
-        )
+        audioTimelineFrame = FrameLayout(this)
+        audioTimelineFrame.addView(audioTracksScroll, FrameLayout.LayoutParams(-1, -1))
+        audioTimelineFrame.addView(textTracksScroll, FrameLayout.LayoutParams(-1, -1))
         val audioPlayheadLine = object : View(this) {
             private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = Color.WHITE
@@ -1519,6 +1554,7 @@ class MainActivity : AppCompatActivity() {
         )
 
         refreshAudioTracks()
+        refreshTextTracks()
 
         // BOTTOM TOOLS
 
@@ -2018,7 +2054,9 @@ class MainActivity : AppCompatActivity() {
 
         toolsContainer.removeAllViews()
 
-        val names = if (selectedAudioClipId != null) {
+        val names = if (selectedTextClipId != null) {
+            listOf("⌫" to "Hapus")
+        } else if (selectedAudioClipId != null) {
 
             listOf(
                 "♫" to "Volume",
@@ -2119,7 +2157,14 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Hapus" -> {
-                        if (selectedAudioClipId != null) {
+                        if (selectedTextClipId != null) {
+                            pushUndoSnapshot()
+                            textClipManager.remove(selectedTextClipId)
+                            selectedTextClipId = null
+                            refreshTextTracks()
+                            updateTextPreview()
+                            saveCurrentProject()
+                        } else if (selectedAudioClipId != null) {
                             val id = selectedAudioClipId ?: return@setOnClickListener
                             pushUndoSnapshot()
                             audioClipManager.removeClip(id)
@@ -2177,7 +2222,23 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Audio" -> {
-                        showAudioLibraryMenu()
+                        if (activeLayerGroup != "AUDIO") {
+                            activeLayerGroup = "AUDIO"
+                            selectedTextClipId = null
+                            selectedAudioClipId = null
+                            updateLayerGroupVisibility()
+                            updateToolMenu()
+                        } else showAudioLibraryMenu()
+                    }
+
+                    "Text" -> {
+                        if (activeLayerGroup != "TEXT") {
+                            activeLayerGroup = "TEXT"
+                            selectedAudioClipId = null
+                            selectedTextClipId = null
+                            updateLayerGroupVisibility()
+                            updateToolMenu()
+                        } else showTextEditor()
                     }
 
                     "Pisah" -> {
@@ -2499,6 +2560,101 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun updateLayerGroupVisibility() {
+        if (!::audioTracksScroll.isInitialized || !::textTracksScroll.isInitialized) return
+        audioTracksScroll.visibility = if (activeLayerGroup == "AUDIO" && audioClipManager.lanes.isNotEmpty()) View.VISIBLE else View.GONE
+        textTracksScroll.visibility = if (activeLayerGroup == "TEXT" && textClipManager.clips.isNotEmpty()) View.VISIBLE else View.GONE
+    }
+
+    private fun refreshTextTracks() {
+        if (!::thisTextTracksContainer.isInitialized) return
+        thisTextTracksContainer.removeAllViews()
+        if (textClipManager.clips.isNotEmpty()) {
+            val view = TextTrackView(this, timelineController, textClipManager.clips,
+                onSelected = { clip ->
+                    selectedTextClipId = clip?.id
+                    selectedAudioClipId = null
+                    selectedVideoClipId = null
+                    videoSelected = false
+                    timeline.selectClip(null)
+                    timeline.updateSelection(false)
+                    updateToolMenu()
+                },
+                onChanged = {
+                    saveCurrentProject()
+                    updateTextPreview()
+                    thisTextTracksContainer.invalidate()
+                })
+            view.select(selectedTextClipId)
+            thisTextTracksContainer.addView(view, LinearLayout.LayoutParams(-1, dp(36)))
+        }
+        updateLayerGroupVisibility()
+    }
+
+    private fun showTextEditor() {
+        val input = EditText(this).apply {
+            hint = "Ketik teks di sini"
+            setHintTextColor(Color.GRAY); setTextColor(Color.WHITE); textSize = 18f
+            minLines = 2; setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(Color.rgb(29, 29, 29))
+        }
+        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(8), dp(14), dp(8)); setBackgroundColor(Color.rgb(15, 15, 15)) }
+        val optionRow = LinearLayout(this).apply { gravity = Gravity.CENTER; orientation = LinearLayout.HORIZONTAL }
+        listOf("Font", "Style", "Animasi", "Preset").forEach { label ->
+            val chip = TextView(this).apply {
+                text = label; textSize = 12f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); setPadding(dp(8), dp(10), dp(8), dp(10))
+                background = android.graphics.drawable.GradientDrawable().apply { setColor(Color.rgb(35, 35, 35)); setStroke(dp(1), Color.rgb(70, 70, 70)); cornerRadius = dp(7).toFloat() }
+                setOnClickListener { Toast.makeText(this@MainActivity, "$label akan ditambahkan pada tahap berikutnya.", Toast.LENGTH_SHORT).show() }
+            }
+            val lp = LinearLayout.LayoutParams(0, dp(42), 1f); lp.setMargins(dp(3), dp(8), dp(3), dp(8)); optionRow.addView(chip, lp)
+        }
+        val inputRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val confirm = TextView(this).apply { text = "✓"; textSize = 26f; gravity = Gravity.CENTER; setTextColor(Color.BLACK); background = android.graphics.drawable.GradientDrawable().apply { setColor(0xFFE5674E.toInt()); cornerRadius = dp(7).toFloat() } }
+        inputRow.addView(confirm, LinearLayout.LayoutParams(dp(48), dp(52)))
+        val inputParams = LinearLayout.LayoutParams(0, dp(90), 1f); inputParams.marginStart = dp(8); inputRow.addView(input, inputParams)
+        root.addView(optionRow); root.addView(inputRow)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(root).setNegativeButton("Batal", null).create()
+        confirm.setOnClickListener {
+            val value = input.text.toString().trim()
+            if (value.isNotEmpty()) {
+                pushUndoSnapshot()
+                val clip = TextClip(text = value, startTimeMs = currentTimelinePosition(), durationMs = 2000L)
+                textClipManager.add(clip); selectedTextClipId = clip.id; activeLayerGroup = "TEXT"
+                dialog.dismiss(); refreshTextTracks(); updateTextPreview(); saveCurrentProject(); updateToolMenu()
+            } else Toast.makeText(this, "Masukkan teks terlebih dahulu.", Toast.LENGTH_SHORT).show()
+        }
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+            input.requestFocus()
+            dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+        }
+        dialog.show()
+        input.post { val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager; imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT) }
+    }
+
+    private fun updateTextPreview() {
+        if (!::previewTextOverlay.isInitialized) return
+        val position = currentTimelinePosition()
+        val active = textClipManager.clips.lastOrNull { position >= it.startTimeMs && position < it.endTimeMs }
+        previewTextOverlay.text = active?.text ?: ""
+        previewTextOverlay.visibility = if (active == null) View.GONE else View.VISIBLE
+    }
+
+    private fun encodeTextClips(): String {
+        val array = JSONArray()
+        textClipManager.clips.forEach { clip -> array.put(JSONObject().apply { put("id", clip.id); put("text", clip.text); put("startTimeMs", clip.startTimeMs); put("durationMs", clip.durationMs); put("fontName", clip.fontName) }) }
+        return array.toString()
+    }
+
+    private fun restoreTextClips(json: String?) {
+        textClipManager.clips.clear()
+        if (json.isNullOrBlank()) return
+        runCatching {
+            val array = JSONArray(json)
+            for (i in 0 until array.length()) { val item = array.getJSONObject(i); textClipManager.add(TextClip(item.optString("id"), item.optString("text"), item.optLong("startTimeMs"), item.optLong("durationMs", 2000L), item.optString("fontName", "Default"))) }
+        }.onFailure { textClipManager.clips.clear() }
+    }
+
     private fun refreshAudioTracks() {
         if (!::audioTracksContainer.isInitialized) return
 
@@ -2601,8 +2757,7 @@ class MainActivity : AppCompatActivity() {
                 audioTrackViews.values.forEach { it.setWaveform(clip.id, values) }
             }
         }
-        audioTracksScroll.visibility =
-            if (audioClipManager.lanes.isEmpty()) View.GONE else View.VISIBLE
+        updateLayerGroupVisibility()
     }
 
     private fun clearAudioTrackSelection() {
@@ -2917,15 +3072,17 @@ class MainActivity : AppCompatActivity() {
     private fun pushUndoSnapshot() {
         undoStack.addLast(
             TimelineStateCodec.encodeVideo(videoClipManager) to
-                TimelineStateCodec.encodeAudio(audioClipManager)
+                TimelineStateCodec.encodeAudio(audioClipManager),
+            encodeTextClips()
         )
         while (undoStack.size > 25) undoStack.removeFirst()
         redoStack.clear()
     }
 
-    private fun restoreTimelineSnapshot(snapshot: Pair<String, String>) {
+    private fun restoreTimelineSnapshot(snapshot: Triple<String, String, String>) {
         TimelineStateCodec.restoreVideo(snapshot.first, videoClipManager)
         TimelineStateCodec.restoreAudio(snapshot.second, audioClipManager)
+        restoreTextClips(snapshot.third)
         selectedVideoClipId = videoClipManager.clips.firstOrNull()?.id
         selectedAudioClipId = null
         videoSelected = false
@@ -2984,6 +3141,7 @@ class MainActivity : AppCompatActivity() {
                     "audio_timeline_${it.id}",
                     TimelineStateCodec.encodeAudio(audioClipManager)
                 )
+                .putString("text_timeline_${it.id}", encodeTextClips())
                 .apply()
         }
 
