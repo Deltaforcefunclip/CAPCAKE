@@ -2619,7 +2619,7 @@ class MainActivity : AppCompatActivity() {
             if (value.isNotEmpty()) {
                 pushUndoSnapshot()
                 val clip = TextClip(text = value, startTimeMs = currentTimelinePosition(), durationMs = 2000L)
-                textClipManager.add(clip); selectedTextClipId = clip.id; activeLayerGroup = "TEXT"
+                textClipManager.add(clip); selectedTextClipId = null; activeLayerGroup = "TEXT"
                 dialog.dismiss(); refreshTextTracks(); updateTextPreview(); saveCurrentProject(); updateToolMenu()
             } else Toast.makeText(this, "Masukkan teks terlebih dahulu.", Toast.LENGTH_SHORT).show()
         }
@@ -3071,9 +3071,11 @@ class MainActivity : AppCompatActivity() {
 
     private fun pushUndoSnapshot() {
         undoStack.addLast(
-            TimelineStateCodec.encodeVideo(videoClipManager) to
+            Triple(
+                TimelineStateCodec.encodeVideo(videoClipManager),
                 TimelineStateCodec.encodeAudio(audioClipManager),
-            encodeTextClips()
+                encodeTextClips()
+            )
         )
         while (undoStack.size > 25) undoStack.removeFirst()
         redoStack.clear()
@@ -3087,6 +3089,7 @@ class MainActivity : AppCompatActivity() {
         selectedAudioClipId = null
         videoSelected = false
         refreshAudioTracks()
+        refreshTextTracks()
         if (::timeline.isInitialized) {
             timeline.selectClip(selectedVideoClipId)
             // setDuration mempertahankan tingkat zoom yang sedang dipakai.
@@ -3103,8 +3106,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
         redoStack.addLast(
-            TimelineStateCodec.encodeVideo(videoClipManager) to
-                TimelineStateCodec.encodeAudio(audioClipManager)
+            Triple(
+                TimelineStateCodec.encodeVideo(videoClipManager),
+                TimelineStateCodec.encodeAudio(audioClipManager),
+                encodeTextClips()
+            )
         )
         restoreTimelineSnapshot(undoStack.removeLast())
     }
@@ -3115,8 +3121,11 @@ class MainActivity : AppCompatActivity() {
             return
         }
         undoStack.addLast(
-            TimelineStateCodec.encodeVideo(videoClipManager) to
-                TimelineStateCodec.encodeAudio(audioClipManager)
+            Triple(
+                TimelineStateCodec.encodeVideo(videoClipManager),
+                TimelineStateCodec.encodeAudio(audioClipManager),
+                encodeTextClips()
+            )
         )
         restoreTimelineSnapshot(redoStack.removeLast())
     }
@@ -3194,6 +3203,8 @@ class MainActivity : AppCompatActivity() {
         // Audio track memakai controller waktu yang sama; gambar ulang setiap frame
         // agar klip tetap melekat pada waktunya saat playhead bergerak.
         audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
+        if (::textTracksScroll.isInitialized) textTracksScroll.postInvalidateOnAnimation()
+        updateTextPreview()
 
         currentProject?.position = position
     }
