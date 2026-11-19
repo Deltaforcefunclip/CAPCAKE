@@ -3174,7 +3174,6 @@ class MainActivity : AppCompatActivity() {
 
         refresh()
         fontPickerPanel.visibility = View.VISIBLE
-        fontPickerPanel.bringToFront()
     }
 
     private fun duplicateSelectedText() {
