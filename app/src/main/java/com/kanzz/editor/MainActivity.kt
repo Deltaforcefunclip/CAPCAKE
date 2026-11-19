@@ -56,6 +56,19 @@ import kotlin.math.min
 import kotlin.math.atan2
 import kotlin.math.sqrt
 
+private data class ExportTextSnapshot(
+    val startTimeMs: Long,
+    val endTimeMs: Long,
+    val text: String,
+    val typeface: Typeface,
+    val color: Int,
+    val opacity: Float,
+    val scale: Float,
+    val positionX: Float,
+    val positionY: Float,
+    val rotation: Float
+)
+
 data class VideoProject(
     var id: String,
     var name: String,
@@ -4054,9 +4067,43 @@ class MainActivity : AppCompatActivity() {
                                     )
                                 }
 
-                                // Overlay teks memakai waktu lokal klip untuk mencari waktu global timeline.
-                                if (textClipManager.clips.isNotEmpty()) {
+                                // Snapshot data teks dibuat sebelum Transformer berjalan.
+                                // CanvasOverlay dipanggil di thread pemrosesan frame; callback tidak
+                                // boleh membaca View, Player, filesystem, atau daftar clip yang berubah.
+                                val exportTextSnapshot = textClipManager.clips.map { text ->
+                                    ExportTextSnapshot(
+                                        startTimeMs = text.startTimeMs,
+                                        endTimeMs = text.endTimeMs,
+                                        text = text.text,
+                                        typeface = getLibraryTypeface(text.fontName, text.bold),
+                                        color = text.color,
+                                        opacity = text.opacity,
+                                        scale = text.scale,
+                                        positionX = text.positionX,
+                                        positionY = text.positionY,
+                                        rotation = text.rotation
+                                    )
+                                }
+                                if (exportTextSnapshot.isNotEmpty()) {
                                     val videoClip = clip
+                                    val previewW = fontPickerAnchorView.width.coerceAtLeast(1).toFloat()
+                                    val previewH = fontPickerAnchorView.height.coerceAtLeast(1).toFloat()
+                                    val previewTextSize = previewTextOverlay.textSize
+                                    val exportOutputAspect = runCatching {
+                                        if (selectedPreviewRatio.isNotBlank()) {
+                                            val parts = selectedPreviewRatio.split(":")
+                                            parts[0].toFloat() / parts[1].toFloat()
+                                        } else {
+                                            val size = player.videoSize
+                                            if (size.width > 0 && size.height > 0) {
+                                                size.width.toFloat() * size.pixelWidthHeightRatio /
+                                                    size.height.toFloat()
+                                            } else {
+                                                previewW / previewH
+                                            }
+                                        }
+                                    }.getOrDefault(previewW / previewH).coerceAtLeast(0.01f)
+
                                     val overlay = object : CanvasOverlay(true) {
                                         private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                                             textAlign = Paint.Align.CENTER
@@ -4064,72 +4111,56 @@ class MainActivity : AppCompatActivity() {
                                         }
 
                                         override fun onDraw(canvas: Canvas, presentationTimeUs: Long) {
-                                            canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-                                            val globalMs = videoClip.timelineStartMs + presentationTimeUs / 1000L
-                                            val activeTexts = textClipManager.clips.filter {
-                                                globalMs >= it.startTimeMs && globalMs < it.endTimeMs
-                                            }
-                                            if (activeTexts.isEmpty()) return
-
-                                            val previewW = fontPickerAnchorView.width.coerceAtLeast(1).toFloat()
-                                            val previewH = fontPickerAnchorView.height.coerceAtLeast(1).toFloat()
-
-                                            // TextView preview berada di viewport PlayerView yang bisa
-                                            // memiliki letterbox. Skala harus dihitung dari area video
-                                            // yang benar-benar terlihat, bukan seluruh viewport hitam.
-                                            val outputAspect = if (selectedPreviewRatio.isNotBlank()) {
-                                                val parts = selectedPreviewRatio.split(":")
-                                                parts[0].toFloat() / parts[1].toFloat()
-                                            } else {
-                                                val size = player.videoSize
-                                                if (size.width > 0 && size.height > 0) {
-                                                    size.width.toFloat() * size.pixelWidthHeightRatio /
-                                                        size.height.toFloat()
+                                            try {
+                                                canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                                                val globalMs = videoClip.timelineStartMs + presentationTimeUs / 1000L
+                                                val previewAspect = previewW / previewH
+                                                val previewContentW: Float
+                                                val previewContentH: Float
+                                                if (exportOutputAspect >= previewAspect) {
+                                                    previewContentW = previewW
+                                                    previewContentH = previewW / exportOutputAspect
                                                 } else {
-                                                    canvas.width.toFloat() / canvas.height.coerceAtLeast(1)
+                                                    previewContentH = previewH
+                                                    previewContentW = previewH * exportOutputAspect
                                                 }
-                                            }
-                                            val previewAspect = previewW / previewH
-                                            val previewContentW: Float
-                                            val previewContentH: Float
-                                            if (outputAspect >= previewAspect) {
-                                                previewContentW = previewW
-                                                previewContentH = previewW / outputAspect
-                                            } else {
-                                                previewContentH = previewH
-                                                previewContentW = previewH * outputAspect
-                                            }
-                                            val sx = canvas.width / previewContentW.coerceAtLeast(1f)
-                                            val sy = canvas.height / previewContentH.coerceAtLeast(1f)
-                                            val fontScale = (sx + sy) / 2f
+                                                val sx = canvas.width / previewContentW.coerceAtLeast(1f)
+                                                val sy = canvas.height / previewContentH.coerceAtLeast(1f)
+                                                val fontScale = (sx + sy) / 2f
 
-                                            activeTexts.forEach { textClip ->
-                                                textPaint.color = textClip.color
-                                                textPaint.alpha = (Color.alpha(textClip.color) *
-                                                    textClip.opacity.coerceIn(0f, 1f)).toInt()
-                                                textPaint.typeface = getLibraryTypeface(textClip.fontName, textClip.bold)
-                                                textPaint.textSize = previewTextOverlay.textSize *
-                                                    fontScale * textClip.scale.coerceIn(0.2f, 6f)
-                                                textPaint.setShadowLayer(
-                                                    3f * fontScale, 1f * fontScale,
-                                                    2f * fontScale, Color.BLACK
-                                                )
+                                                exportTextSnapshot.forEach { textClip ->
+                                                    if (globalMs < textClip.startTimeMs ||
+                                                        globalMs >= textClip.endTimeMs) return@forEach
 
-                                                val centerX = canvas.width / 2f + textClip.positionX * sx
-                                                val centerY = canvas.height / 2f + textClip.positionY * sy
-                                                val lines = textClip.text.split('\n')
-                                                val lineHeight = textPaint.fontSpacing
-                                                val firstBaseline = centerY -
-                                                    ((lines.size - 1) * lineHeight / 2f) -
-                                                    (textPaint.ascent() + textPaint.descent()) / 2f
-                                                canvas.save()
-                                                canvas.rotate(textClip.rotation, centerX, centerY)
-                                                lines.forEachIndexed { index, line ->
-                                                    canvas.drawText(line, centerX,
-                                                        firstBaseline + index * lineHeight, textPaint)
+                                                    textPaint.color = textClip.color
+                                                    textPaint.alpha = (Color.alpha(textClip.color) *
+                                                        textClip.opacity.coerceIn(0f, 1f)).toInt()
+                                                    textPaint.typeface = textClip.typeface
+                                                    textPaint.textSize = previewTextSize *
+                                                        fontScale * textClip.scale.coerceIn(0.2f, 6f)
+                                                    textPaint.setShadowLayer(
+                                                        3f * fontScale, 1f * fontScale,
+                                                        2f * fontScale, Color.BLACK
+                                                    )
+
+                                                    val centerX = canvas.width / 2f + textClip.positionX * sx
+                                                    val centerY = canvas.height / 2f + textClip.positionY * sy
+                                                    val lines = textClip.text.split('\\n')
+                                                    val lineHeight = textPaint.fontSpacing
+                                                    val firstBaseline = centerY -
+                                                        ((lines.size - 1) * lineHeight / 2f) -
+                                                        (textPaint.ascent() + textPaint.descent()) / 2f
+                                                    canvas.save()
+                                                    canvas.rotate(textClip.rotation, centerX, centerY)
+                                                    lines.forEachIndexed { index, line ->
+                                                        canvas.drawText(line, centerX,
+                                                            firstBaseline + index * lineHeight, textPaint)
+                                                    }
+                                                    canvas.restore()
+                                                    textPaint.clearShadowLayer()
                                                 }
-                                                canvas.restore()
-                                                textPaint.clearShadowLayer()
+                                            } catch (_: Exception) {
+                                                // Error gambar satu frame tidak boleh menghentikan ekspor.
                                             }
                                         }
                                     }
