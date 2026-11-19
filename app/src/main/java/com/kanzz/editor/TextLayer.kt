@@ -1,7 +1,8 @@
 package com.kanzz.editor
 
 import android.content.Context
-import android.graphics.Canvas\nimport android.graphics.Color
+import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
@@ -48,7 +49,8 @@ class TextTrackView(
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF101010.toInt(); textSize = 10f * density; isFakeBoldText = true
     }
-    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }\n    private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
+    private val outlinePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density
     }
     private var selectedId: String? = null
