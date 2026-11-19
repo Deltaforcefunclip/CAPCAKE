@@ -82,6 +82,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var genericLayerPlaceholder: TextView
     private val textClipManager = TextClipManager()
     private var selectedTextClipId: String? = null
+    private var textExtraLaneCount = 0
+    private var textDragUndoSaved = false
     private var activeLayerGroup = "AUDIO"
     private val audioTrackViews = mutableMapOf<String, AudioTrackView>()
     private val audioPlayers = mutableMapOf<String, ExoPlayer>()
@@ -2601,13 +2603,13 @@ class MainActivity : AppCompatActivity() {
     private fun refreshTextTracks() {
         if (!::thisTextTracksContainer.isInitialized) return
         thisTextTracksContainer.removeAllViews()
-        val laneCount = (textClipManager.clips.maxOfOrNull { it.trackIndex } ?: 0) + 1
+        val naturalCount = (textClipManager.clips.maxOfOrNull { it.trackIndex } ?: 0) + 1
+        val laneCount = maxOf(naturalCount, 1 + textExtraLaneCount)
         repeat(laneCount.coerceAtLeast(1)) { lane ->
-            val laneClips = textClipManager.clips.filter { it.trackIndex == lane }
             val view = TextTrackView(
                 this,
                 timelineController,
-                laneClips,
+                laneIndex = lane,
                 allClips = { textClipManager.clips },
                 onSelected = { clip ->
                     selectedTextClipId = clip?.id
@@ -2616,6 +2618,9 @@ class MainActivity : AppCompatActivity() {
                     videoSelected = false
                     timeline.selectClip(null)
                     timeline.updateSelection(false)
+                    for (i in 0 until thisTextTracksContainer.childCount) {
+                        (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(clip?.id)
+                    }
                     updateToolMenu()
                 },
                 onChanged = {
@@ -2639,42 +2644,54 @@ class MainActivity : AppCompatActivity() {
                     invalidateTextTrackViews()
                 },
                 onClipDropped = { clip, rawY ->
+                    saveCurrentProject()
+                    selectedTextClipId = clip.id
+                    textDragUndoSaved = false
+                    invalidateTextTrackViews()
+                    updateToolMenu()
+                },
+                onClipDrag = { clip, rawY ->
                     val targetLane = (0 until thisTextTracksContainer.childCount)
                         .mapNotNull { index ->
                             val targetView = thisTextTracksContainer.getChildAt(index)
                             val location = IntArray(2)
                             targetView.getLocationOnScreen(location)
-                            val top = location[1].toFloat()
-                            val bottom = top + targetView.height
-                            if (rawY >= top - dp(6) && rawY <= bottom + dp(6)) {
-                                Triple(index, targetView, kotlin.math.abs(rawY - (top + bottom) / 2f))
-                            } else null
+                            val center = location[1] + targetView.height / 2f
+                            Triple(index, kotlin.math.abs(rawY - center), center)
                         }
-                        .minByOrNull { it.third }
+                        .minByOrNull { it.second }
                         ?.first
-                    if (targetLane != null && targetLane != clip.trackIndex) {
-                        val oldScrollY = textTracksScroll.scrollY
-                        pushUndoSnapshot()
-                        if (textClipManager.moveClipToLane(clip.id, targetLane)) {
-                            selectedTextClipId = clip.id
-                            saveCurrentProject()
-                            refreshTextTracks()
-                            textTracksScroll.post {
-                                textTracksScroll.scrollTo(0, oldScrollY)
-                                invalidateTextTrackViews()
-                            }
-                        } else {
-                            if (undoStack.isNotEmpty()) undoStack.removeLast()
-                            Toast.makeText(this, "Layer tujuan masih bertabrakan dengan teks lain.", Toast.LENGTH_SHORT).show()
+                    if (targetLane != null && targetLane != clip.trackIndex &&
+                        textClipManager.canMoveToLane(clip, targetLane)) {
+                        if (!textDragUndoSaved) {
+                            pushUndoSnapshot()
+                            textDragUndoSaved = true
                         }
-                    } else {
-                        saveCurrentProject()
+                        textClipManager.moveClipToLane(clip.id, targetLane)
+                        selectedTextClipId = clip.id
+                        for (i in 0 until thisTextTracksContainer.childCount) {
+                            (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(clip.id)
+                        }
+                        invalidateTextTrackViews()
                     }
                 }
             )
             view.select(selectedTextClipId)
             thisTextTracksContainer.addView(view, LinearLayout.LayoutParams(-1, dp(36)))
         }
+        val addLaneButton = TextView(this).apply {
+            text = "+"
+            textSize = 27f
+            gravity = android.view.Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.TRANSPARENT)
+            setOnClickListener {
+                textExtraLaneCount++
+                refreshTextTracks()
+                textTracksScroll.post { textTracksScroll.fullScroll(View.FOCUS_DOWN) }
+            }
+        }
+        thisTextTracksContainer.addView(addLaneButton, LinearLayout.LayoutParams(-1, dp(42)))
         updateLayerGroupVisibility()
     }
 
