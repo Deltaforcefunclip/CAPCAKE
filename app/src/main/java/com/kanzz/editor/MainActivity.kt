@@ -4706,10 +4706,9 @@ class MainActivity : AppCompatActivity() {
                     )
                     .build()
                 // Kecepatan video dan audio asli disinkronkan dengan nilai speed clip.
+                // setSpeed pada EditedMediaItem mengatur kecepatan video dan audio sumber.
+                // Di sini hanya volume yang perlu diproses manual.
                 val audioProcessors = buildList<AudioProcessor> {
-                    add(SonicAudioProcessor().apply {
-                        setSpeed(clip.speed.coerceIn(0.25f, 4f))
-                    })
                     if (clip.volume < 0.999f) {
                         val mixer = ChannelMixingAudioProcessor()
                         for (channelCount in 1..6) {
