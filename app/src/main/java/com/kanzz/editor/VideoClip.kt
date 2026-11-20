@@ -24,7 +24,7 @@ data class VideoClip(
 ) {
     // Durasi pada timeline mengikuti kecepatan: 0.5x membuat klip 2 kali lebih panjang.
     val timelineDurationMs: Long
-        get() = (durationMs / speed.coerceIn(0.25f, 3f)).toLong().coerceAtLeast(1L)
+        get() = (durationMs / speed.coerceIn(0.25f, 4f)).toLong().coerceAtLeast(1L)
     val sourceEndMs: Long get() = sourceStartMs + durationMs
     val timelineEndMs: Long get() = timelineStartMs + timelineDurationMs
 }
@@ -122,7 +122,7 @@ class VideoClipManager {
      */
     fun trimClipEdges(clipId: String, leftDeltaTimelineMs: Long, rightDeltaTimelineMs: Long): Boolean {
         val clip = find(clipId) ?: return false
-        val speed = clip.speed.coerceIn(0.25f, 3f)
+        val speed = clip.speed.coerceIn(0.25f, 4f)
         val requestedLeft = (leftDeltaTimelineMs * speed).toLong()
         val requestedRight = (rightDeltaTimelineMs * speed).toLong()
 
