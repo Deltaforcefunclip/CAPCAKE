@@ -215,7 +215,7 @@ class MainActivity : AppCompatActivity() {
             initializationDurationMs: Long
         ) {
             recordPlaybackDiagnostic(
-                "DECODER_INIT item=${eventTime.mediaItemIndex} name=$decoderName duration=${initializationDurationMs}ms"
+                "DECODER_INIT item=${eventTime.windowIndex} name=$decoderName duration=${initializationDurationMs}ms"
             )
         }
 
@@ -225,7 +225,7 @@ class MainActivity : AppCompatActivity() {
             decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?
         ) {
             recordPlaybackDiagnostic(
-                "FORMAT item=${eventTime.mediaItemIndex} mime=${format.sampleMimeType} " +
+                "FORMAT item=${eventTime.windowIndex} mime=${format.sampleMimeType} " +
                     "size=${format.width}x${format.height} fps=${format.frameRate} " +
                     "decoderReuse=${decoderReuseEvaluation ?: "unknown"}"
             )
@@ -236,7 +236,7 @@ class MainActivity : AppCompatActivity() {
             output: Any,
             renderTimeMs: Long
         ) {
-            val index = eventTime.mediaItemIndex
+            val index = eventTime.windowIndex
             val transitionDelay = if (index == lastTransitionItemIndex && lastTransitionElapsedMs > 0L) {
                 (SystemClock.elapsedRealtime() - lastTransitionElapsedMs).toString() + "ms after transition"
             } else {
@@ -253,7 +253,7 @@ class MainActivity : AppCompatActivity() {
             elapsedMs: Long
         ) {
             recordPlaybackDiagnostic(
-                "DROPPED_FRAMES item=${eventTime.mediaItemIndex} count=$droppedFrames interval=${elapsedMs}ms"
+                "DROPPED_FRAMES item=${eventTime.windowIndex} count=$droppedFrames interval=${elapsedMs}ms"
             )
         }
 
@@ -265,7 +265,7 @@ class MainActivity : AppCompatActivity() {
             if (frameCount > 0) {
                 val averageMs = totalProcessingOffsetUs / frameCount / 1000.0
                 recordPlaybackDiagnostic(
-                    "FRAME_PROCESSING item=${eventTime.mediaItemIndex} avgOffset=${"%.2f".format(Locale.US, averageMs)}ms frames=$frameCount"
+                    "FRAME_PROCESSING item=${eventTime.windowIndex} avgOffset=${"%.2f".format(Locale.US, averageMs)}ms frames=$frameCount"
                 )
             }
         }
@@ -275,7 +275,7 @@ class MainActivity : AppCompatActivity() {
             isLoading: Boolean
         ) {
             recordPlaybackDiagnostic(
-                "LOADING item=${eventTime.mediaItemIndex} loading=$isLoading"
+                "LOADING item=${eventTime.windowIndex} loading=$isLoading"
             )
         }
 
@@ -284,7 +284,7 @@ class MainActivity : AppCompatActivity() {
             videoCodecError: Exception
         ) {
             recordPlaybackDiagnostic(
-                "VIDEO_CODEC_ERROR item=${eventTime.mediaItemIndex} error=${videoCodecError.javaClass.simpleName}: ${videoCodecError.message}"
+                "VIDEO_CODEC_ERROR item=${eventTime.windowIndex} error=${videoCodecError.javaClass.simpleName}: ${videoCodecError.message}"
             )
         }
     }
