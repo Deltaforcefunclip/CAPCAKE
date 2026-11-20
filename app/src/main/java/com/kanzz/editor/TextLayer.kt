@@ -183,7 +183,7 @@ class TextTrackView(
             canvas.drawRoundRect(rect, 4f * density, 4f * density, clipPaint)
             if (clip.id == selectedId) {
                 canvas.drawRoundRect(rect, 4f * density, 4f * density, outlinePaint)
-                val handleW = 6f * density
+                val handleW = 11f * density
                 val handleTop = rect.top + 4f * density
                 val handleBottom = rect.bottom - 4f * density
                 canvas.drawRoundRect(RectF(rect.left + 2f * density, handleTop, rect.left + handleW, handleBottom), 2f * density, 2f * density, handlePaint)
@@ -216,7 +216,7 @@ class TextTrackView(
                     originDuration = clip.durationMs
                     val left = controller.timeToX(clip.startTimeMs)
                     val right = controller.timeToX(clip.endTimeMs)
-                    val edge = 18f * density
+                    val edge = 26f * density
                     mode = when {
                         event.x - left <= edge -> 2
                         right - event.x <= edge -> 3
@@ -255,6 +255,34 @@ class TextTrackView(
 
                 val clip = touched ?: return true
                 if (controller.pixelsPerMs <= 0f) return true
+                if (mode == 2 || mode == 3) {
+                    val deltaMs = ((event.x - downX) / controller.pixelsPerMs).toLong()
+                    if (mode == 2) {
+                        val fixedEnd = originStart + originDuration
+                        val proposedStart = (originStart + deltaMs).coerceAtLeast(0L)
+                            .coerceAtMost(fixedEnd - 250L)
+                        val proposedDuration = fixedEnd - proposedStart
+                        val overlaps = clips.any { other ->
+                            other.id != clip.id && proposedStart < other.endTimeMs &&
+                                fixedEnd > other.startTimeMs
+                        }
+                        if (!overlaps) {
+                            clip.startTimeMs = proposedStart
+                            clip.durationMs = proposedDuration
+                        }
+                    } else {
+                        val proposedDuration = (originDuration + deltaMs).coerceAtLeast(250L)
+                        val proposedEnd = originStart + proposedDuration
+                        val overlaps = clips.any { other ->
+                            other.id != clip.id && originStart < other.endTimeMs &&
+                                proposedEnd > other.startTimeMs
+                        }
+                        if (!overlaps) clip.durationMs = proposedDuration
+                    }
+                    onChanged()
+                    invalidate()
+                    return true
+                }
                 val deltaMs = ((event.x - dragOriginX) / controller.pixelsPerMs).toLong()
                 val rawStart = (dragOriginTimeMs + deltaMs).coerceAtLeast(0L)
                 val snap = snapTime(clip, rawStart)
@@ -279,19 +307,8 @@ class TextTrackView(
                 if (longPressTriggered) {
                     touched?.let { onClipDropped(it, event.rawY) }
                 } else if (!isScrollingTimeline && touched != null) {
-                    // Trim tetap memakai sentuhan langsung pada handle.
-                    val clip = touched!!
-                    val delta = ((event.x - downX) / controller.pixelsPerMs).toLong()
-                    if (mode == 2 || mode == 3) {
-                        if (mode == 2) {
-                            val end = originStart + originDuration
-                            clip.startTimeMs = (originStart + delta).coerceAtLeast(0L).coerceAtMost(end - 250L)
-                            clip.durationMs = end - clip.startTimeMs
-                        } else {
-                            clip.durationMs = (originDuration + delta).coerceAtLeast(250L)
-                        }
-                        onChanged()
-                    }
+                    // Perubahan trim sudah diterapkan langsung selama jari bergerak.
+                    if (mode == 2 || mode == 3) onChanged()
                 }
                 isScrollingTimeline = false
                 longPressTriggered = false
