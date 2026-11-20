@@ -1712,6 +1712,10 @@ class MainActivity : AppCompatActivity() {
         audioTimelineFrame = object : FrameLayout(this) {
             private var emptyPanActive = false
             private var emptyPanLastX = 0f
+            private var emptyTapDownX = 0f
+            private var emptyTapDownY = 0f
+            private var emptyGestureMoved = false
+            private val emptyTouchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
             private var emptyPinchActive = false
             private var panVelocityTracker: VelocityTracker? = null
             private var flingAnimator: ValueAnimator? = null
@@ -1818,22 +1822,11 @@ class MainActivity : AppCompatActivity() {
                         emptyPanActive = true
                         emptyPinchActive = false
                         emptyPanLastX = event.x
-                        // Ketukan/geseran di area kosong bawah layer melepas semua seleksi.
-                        selectedVideoClipId = null
-                        selectedAudioClipId = null
-                        selectedTextClipId = null
-                        videoSelected = false
-                        timeline.selectClip(null)
-                        timeline.updateSelection(false)
-                        clearAudioTrackSelection()
-                        if (::thisTextTracksContainer.isInitialized) {
-                            for (i in 0 until thisTextTracksContainer.childCount) {
-                                (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
-                            }
-                        }
-                        playerView.foreground = null
-                        updateTextPreview()
-                        updateToolMenu()
+                        emptyTapDownX = event.x
+                        emptyTapDownY = event.y
+                        emptyGestureMoved = false
+                        // Seleksi baru dilepas saat gesture benar-benar berupa ketukan,
+                        // bukan ketika pengguna sedang menggeser atau zoom timeline.
                         if (player.isPlaying) {
                             player.pause()
                             updatePlayButton()
@@ -1852,6 +1845,9 @@ class MainActivity : AppCompatActivity() {
                         panVelocityTracker?.addMovement(event)
                         emptyScaleDetector.onTouchEvent(event)
                         if (emptyPinchActive || event.pointerCount > 1) return true
+                        if (kotlin.math.abs(event.x - emptyTapDownX) > emptyTouchSlop ||
+                            kotlin.math.abs(event.y - emptyTapDownY) > emptyTouchSlop
+                        ) emptyGestureMoved = true
                         if (emptyPanActive) {
                             val dx = event.x - emptyPanLastX
                             emptyPanLastX = event.x
@@ -1868,8 +1864,25 @@ class MainActivity : AppCompatActivity() {
                         panVelocityTracker?.addMovement(event)
                         emptyScaleDetector.onTouchEvent(event)
                         if (!emptyPinchActive) {
+                            if (!emptyGestureMoved) {
+                                selectedVideoClipId = null
+                                selectedAudioClipId = null
+                                selectedTextClipId = null
+                                videoSelected = false
+                                timeline.selectClip(null)
+                                timeline.updateSelection(false)
+                                clearAudioTrackSelection()
+                                if (::thisTextTracksContainer.isInitialized) {
+                                    for (i in 0 until thisTextTracksContainer.childCount) {
+                                        (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
+                                    }
+                                }
+                                playerView.foreground = null
+                                updateTextPreview()
+                                updateToolMenu()
+                            }
                             panVelocityTracker?.computeCurrentVelocity(1000)
-                            startPanFling(panVelocityTracker?.xVelocity ?: 0f)
+                            if (emptyGestureMoved) startPanFling(panVelocityTracker?.xVelocity ?: 0f)
                         } else {
                             handler.removeCallbacks(scrubFinishRunnable)
                             handler.postDelayed(scrubFinishRunnable, 140L)
@@ -3140,42 +3153,103 @@ class MainActivity : AppCompatActivity() {
     private fun showTextEditor() {
         val input = EditText(this).apply {
             hint = "Ketik teks di sini"
-            setHintTextColor(Color.GRAY); setTextColor(Color.WHITE); textSize = 18f
-            minLines = 2; setPadding(dp(12), dp(10), dp(12), dp(10))
+            setHintTextColor(Color.GRAY)
+            setTextColor(Color.WHITE)
+            textSize = 18f
+            minLines = 2
+            setPadding(dp(12), dp(10), dp(12), dp(10))
             setBackgroundColor(Color.rgb(29, 29, 29))
         }
-        val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), dp(8), dp(14), dp(8)); setBackgroundColor(Color.rgb(15, 15, 15)) }
-        val optionRow = LinearLayout(this).apply { gravity = Gravity.CENTER; orientation = LinearLayout.HORIZONTAL }
-        listOf("Font", "Style", "Animasi", "Preset").forEach { label ->
-            val chip = TextView(this).apply {
-                text = label; textSize = 12f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); setPadding(dp(8), dp(10), dp(8), dp(10))
-                background = android.graphics.drawable.GradientDrawable().apply { setColor(Color.rgb(35, 35, 35)); setStroke(dp(1), Color.rgb(70, 70, 70)); cornerRadius = dp(7).toFloat() }
-                setOnClickListener { Toast.makeText(this@MainActivity, "$label akan ditambahkan pada tahap berikutnya.", Toast.LENGTH_SHORT).show() }
-            }
-            val lp = LinearLayout.LayoutParams(0, dp(42), 1f); lp.setMargins(dp(3), dp(8), dp(3), dp(8)); optionRow.addView(chip, lp)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(12), dp(10), dp(12), dp(10))
+            setBackgroundColor(Color.rgb(15, 15, 15))
         }
-        val inputRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
-        val confirm = TextView(this).apply { text = "✓"; textSize = 26f; gravity = Gravity.CENTER; setTextColor(Color.BLACK); background = android.graphics.drawable.GradientDrawable().apply { setColor(0xFFE5674E.toInt()); cornerRadius = dp(7).toFloat() } }
-        inputRow.addView(confirm, LinearLayout.LayoutParams(dp(48), dp(52)))
-        val inputParams = LinearLayout.LayoutParams(0, dp(90), 1f); inputParams.marginStart = dp(8); inputRow.addView(input, inputParams)
-        root.addView(inputRow); root.addView(optionRow)
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(root).setNegativeButton("Batal", null).create()
+        // Kolom teks berada di atas; aksi batal/konfirmasi berada tepat di bawahnya.
+        root.addView(input, LinearLayout.LayoutParams(-1, dp(82)))
+        val actionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+        }
+        val cancel = TextView(this).apply {
+            text = "✕"
+            textSize = 24f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(55, 55, 55))
+                cornerRadius = dp(7).toFloat()
+            }
+        }
+        val confirm = TextView(this).apply {
+            text = "✓"
+            textSize = 26f
+            gravity = Gravity.CENTER
+            setTextColor(Color.BLACK)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xFFE5674E.toInt())
+                cornerRadius = dp(7).toFloat()
+            }
+        }
+        val actionParams = LinearLayout.LayoutParams(dp(48), dp(44))
+        actionParams.topMargin = dp(8)
+        actionParams.marginStart = dp(8)
+        actionRow.addView(cancel, actionParams)
+        actionRow.addView(confirm, LinearLayout.LayoutParams(dp(48), dp(44)).apply {
+            topMargin = dp(8)
+        })
+        root.addView(actionRow, LinearLayout.LayoutParams(-1, -2))
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(root).create()
+        cancel.setOnClickListener { dialog.dismiss() }
         confirm.setOnClickListener {
             val value = input.text.toString().trim()
             if (value.isNotEmpty()) {
                 pushUndoSnapshot()
                 val clip = TextClip(text = value, startTimeMs = currentTimelinePosition(), durationMs = 2000L)
-                textClipManager.add(clip); selectedTextClipId = null; activeLayerGroup = "TEXT"
-                dialog.dismiss(); refreshTextTracks(); updateTextPreview(); saveCurrentProject(); updateToolMenu()
-            } else Toast.makeText(this, "Masukkan teks terlebih dahulu.", Toast.LENGTH_SHORT).show()
+                textClipManager.add(clip)
+                selectedTextClipId = null
+                activeLayerGroup = "TEXT"
+                dialog.dismiss()
+                refreshTextTracks()
+                updateTextPreview()
+                saveCurrentProject()
+                updateToolMenu()
+            } else {
+                Toast.makeText(this, "Masukkan teks terlebih dahulu.", Toast.LENGTH_SHORT).show()
+            }
         }
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-            input.requestFocus()
             dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
+            dialog.window?.setLayout(
+                android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            )
+            // Letakkan panel tepat di atas kontrol play di area bawah editor.
+            playButton.post {
+                val location = IntArray(2)
+                playButton.getLocationOnScreen(location)
+                val screenHeight = resources.displayMetrics.heightPixels
+                val params = dialog.window?.attributes
+                if (params != null) {
+                    params.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                    params.y = (screenHeight - location[1] + dp(6)).coerceAtLeast(dp(6))
+                    dialog.window?.attributes = params
+                }
+            }
+            input.requestFocus()
         }
         dialog.show()
-        input.post { val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager; imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT) }
+        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+        dialog.window?.setLayout(
+            android.view.WindowManager.LayoutParams.MATCH_PARENT,
+            android.view.WindowManager.LayoutParams.WRAP_CONTENT
+        )
+        input.post {
+            val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+            imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+        }
     }
 
     private fun selectedTextClip(): TextClip? = textClipManager.find(selectedTextClipId)
