@@ -4937,6 +4937,13 @@ class MainActivity : AppCompatActivity() {
                                         )
                                     )
                                 }
+
+                                // Terapkan batas FPS pada frame setelah perubahan speed untuk
+                                // setiap klip, bukan hanya mengandalkan karakteristik klip pertama.
+                                // FrameDropEffect membuang frame berlebih, bukan membuat frame sintetis.
+                                if (outputFps != null) {
+                                    add(FrameDropEffect.createDefaultFrameDropEffect(outputFps))
+                                }
                             }
                         )
                     )
@@ -4985,7 +4992,15 @@ class MainActivity : AppCompatActivity() {
                 exportProgressText?.text = "Menyimpan video…"
                 try {
                     saveVideo(output)
-                    Toast.makeText(this@MainActivity, "Video berhasil disimpan di Movies/CAPCAKE", Toast.LENGTH_LONG).show()
+                    val actualFps = readExportedVideoFps(output)
+                    val selectedLabel = outputFps?.let { "${it.toInt()} FPS dipilih" } ?: "FPS AUTO"
+                    val actualLabel = actualFps?.let { " • hasil ${String.format(Locale.US, "%.2f", it)} FPS" }
+                        ?: " • FPS hasil tidak terbaca"
+                    Toast.makeText(
+                        this@MainActivity,
+                        "Video tersimpan • $selectedLabel$actualLabel",
+                        Toast.LENGTH_LONG
+                    ).show()
                 } catch (error: Exception) {
                     showMessage("Gagal menyimpan video: ${error.message}")
                 } finally {
@@ -5091,6 +5106,39 @@ class MainActivity : AppCompatActivity() {
             exportDialog?.dismiss()
             exportDialog = null
             showMessage("Tidak dapat memulai ekspor: ${error.message}")
+        }
+    }
+
+    private fun readExportedVideoFps(file: File): Float? {
+        // Baca metadata file hasil export agar pengujian pilihan FPS punya angka nyata.
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(file.absolutePath)
+            for (index in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(index)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("video/") &&
+                    format.containsKey(MediaFormat.KEY_FRAME_RATE)
+                ) {
+                    val fps = format.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat()
+                    if (fps > 0f) return fps
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { extractor.release() } catch (_: Exception) {}
+        }
+
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE
+            )?.toFloatOrNull()?.takeIf { it > 0f }
+        } catch (_: Exception) {
+            null
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
         }
     }
 
