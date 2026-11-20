@@ -16,6 +16,7 @@ object TimelineStateCodec {
                 put("sourceUri", clip.sourceUri)
                 put("sourceStartMs", clip.sourceStartMs)
                 put("durationMs", clip.durationMs)
+                put("sourceDurationMs", clip.sourceDurationMs)
                 put("volume", clip.volume.toDouble())
                 put("speed", clip.speed.toDouble())
                 put("opacity", clip.opacity.toDouble())
@@ -54,6 +55,7 @@ object TimelineStateCodec {
                     sourceUri = item.getString("sourceUri"),
                     sourceStartMs = item.optLong("sourceStartMs"),
                     durationMs = item.optLong("durationMs"),
+                    sourceDurationMs = item.optLong("sourceDurationMs", item.optLong("durationMs")),
                     volume = item.optDouble("volume", 1.0).toFloat(),
                     speed = item.optDouble("speed", 1.0).toFloat(),
                     opacity = item.optDouble("opacity", 1.0).toFloat(),
