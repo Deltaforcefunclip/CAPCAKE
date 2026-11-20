@@ -4934,7 +4934,7 @@ class TimelineView(
         // jari (onChange). Callback player bisa datang terlambat dari seek
         // sebelumnya; jika diterapkan, controller.centerPlayhead() akan
         // mengembalikan offset ke waktu lama dan timeline tampak meloncat.
-        if (isDraggingClip || isScrubbingTimeline || isRefreshingEditedPreview) return
+        if (isDraggingClip || isScrubbingTimeline) return
 
         controller.setPosition(value)
 
