@@ -2587,7 +2587,7 @@ class MainActivity : AppCompatActivity() {
                                     it.timelineStartMs >= (removedClip?.timelineStartMs ?: 0L)
                                 } ?: videoClipManager.clips.lastOrNull()
                                 selectedVideoClipId = nextClip?.id
-                                val newPosition = nextClip?.timelineStartMs ?: 0L
+                                val newPosition = nextClip?.timelineStartMs ?: videoClipManager.durationMs
                                 refreshEditedPreview(newPosition)
                                 saveCurrentProject()
                             }
@@ -5453,7 +5453,7 @@ class TimelineView(
                     if (trimClipId != null) {
                         moved = true
                         val delta = ((event.x - trimDownX) / pixelsPerMs.coerceAtLeast(0.000001f)).toLong()
-                        trimDeltaMs = if (trimEdge < 0) delta.coerceAtLeast(0L) else delta.coerceAtMost(0L)
+                        trimDeltaMs = if (trimEdge < 0) delta.coerceAtLeast(0L) else delta
                         invalidate()
                     } else {
                         if (!isDraggingClip && abs(event.x - downX) > dp(3)) {
