@@ -2807,7 +2807,7 @@ class MainActivity : AppCompatActivity() {
         toolsContainer.removeAllViews()
 
         val names = if (selectedEffectClipId != null) {
-            listOf("◐" to "Opasitas", "✂" to "Potong", "▣" to "Duplikat", "⌫" to "Hapus")
+            listOf("⚙" to "Atur", "◐" to "Opasitas", "✂" to "Potong", "▣" to "Duplikat", "⌫" to "Hapus")
         } else if (selectedTextClipId != null) {
             listOf(
                 "✎" to "Edit Text", "Aa" to "Font", "▣" to "Salin",
@@ -2927,6 +2927,12 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
+                    "Atur" -> {
+                        effectClipManager.find(selectedEffectClipId)?.let { clip ->
+                            if (clip.effectName == "Dreamy") showEffectPanel()
+                            else showMessage("Pengaturan ${clip.effectName} belum tersedia.")
+                        }
+                    }
                     "Edit Text" -> editSelectedText()
                     "Font" -> showTextFontPicker()
                     "Preset Text" -> showPresetTextPanel()
