@@ -1962,6 +1962,7 @@ class MainActivity : AppCompatActivity() {
                 timeline.postInvalidateOnAnimation()
                 audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
                 invalidateTextTrackViews()
+                invalidateEffectTrackViews()
             }
 
             private fun startPanFling(velocityX: Float) {
@@ -3627,6 +3628,11 @@ class MainActivity : AppCompatActivity() {
                     handler.removeCallbacks(scrubFinishRunnable)
                     handler.postDelayed(scrubFinishRunnable, 140L)
                     updateTime()
+                    // Semua layer membaca offset timeline yang sama; wajib digambar ulang bersama.
+                    timeline.postInvalidateOnAnimation()
+                    audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
+                    invalidateTextTrackViews()
+                    invalidateEffectTrackViews()
                 }
             )
             view.select(selectedEffectClipId)
