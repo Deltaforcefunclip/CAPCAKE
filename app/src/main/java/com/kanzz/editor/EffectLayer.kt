@@ -7,6 +7,8 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
+import android.os.Handler
+import android.os.Looper
 import kotlin.math.abs
 
 data class EffectClip(
@@ -33,6 +35,22 @@ class EffectClipManager {
     }
 
     fun find(id: String?) = clips.firstOrNull { it.id == id }
+    fun canMoveToLane(clip: EffectClip, lane: Int): Boolean =
+        clips.none { other -> other.id != clip.id && other.trackIndex == lane &&
+            clip.startTimeMs < other.endTimeMs && clip.endTimeMs > other.startTimeMs }
+    fun moveClipToLane(id: String, lane: Int): Boolean {
+        val clip = find(id) ?: return false
+        if (lane < 0 || !canMoveToLane(clip, lane)) return false
+        clip.trackIndex = lane
+        sort()
+        return true
+    }
+    fun moveClipToNewBottomLane(id: String): Boolean {
+        val clip = find(id) ?: return false
+        clip.trackIndex = (clips.maxOfOrNull { it.trackIndex } ?: -1) + 1
+        compactLanes()
+        return true
+    }
     fun remove(id: String?) { clips.removeAll { it.id == id }; compactLanes() }
 
     fun compactLanes() {
@@ -69,9 +87,12 @@ class EffectTrackView(
     private val onSelected: (EffectClip?) -> Unit,
     private val onEditStarted: () -> Unit,
     private val onChanged: () -> Unit,
-    private val onTimelineScrolled: (Long) -> Unit
+    private val onTimelineScrolled: (Long) -> Unit,
+    private val onClipDrag: (EffectClip, Float) -> Unit,
+    private val onClipDropped: (EffectClip, Float) -> Unit
 ) : View(context) {
     private val density = resources.displayMetrics.density
+    private val handler = Handler(Looper.getMainLooper())
     private val clips get() = allClips().filter { it.trackIndex == laneIndex }
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF8E63D9.toInt() }
     private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -90,6 +111,18 @@ class EffectTrackView(
     private var mode = 0 // 1 move, 2 trim start, 3 trim end
     private var moved = false
     private var editStarted = false
+    private var downY = 0f
+    private var dragOriginX = 0f
+    private var dragOriginTimeMs = 0L
+    private var longPressTriggered = false
+    private val longPressRunnable = Runnable {
+        if (touched != null && mode == 1) {
+            longPressTriggered = true
+            dragOriginX = downX
+            dragOriginTimeMs = touched!!.startTimeMs
+            parent?.requestDisallowInterceptTouchEvent(true)
+        }
+    }
 
     fun select(id: String?) { selectedId = id; invalidate() }
 
@@ -123,7 +156,10 @@ class EffectTrackView(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 parent?.requestDisallowInterceptTouchEvent(true)
+                handler.removeCallbacks(longPressRunnable)
                 downX = event.x
+                downY = event.rawY
+                longPressTriggered = false
                 lastX = event.x
                 moved = false
                 editStarted = false
@@ -141,13 +177,24 @@ class EffectTrackView(
                         right - event.x <= edge -> 3
                         else -> 1
                     }
+                    if (mode == 1) handler.postDelayed(longPressRunnable, 500L)
                 }
                 onSelected(touched)
                 invalidate()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
+                if (!longPressTriggered && mode == 1 &&
+                    (abs(event.x - downX) > 8f * density || abs(event.rawY - downY) > 8f * density)
+                ) handler.removeCallbacks(longPressRunnable)
                 val clip = touched
+                if (longPressTriggered && clip != null && controller.pixelsPerMs > 0f) {
+                    val delta = ((event.x - dragOriginX) / controller.pixelsPerMs).toLong()
+                    clip.startTimeMs = (dragOriginTimeMs + delta).coerceAtLeast(0L)
+                    onClipDrag(clip, event.rawY)
+                    invalidate()
+                    return true
+                }
                 if (clip != null && controller.pixelsPerMs > 0f) {
                     if (abs(event.x - downX) < 4f * density) {
                         lastX = event.x
@@ -183,6 +230,8 @@ class EffectTrackView(
                 return true
             }
             MotionEvent.ACTION_UP -> {
+                handler.removeCallbacks(longPressRunnable)
+                if (longPressTriggered) touched?.let { onClipDropped(it, event.rawY) }
                 if (moved && editStarted) onChanged()
                 parent?.requestDisallowInterceptTouchEvent(false)
                 touched = null
@@ -191,6 +240,7 @@ class EffectTrackView(
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                handler.removeCallbacks(longPressRunnable)
                 parent?.requestDisallowInterceptTouchEvent(false)
                 touched = null
                 mode = 0
