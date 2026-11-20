@@ -9,6 +9,10 @@ import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
+import android.view.VelocityTracker
+import android.animation.ValueAnimator
+import android.view.animation.DecelerateInterpolator
+import android.animation.AnimatorListenerAdapter
 import android.widget.Toast
 import kotlin.math.abs
 
@@ -128,6 +132,42 @@ class TextTrackView(
     private var longPressTriggered = false
     private var isScrollingTimeline = false
     private var snapGuideTimeMs: Long? = null
+    private var panVelocityTracker: VelocityTracker? = null
+    private var panFlingAnimator: ValueAnimator? = null
+
+    private fun applyTimelinePan(deltaX: Float) {
+        if (deltaX == 0f) return
+        controller.offsetPx -= deltaX
+        controller.clampOffset()
+        val position = controller.xToTime(width / 2f)
+        controller.positionMs = position
+        onTimelineScrolled(position)
+        invalidate()
+    }
+
+    private fun startTimelineFling(velocityX: Float) {
+        val velocity = velocityX.coerceIn(-5000f, 5000f)
+        if (abs(velocity) < 350f) return
+        val duration = (abs(velocity) * 0.16f).toInt().coerceIn(220, 850)
+        val distance = velocity * duration / 2000f
+        var previous = 0f
+        panFlingAnimator?.cancel()
+        panFlingAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            this.duration = duration.toLong()
+            interpolator = DecelerateInterpolator(1.8f)
+            addUpdateListener {
+                val fraction = it.animatedValue as Float
+                applyTimelinePan(distance * (fraction - previous))
+                previous = fraction
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    if (panFlingAnimator === this@apply) panFlingAnimator = null
+                }
+            })
+            start()
+        }
+    }
 
     private val longPressRunnable = Runnable {
         touched?.let { clip ->
@@ -203,6 +243,10 @@ class TextTrackView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                panFlingAnimator?.cancel()
+                panFlingAnimator = null
+                panVelocityTracker?.recycle()
+                panVelocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
                 downX = event.x
                 downY = event.y
                 lastTouchX = event.x
@@ -233,7 +277,8 @@ class TextTrackView(
             }
 
             MotionEvent.ACTION_MOVE -> {
-                if (!longPressTriggered) {
+                panVelocityTracker?.addMovement(event)
+                if (!longPressTriggered && mode != 2 && mode != 3) {
                     val dx = event.x - downX
                     if (abs(dx) > 8f * density) handler.removeCallbacks(longPressRunnable)
                     if (touched == null && abs(dx) > 8f * density) {
@@ -242,13 +287,8 @@ class TextTrackView(
                     }
                     if (isScrollingTimeline) {
                         val delta = event.x - lastTouchX
-                        controller.offsetPx -= delta
-                        controller.clampOffset()
-                        val position = controller.xToTime(width / 2f)
-                        controller.positionMs = position
+                        applyTimelinePan(delta)
                         lastTouchX = event.x
-                        onTimelineScrolled(position)
-                        invalidate()
                     }
                     return true
                 }
@@ -302,7 +342,14 @@ class TextTrackView(
             }
 
             MotionEvent.ACTION_UP -> {
+                panVelocityTracker?.addMovement(event)
                 handler.removeCallbacks(longPressRunnable)
+                if (isScrollingTimeline) {
+                    panVelocityTracker?.computeCurrentVelocity(1000)
+                    startTimelineFling(panVelocityTracker?.xVelocity ?: 0f)
+                }
+                panVelocityTracker?.recycle()
+                panVelocityTracker = null
                 parent?.requestDisallowInterceptTouchEvent(false)
                 if (longPressTriggered) {
                     touched?.let { onClipDropped(it, event.rawY) }
@@ -320,6 +367,10 @@ class TextTrackView(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                panFlingAnimator?.cancel()
+                panFlingAnimator = null
+                panVelocityTracker?.recycle()
+                panVelocityTracker = null
                 handler.removeCallbacks(longPressRunnable)
                 isScrollingTimeline = false
                 longPressTriggered = false
