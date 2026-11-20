@@ -168,6 +168,17 @@ class MainActivity : AppCompatActivity() {
     private val audioLibraryExecutor = Executors.newSingleThreadExecutor()
     private val videoClipManager = VideoClipManager()
 
+    // Playlist preview dapat menggabungkan klip berurutan dari sumber yang sama.
+    // Klip timeline tetap terpisah agar editing dan penyimpanan project tidak berubah.
+    private data class PlaybackGroup(
+        val clips: List<VideoClip>,
+        val mediaUri: String,
+        val sourceStartMs: Long,
+        val sourceEndMs: Long,
+        val usesProxy: Boolean
+    )
+    private var playbackGroups: List<PlaybackGroup> = emptyList()
+
     private var selectedVideoClipId: String? = null
 
     private var currentProject: VideoProject? = null
@@ -202,9 +213,11 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun diagnosticClipLabel(index: Int): String {
-        val clip = videoClipManager.clips.getOrNull(index) ?: return "item#$index"
+        val group = playbackGroups.getOrNull(index)
+        val clip = group?.clips?.firstOrNull() ?: return "item#$index"
         val uriTail = runCatching { Uri.parse(clip.sourceUri).lastPathSegment }.getOrNull()
-        return "clip#$index id=${clip.id.take(8)} source=${uriTail ?: "unknown"}"
+        val range = if (group.clips.size > 1) " merged=${group.clips.size}" else ""
+        return "group#$index clip=${clip.id.take(8)}$range source=${uriTail ?: "unknown"}"
     }
 
     private val playbackAnalyticsListener = object : AnalyticsListener {
@@ -2477,61 +2490,112 @@ class MainActivity : AppCompatActivity() {
         showMessage("Pembuatan proxy dibatalkan.")
     }
 
-    /** Preview menggunakan proxy hasil potongan bila tersedia; selain itu sumber asli. */
+    /**
+     * Gabungkan klip berurutan dari file sumber yang sama menjadi satu MediaItem.
+     * Klip yang memakai proxy terpisah tetap berdiri sendiri karena setiap proxy
+     * merupakan file fisik yang berbeda. Properti speed/volume/opacity harus sama.
+     */
     private fun buildEditedVideoItems(): List<MediaItem> {
-        return videoClipManager.clips.map { clip ->
+        val groups = mutableListOf<PlaybackGroup>()
+
+        for (clip in videoClipManager.clips) {
             val cachedProxy = if (previewQualityShortSide > 0) {
                 previewProxyFile(clip, previewQualityShortSide, previewProxyFps)
                     .takeIf { it.exists() && it.length() >= 1024L }
             } else null
-            val mediaBuilder = MediaItem.Builder()
-            if (cachedProxy != null) {
-                mediaBuilder
-                    .setUri(Uri.fromFile(cachedProxy))
-                    .setClippingConfiguration(
-                        MediaItem.ClippingConfiguration.Builder()
-                            .setStartPositionMs(0L)
-                            .setEndPositionMs(clip.durationMs.coerceAtLeast(1L))
-                            .build()
-                    )
+
+            val mediaUri = cachedProxy?.let { Uri.fromFile(it).toString() } ?: clip.sourceUri
+            val usesProxy = cachedProxy != null
+            val mediaStart = if (usesProxy) 0L else clip.sourceStartMs
+            val mediaEnd = if (usesProxy) clip.durationMs else clip.sourceEndMs
+            val previous = groups.lastOrNull()
+            val previousClip = previous?.clips?.lastOrNull()
+
+            val canMerge = previous != null && previousClip != null &&
+                !usesProxy && !previous.usesProxy &&
+                previous.mediaUri == mediaUri &&
+                previousClip.sourceEndMs == clip.sourceStartMs &&
+                kotlin.math.abs(previousClip.speed - clip.speed) < 0.001f &&
+                kotlin.math.abs(previousClip.volume - clip.volume) < 0.001f &&
+                kotlin.math.abs(previousClip.opacity - clip.opacity) < 0.001f
+
+            if (canMerge) {
+                groups[groups.lastIndex] = previous!!.copy(
+                    clips = previous.clips + clip,
+                    sourceEndMs = mediaEnd
+                )
             } else {
-                mediaBuilder
-                    .setUri(Uri.parse(clip.sourceUri))
-                    .setClippingConfiguration(
-                        MediaItem.ClippingConfiguration.Builder()
-                            .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
-                            .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(clip.sourceStartMs + 1L))
-                            .build()
+                groups.add(
+                    PlaybackGroup(
+                        clips = listOf(clip),
+                        mediaUri = mediaUri,
+                        sourceStartMs = mediaStart,
+                        sourceEndMs = mediaEnd,
+                        usesProxy = usesProxy
                     )
+                )
             }
-            mediaBuilder.build()
+        }
+
+        playbackGroups = groups
+        return groups.map { group ->
+            MediaItem.Builder()
+                .setUri(Uri.parse(group.mediaUri))
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(group.sourceStartMs.coerceAtLeast(0L))
+                        .setEndPositionMs(group.sourceEndMs.coerceAtLeast(group.sourceStartMs + 1L))
+                        .build()
+                )
+                .build()
         }
     }
 
-    /** Klip timeline yang sedang diputar oleh item aktif. */
-    private fun activeVideoClip(): VideoClip? =
-        videoClipManager.clips.getOrNull(player.currentMediaItemIndex)
+    /** Klip timeline yang sedang berada di bawah posisi playback aktif. */
+    private fun activeVideoClip(): VideoClip? {
+        val group = playbackGroups.getOrNull(player.currentMediaItemIndex) ?: return null
+        if (group.usesProxy) return group.clips.firstOrNull()
+        val sourcePosition = group.sourceStartMs + player.currentPosition.coerceAtLeast(0L)
+        return group.clips.firstOrNull { sourcePosition < it.sourceEndMs }
+            ?: group.clips.lastOrNull()
+    }
 
     /** Posisi sumber lokal untuk klip aktif. */
     private fun activeClipSourcePosition(clip: VideoClip): Long {
-        return (clip.sourceStartMs + player.currentPosition.coerceAtLeast(0L))
+        val group = playbackGroups.getOrNull(player.currentMediaItemIndex)
+            ?: return clip.sourceStartMs
+        val offset = player.currentPosition.coerceAtLeast(0L)
+        return (if (group.usesProxy) clip.sourceStartMs + offset else group.sourceStartMs + offset)
             .coerceIn(clip.sourceStartMs, clip.sourceEndMs)
     }
 
     /** Posisi player dalam timeline hasil edit, bukan posisi file sumber. */
     private fun currentTimelinePosition(): Long {
         if (videoClipManager.clips.isEmpty()) return player.currentPosition.coerceAtLeast(0L)
-        val index = player.currentMediaItemIndex
-        if (index !in videoClipManager.clips.indices) return timelineController.positionMs
-        val before = videoClipManager.clips.take(index).sumOf { it.timelineDurationMs }
-        val clip = videoClipManager.clips[index]
-        val localTimelinePosition = (player.currentPosition.coerceAtLeast(0L) /
-            clip.speed.coerceIn(0.25f, 4f)).toLong()
-        return (before + localTimelinePosition)
-            .coerceIn(0L, videoClipManager.durationMs)
+        val group = playbackGroups.getOrNull(player.currentMediaItemIndex)
+            ?: return timelineController.positionMs
+        val playerPosition = player.currentPosition.coerceAtLeast(0L)
+
+        if (group.usesProxy) {
+            val clip = group.clips.firstOrNull() ?: return timelineController.positionMs
+            val localTimeline = (playerPosition / clip.speed.coerceIn(0.25f, 4f)).toLong()
+            return (clip.timelineStartMs + localTimeline).coerceIn(0L, videoClipManager.durationMs)
+        }
+
+        val sourcePosition = (group.sourceStartMs + playerPosition).coerceIn(
+            group.sourceStartMs, group.sourceEndMs
+        )
+        for (clip in group.clips) {
+            if (sourcePosition < clip.sourceEndMs || clip.id == group.clips.lastOrNull()?.id) {
+                val sourceOffset = (sourcePosition - clip.sourceStartMs).coerceIn(0L, clip.durationMs)
+                val localTimeline = (sourceOffset / clip.speed.coerceIn(0.25f, 4f)).toLong()
+                return (clip.timelineStartMs + localTimeline).coerceIn(0L, videoClipManager.durationMs)
+            }
+        }
+        return timelineController.positionMs
     }
 
-    /** Memetakan waktu timeline ke item dan offset sumber yang benar. */
+    /** Memetakan waktu timeline ke grup playback dan offset sumber yang benar. */
     private fun seekTimelinePosition(positionMs: Long) {
         if (videoClipManager.clips.isEmpty()) {
             player.seekTo(positionMs.coerceAtLeast(0L))
@@ -2539,23 +2603,17 @@ class MainActivity : AppCompatActivity() {
         }
 
         val target = positionMs.coerceIn(0L, videoClipManager.durationMs)
-        var accumulated = 0L
-        var targetIndex = videoClipManager.clips.lastIndex
-        var localPosition = videoClipManager.clips.last().durationMs
-
-        for (index in videoClipManager.clips.indices) {
-            val clip = videoClipManager.clips[index]
-            val end = accumulated + clip.timelineDurationMs
-            if (target < end || index == videoClipManager.clips.lastIndex) {
-                targetIndex = index
-                val localTimelineMs = (target - accumulated).coerceIn(0L, clip.timelineDurationMs)
-                localPosition = (localTimelineMs * clip.speed.coerceIn(0.25f, 4f))
-                    .toLong().coerceIn(0L, clip.durationMs)
-                break
-            }
-            accumulated = end
+        val clip = videoClipManager.clips.lastOrNull { target <= it.timelineEndMs }
+            ?: videoClipManager.clips.last()
+        val localTimelineMs = (target - clip.timelineStartMs).coerceIn(0L, clip.timelineDurationMs)
+        val sourceOffset = (localTimelineMs * clip.speed.coerceIn(0.25f, 4f)).toLong()
+            .coerceIn(0L, clip.durationMs)
+        val groupIndex = playbackGroups.indexOfFirst { group -> group.clips.any { it.id == clip.id } }
+        val group = playbackGroups.getOrNull(groupIndex) ?: return
+        val playerOffset = if (group.usesProxy) sourceOffset else {
+            (clip.sourceStartMs + sourceOffset - group.sourceStartMs).coerceAtLeast(0L)
         }
-        player.seekTo(targetIndex, localPosition)
+        player.seekTo(groupIndex, playerOffset)
     }
 
     /**
