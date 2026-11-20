@@ -26,8 +26,8 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.appcompat:appcompat:1.7.0")
     implementation("com.google.android.material:material:1.12.0")
-    implementation("androidx.media3:media3-exoplayer:1.12.0-beta01")
-    implementation("androidx.media3:media3-ui:1.12.0-beta01")
-    implementation("androidx.media3:media3-transformer:1.12.0-beta01")
-    implementation("androidx.media3:media3-effect:1.12.0-beta01")
+    implementation("androidx.media3:media3-exoplayer:1.9.0")
+    implementation("androidx.media3:media3-ui:1.9.0")
+    implementation("androidx.media3:media3-transformer:1.9.0")
+    implementation("androidx.media3:media3-effect:1.9.0")
 }
