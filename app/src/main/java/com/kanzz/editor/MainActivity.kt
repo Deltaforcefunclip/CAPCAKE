@@ -27,6 +27,7 @@ import androidx.media3.common.MediaItem
 import androidx.media3.common.audio.ChannelMixingAudioProcessor
 import androidx.media3.common.audio.AudioProcessor
 import androidx.media3.common.audio.SonicAudioProcessor
+import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -44,10 +45,8 @@ import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ProgressHolder
-import androidx.media3.effect.SpeedChangeEffect
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.Crop
-import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.CanvasOverlay
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.transformer.Effects
@@ -4513,21 +4512,42 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        // Satukan nilai FPS yang nyaris sama (mis. 29.97 dan 30) dan resolusi identik.
-        val fpsOptions = profiles.map { it.frameRate }
-            .filter { it > 0f }
-            .sorted()
-            .fold(mutableListOf<Float>()) { result, value ->
-                if (result.none { kotlin.math.abs(it - value) < 0.5f }) result.add(value)
-                result
-            }
-        val resolutionOptions = profiles
-            .distinctBy { "${it.width}x${it.height}" }
-            .sortedWith(compareBy<ExportSourceProfile> { it.width * it.height }.thenBy { it.width })
+        val sourceFps = profiles.map { it.frameRate }.filter { it > 0f }.sorted()
+        val fpsOptions = mutableListOf<Float>()
+        listOf(30f, 60f).forEach { fpsOptions.add(it) }
+        sourceFps.forEach { fps ->
+            if (fpsOptions.none { kotlin.math.abs(it - fps) < 0.5f }) fpsOptions.add(fps)
+        }
 
-        if (fpsOptions.isEmpty() || resolutionOptions.isEmpty()) {
-            showMessage("FPS atau resolusi sumber tidak dapat dibaca.")
-            return
+        data class ResolutionChoice(val width: Int, val height: Int, val label: String)
+        val ratio = selectedPreviewRatio.split(":").let { parts ->
+            if (parts.size == 2) {
+                (parts[0].toFloatOrNull() ?: 0f) /
+                    (parts[1].toFloatOrNull() ?: 1f)
+            } else 0f
+        }.takeIf { it > 0f } ?: profiles.first().width.toFloat() /
+            profiles.first().height.toFloat().coerceAtLeast(1)
+        fun widthForHeight(height: Int): Int =
+            (((height * ratio).toInt() / 2) * 2).coerceAtLeast(2)
+
+        val resolutionOptions = mutableListOf<ResolutionChoice>()
+        listOf(1080, 720).forEach { height ->
+            val width = widthForHeight(height)
+            resolutionOptions.add(
+                ResolutionChoice(width, height, "${height}p • ${width}×${height}")
+            )
+        }
+        profiles.sortedWith(compareBy<ExportSourceProfile> { it.width * it.height }
+            .thenBy { it.width }).forEach { profile ->
+            if (resolutionOptions.none {
+                    it.width == profile.width && it.height == profile.height
+                }) {
+                resolutionOptions.add(
+                    ResolutionChoice(
+                        profile.width, profile.height, profile.resolutionLabel
+                    )
+                )
+            }
         }
 
         val content = LinearLayout(this).apply {
@@ -4547,41 +4567,64 @@ class MainActivity : AppCompatActivity() {
             }, LinearLayout.LayoutParams(-1, dp(34)))
         }
 
-        fun addOption(group: RadioGroup, label: String, checked: Boolean) {
+        fun addOption(
+            group: RadioGroup,
+            label: String,
+            onSelectionChanged: (Int) -> Unit
+        ) {
             val radio = RadioButton(this).apply {
+                id = View.generateViewId()
                 text = label
                 textSize = 14f
                 setTextColor(Color.WHITE)
                 buttonTintList = android.content.res.ColorStateList.valueOf(green)
                 setPadding(dp(10), dp(2), dp(10), dp(2))
-                isChecked = checked
                 background = android.graphics.drawable.GradientDrawable().apply {
                     setColor(Color.rgb(29, 29, 29))
                     setStroke(dp(1), Color.rgb(55, 55, 55))
                     cornerRadius = dp(7).toFloat()
                 }
             }
-            val params = RadioGroup.LayoutParams(-1, dp(42))
-            params.bottomMargin = dp(6)
-            group.addView(radio, params)
+            group.addView(radio, RadioGroup.LayoutParams(-1, dp(42)).apply {
+                bottomMargin = dp(6)
+            })
+            radio.setOnClickListener { onSelectionChanged(radio.id) }
         }
 
         addSectionTitle("FPS VIDEO")
         val fpsGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
-        fpsOptions.forEachIndexed { index, fps ->
+        var selectedFpsId = -1
+        fpsOptions.forEach { fps ->
             val label = if (kotlin.math.abs(fps - fps.toInt()) < 0.05f) {
                 "${fps.toInt()} FPS"
             } else {
                 String.format(Locale.US, "%.2f FPS", fps)
             }
-            addOption(fpsGroup, label, index == 0)
+            addOption(fpsGroup, label) { tappedId ->
+                if (selectedFpsId == tappedId) {
+                    fpsGroup.clearCheck()
+                    selectedFpsId = -1
+                } else {
+                    fpsGroup.check(tappedId)
+                    selectedFpsId = tappedId
+                }
+            }
         }
         content.addView(fpsGroup)
 
         addSectionTitle("RESOLUSI VIDEO")
         val resolutionGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
-        resolutionOptions.forEachIndexed { index, profile ->
-            addOption(resolutionGroup, profile.resolutionLabel, index == 0)
+        var selectedResolutionId = -1
+        resolutionOptions.forEach { option ->
+            addOption(resolutionGroup, option.label) { tappedId ->
+                if (selectedResolutionId == tappedId) {
+                    resolutionGroup.clearCheck()
+                    selectedResolutionId = -1
+                } else {
+                    resolutionGroup.check(tappedId)
+                    selectedResolutionId = tappedId
+                }
+            }
         }
         content.addView(resolutionGroup)
 
@@ -4589,7 +4632,6 @@ class MainActivity : AppCompatActivity() {
             isFillViewport = false
             addView(content, android.view.ViewGroup.LayoutParams(-1, -2))
         }
-
         val titleView = TextView(this).apply {
             text = "PENGATURAN EXPORT"
             textSize = 18f
@@ -4615,19 +4657,19 @@ class MainActivity : AppCompatActivity() {
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
                 setTextColor(green)
                 setOnClickListener {
-                    val fpsIndex = fpsGroup.checkedRadioButtonId
-                    val resolutionIndex = resolutionGroup.checkedRadioButtonId
-                    val selectedFps = fpsOptions.getOrElse(
-                        fpsGroup.indexOfChild(fpsGroup.findViewById(fpsIndex))
-                    ) { fpsOptions.first() }
-                    val selectedResolution = resolutionOptions.getOrElse(
-                        resolutionGroup.indexOfChild(resolutionGroup.findViewById(resolutionIndex))
-                    ) { resolutionOptions.first() }
+                    val fpsIndex = fpsGroup.indexOfChild(
+                        fpsGroup.findViewById<View>(selectedFpsId)
+                    )
+                    val resolutionIndex = resolutionGroup.indexOfChild(
+                        resolutionGroup.findViewById<View>(selectedResolutionId)
+                    )
+                    val selectedFps = fpsOptions.getOrNull(fpsIndex)
+                    val selectedResolution = resolutionOptions.getOrNull(resolutionIndex)
                     dialog.dismiss()
                     startExportVideo(
                         selectedFps,
-                        selectedResolution.width,
-                        selectedResolution.height
+                        selectedResolution?.width,
+                        selectedResolution?.height
                     )
                 }
             }
@@ -4649,7 +4691,7 @@ class MainActivity : AppCompatActivity() {
         analyzeExportSources(::showExportSourceAnalysis)
     }
 
-    private fun startExportVideo(outputFps: Float, outputWidth: Int, outputHeight: Int) {
+    private fun startExportVideo(outputFps: Float?, outputWidth: Int?, outputHeight: Int?) {
 
         val editedItems = try {
             videoClipManager.clips.map { clip ->
@@ -4681,15 +4723,26 @@ class MainActivity : AppCompatActivity() {
                         add(mixer)
                     }
                 }
-                EditedMediaItem.Builder(mediaItem)
+                val editedBuilder = EditedMediaItem.Builder(mediaItem)
                     .setRemoveAudio(muteAudio)
-                    .setEffects(
+                    .setSpeed(object : SpeedProvider {
+                        override fun getSpeed(timeUs: Long): Float =
+                            clip.speed.coerceIn(0.25f, 4f)
+
+                        override fun getNextSpeedChangeTimeUs(timeUs: Long): Long =
+                            C.TIME_UNSET
+                    })
+                // API frame-rate cap ini mengikuti timestamp setelah speed diterapkan.
+                // Jika pengguna tidak memilih FPS, sumber dibiarkan otomatis.
+                if (outputFps != null) {
+                    editedBuilder.setFrameRate(outputFps.toInt().coerceAtLeast(1))
+                }
+                editedBuilder.setEffects(
                         Effects(
                             audioProcessors,
                             buildList {
                                 add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 4f)))
                                 // Batasi frame rate setelah perubahan speed agar 2x tidak menggandakan FPS.
-                                add(FrameDropEffect.createDefaultFrameDropEffect(outputFps))
 
                                 // Bentuk kanvas output terlebih dahulu. Setelah kanvas terbentuk,
                                 // zoom/crop diterapkan pada kanvas tersebut, bukan pada sumber 16:9.
@@ -4878,14 +4931,16 @@ class MainActivity : AppCompatActivity() {
                                     add(OverlayEffect(listOf(overlay)))
                                 }
 
-                                // Samakan dimensi akhir semua klip ke resolusi yang dipilih.
-                                add(
-                                    Presentation.createForWidthAndHeight(
-                                        outputWidth,
-                                        outputHeight,
-                                        Presentation.LAYOUT_SCALE_TO_FIT
+                                // Resolusi opsional diterapkan setelah semua efek kanvas dan teks.
+                                if (outputWidth != null && outputHeight != null) {
+                                    add(
+                                        Presentation.createForWidthAndHeight(
+                                            outputWidth,
+                                            outputHeight,
+                                            Presentation.LAYOUT_SCALE_TO_FIT
+                                        )
                                     )
-                                )
+                                }
                             }
                         )
                     )
