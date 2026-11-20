@@ -3027,27 +3027,50 @@ class MainActivity : AppCompatActivity() {
                     "Rasio" -> {
                         showAspectRatioPicker()
                     }
-                    "Effect" -> showEffectPicker()
+                    "Effect" -> {
+                        val switchingGroup = activeLayerGroup != "EFFECT"
+                        activeLayerGroup = "EFFECT"
+                        selectedAudioClipId = null
+                        selectedTextClipId = null
+                        selectedEffectClipId = null
+                        selectedVideoClipId = null
+                        videoSelected = false
+                        updateLayerGroupVisibility()
+                        updateToolMenu()
+                        // Saat berpindah kelompok, tampilkan layer yang sudah ada.
+                        // Picker hanya dibuka jika kelompok Effect masih kosong,
+                        // atau pengguna memang sedang berada di kelompok Effect.
+                        if (effectClipManager.clips.isEmpty() || !switchingGroup) showEffectPicker()
+                    }
 
                     "Audio" -> {
-                        if (activeLayerGroup != "AUDIO") {
-                            activeLayerGroup = "AUDIO"
-                            selectedTextClipId = null
-                            selectedEffectClipId = null
-                            selectedAudioClipId = null
-                            updateLayerGroupVisibility()
-                            updateToolMenu()
-                        } else showAudioLibraryMenu()
+                        val switchingGroup = activeLayerGroup != "AUDIO"
+                        activeLayerGroup = "AUDIO"
+                        selectedTextClipId = null
+                        selectedEffectClipId = null
+                        selectedAudioClipId = null
+                        selectedVideoClipId = null
+                        videoSelected = false
+                        updateLayerGroupVisibility()
+                        updateToolMenu()
+                        // Jika berpindah ke kelompok yang sudah berisi clip,
+                        // cukup tampilkan layer-nya. Jika kosong, buka pustaka audio.
+                        if (audioClipManager.clips.isEmpty() || !switchingGroup) showAudioLibraryMenu()
                     }
 
                     "Text" -> {
+                        val switchingGroup = activeLayerGroup != "TEXT"
                         activeLayerGroup = "TEXT"
                         selectedAudioClipId = null
                         selectedTextClipId = null
                         selectedEffectClipId = null
+                        selectedVideoClipId = null
+                        videoSelected = false
                         updateLayerGroupVisibility()
                         updateToolMenu()
-                        showTextEditor()
+                        // Keyboard/editor otomatis muncul hanya jika belum ada clip Text,
+                        // atau tombol Text ditekan lagi saat kelompok Text sudah aktif.
+                        if (textClipManager.clips.isEmpty() || !switchingGroup) showTextEditor()
                     }
 
                     "Overlay", "Sticker" -> {
