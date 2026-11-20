@@ -11,6 +11,8 @@ import android.os.Bundle
 import android.os.Environment
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
+import android.util.Log
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.view.Gravity
@@ -37,6 +39,7 @@ import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.PlayerView
 import androidx.media3.transformer.Composition
 import androidx.media3.transformer.EditedMediaItem
@@ -181,6 +184,110 @@ class MainActivity : AppCompatActivity() {
     private val handler = Handler(Looper.getMainLooper())
 
     private var playbackListener: Player.Listener? = null
+
+    // Diagnostik sementara untuk mengukur jeda antar-klip tanpa mengubah jalur playback.
+    private val playbackDiagnosticEntries = ArrayDeque<String>()
+    private var lastTransitionElapsedMs = 0L
+    private var lastTransitionItemIndex = C.INDEX_UNSET
+
+    private fun recordPlaybackDiagnostic(message: String) {
+        val line = "${SystemClock.elapsedRealtime()}ms | $message"
+        synchronized(playbackDiagnosticEntries) {
+            playbackDiagnosticEntries.addLast(line)
+            while (playbackDiagnosticEntries.size > 160) {
+                playbackDiagnosticEntries.removeFirst()
+            }
+        }
+        Log.d("CAPCAKE_RENDER", line)
+    }
+
+    private fun diagnosticClipLabel(index: Int): String {
+        val clip = videoClipManager.clips.getOrNull(index) ?: return "item#$index"
+        val uriTail = runCatching { Uri.parse(clip.sourceUri).lastPathSegment }.getOrNull()
+        return "clip#$index id=${clip.id.take(8)} source=${uriTail ?: "unknown"}"
+    }
+
+    private val playbackAnalyticsListener = object : AnalyticsListener {
+        override fun onVideoDecoderInitialized(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String,
+            initializedTimestampMs: Long,
+            initializationDurationMs: Long
+        ) {
+            recordPlaybackDiagnostic(
+                "DECODER_INIT item=${eventTime.mediaItemIndex} name=$decoderName duration=${initializationDurationMs}ms"
+            )
+        }
+
+        override fun onVideoInputFormatChanged(
+            eventTime: AnalyticsListener.EventTime,
+            format: androidx.media3.common.Format,
+            decoderReuseEvaluation: androidx.media3.exoplayer.DecoderReuseEvaluation?
+        ) {
+            recordPlaybackDiagnostic(
+                "FORMAT item=${eventTime.mediaItemIndex} mime=${format.sampleMimeType} " +
+                    "size=${format.width}x${format.height} fps=${format.frameRate} " +
+                    "decoderReuse=${decoderReuseEvaluation ?: "unknown"}"
+            )
+        }
+
+        override fun onRenderedFirstFrame(
+            eventTime: AnalyticsListener.EventTime,
+            output: Any,
+            renderTimeMs: Long
+        ) {
+            val index = eventTime.mediaItemIndex
+            val transitionDelay = if (index == lastTransitionItemIndex && lastTransitionElapsedMs > 0L) {
+                (SystemClock.elapsedRealtime() - lastTransitionElapsedMs).toString() + "ms after transition"
+            } else {
+                "no matching transition timestamp"
+            }
+            recordPlaybackDiagnostic(
+                "FIRST_FRAME item=$index (${diagnosticClipLabel(index)}) $transitionDelay"
+            )
+        }
+
+        override fun onDroppedVideoFrames(
+            eventTime: AnalyticsListener.EventTime,
+            droppedFrames: Int,
+            elapsedMs: Long
+        ) {
+            recordPlaybackDiagnostic(
+                "DROPPED_FRAMES item=${eventTime.mediaItemIndex} count=$droppedFrames interval=${elapsedMs}ms"
+            )
+        }
+
+        override fun onVideoFrameProcessingOffset(
+            eventTime: AnalyticsListener.EventTime,
+            totalProcessingOffsetUs: Long,
+            frameCount: Int
+        ) {
+            if (frameCount > 0) {
+                val averageMs = totalProcessingOffsetUs / frameCount / 1000.0
+                recordPlaybackDiagnostic(
+                    "FRAME_PROCESSING item=${eventTime.mediaItemIndex} avgOffset=${"%.2f".format(Locale.US, averageMs)}ms frames=$frameCount"
+                )
+            }
+        }
+
+        override fun onIsLoadingChanged(
+            eventTime: AnalyticsListener.EventTime,
+            isLoading: Boolean
+        ) {
+            recordPlaybackDiagnostic(
+                "LOADING item=${eventTime.mediaItemIndex} loading=$isLoading"
+            )
+        }
+
+        override fun onVideoCodecError(
+            eventTime: AnalyticsListener.EventTime,
+            videoCodecError: Exception
+        ) {
+            recordPlaybackDiagnostic(
+                "VIDEO_CODEC_ERROR item=${eventTime.mediaItemIndex} error=${videoCodecError.javaClass.simpleName}: ${videoCodecError.message}"
+            )
+        }
+    }
     // Mencegah callback refresh preview lama menimpa hasil edit yang lebih baru.
     private var previewRefreshGeneration = 0
     // Tahan sinkronisasi posisi dari callback player selama playlist hasil edit dibangun ulang.
@@ -380,6 +487,7 @@ class MainActivity : AppCompatActivity() {
         player = ExoPlayer.Builder(this, renderersFactory).build().apply {
             // Tetap preload awal item berikutnya; renderer prewarming menyiapkan decoder video.
             preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
+            addAnalyticsListener(playbackAnalyticsListener)
         }
 
         previewQualityShortSide = prefs.getInt("preview_quality_short_side", 720)
@@ -2114,11 +2222,32 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                // Catat waktu perpindahan agar jeda sampai frame pertama dapat diukur.
+                lastTransitionElapsedMs = SystemClock.elapsedRealtime()
+                lastTransitionItemIndex = player.currentMediaItemIndex
+                recordPlaybackDiagnostic(
+                    "TRANSITION item=$lastTransitionItemIndex reason=$reason " +
+                        diagnosticClipLabel(lastTransitionItemIndex)
+                )
                 // Terapkan volume, opacity, dan speed tepat saat item berganti.
                 // Pembaruan timeline tidak dipanggil di callback transisi karena
                 // timelineFrameUpdater sudah menyegarkannya setiap 33 ms.
                 // Menghindari pekerjaan UI tambahan tepat pada pergantian decoder.
                 syncVideoClipProperties()
+            }
+
+            override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_BUFFERING) {
+                    recordPlaybackDiagnostic(
+                        "BUFFERING item=${player.currentMediaItemIndex} position=${player.currentPosition}ms"
+                    )
+                }
+            }
+
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                recordPlaybackDiagnostic(
+                    "PLAYER_ERROR code=${error.errorCodeName} message=${error.message}"
+                )
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -2519,6 +2648,40 @@ class MainActivity : AppCompatActivity() {
     // BOTTOM MENU
     // =====================================
 
+    private fun showPlaybackDiagnosticsDialog() {
+        val report = synchronized(playbackDiagnosticEntries) {
+            playbackDiagnosticEntries.joinToString("\n")
+        }
+        val content = TextView(this).apply {
+            text = if (report.isBlank()) {
+                "Belum ada data. Putar project sampai melewati beberapa pergantian klip, lalu buka Diagnostik."
+            } else {
+                report
+            }
+            setTextColor(Color.WHITE)
+            textSize = 11f
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            typeface = android.graphics.Typeface.MONOSPACE
+        }
+        val scroll = ScrollView(this).apply {
+            setBackgroundColor(Color.rgb(22, 22, 22))
+            addView(content)
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Diagnostik Rendering")
+            .setView(scroll)
+            .setNegativeButton("TUTUP", null)
+            .setPositiveButton("SALIN") { _, _ ->
+                val clipboard = getSystemService(CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                clipboard.setPrimaryClip(
+                    android.content.ClipData.newPlainText("CAPCAKE playback diagnostics", report)
+                )
+                Toast.makeText(this, "Diagnostik disalin. Tempelkan di chat ini.", Toast.LENGTH_LONG).show()
+            }
+            .create()
+        dialog.show()
+    }
+
     private fun updateToolMenu() {
 
         if (!::toolsContainer.isInitialized) return
@@ -2800,6 +2963,15 @@ class MainActivity : AppCompatActivity() {
                 LinearLayout.LayoutParams(dp(78), dp(82))
             )
         }
+
+        // Tombol sementara untuk menyalin data diagnostik setelah pengujian.
+        val diagnosticsItem = createToolItem("⌁", "Diagnostik").apply {
+            setOnClickListener { showPlaybackDiagnosticsDialog() }
+        }
+        row.addView(
+            diagnosticsItem,
+            LinearLayout.LayoutParams(dp(78), dp(82))
+        )
 
         scroll.addView(row)
 
