@@ -44,7 +44,10 @@ import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.EditedMediaItemSequence
+import androidx.media3.transformer.VideoFrameAggregationParameters
+import android.util.Rational
 import androidx.media3.transformer.ProgressHolder
+import androidx.media3.effect.DefaultGlFrameProcessor
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.Crop
 import androidx.media3.effect.FrameDropEffect
@@ -4731,11 +4734,8 @@ class MainActivity : AppCompatActivity() {
                         override fun getNextSpeedChangeTimeUs(timeUs: Long): Long =
                             C.TIME_UNSET
                     })
-                // API frame-rate cap ini mengikuti timestamp setelah speed diterapkan.
-                // Jika pengguna tidak memilih FPS, sumber dibiarkan otomatis.
-                if (outputFps != null) {
-                    editedBuilder.setFrameRate(outputFps.toInt().coerceAtLeast(1))
-                }
+                // FPS manual tidak lagi dibatasi per klip.
+                // Target global diterapkan pada agregasi seluruh sequence di bawah.
                 editedBuilder.setEffects(
                         Effects(
                             audioProcessors,
@@ -4938,12 +4938,6 @@ class MainActivity : AppCompatActivity() {
                                     )
                                 }
 
-                                // Terapkan batas FPS pada frame setelah perubahan speed untuk
-                                // setiap klip, bukan hanya mengandalkan karakteristik klip pertama.
-                                // FrameDropEffect membuang frame berlebih, bukan membuat frame sintetis.
-                                if (outputFps != null) {
-                                    add(FrameDropEffect.createDefaultFrameDropEffect(outputFps))
-                                }
                             }
                         )
                     )
@@ -5094,8 +5088,26 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            val composition = Composition.Builder(sequences).build()
-            val transformer = Transformer.Builder(this).addListener(listener).build()
+            val compositionBuilder = Composition.Builder(sequences)
+            if (outputFps != null) {
+                // Satu clock frame untuk seluruh timeline: frame berlebih dibuang,
+                // frame yang kurang diulang dengan retiming agar FPS konstan.
+                compositionBuilder.setVideoFrameAggregationParameters(
+                    VideoFrameAggregationParameters.Builder()
+                        .setFrameRate(Rational(outputFps.toInt().coerceAtLeast(1), 1))
+                        .build()
+                )
+            }
+            val composition = compositionBuilder.build()
+
+            val transformerBuilder = Transformer.Builder(this).addListener(listener)
+            if (outputFps != null) {
+                // FrameProcessor diperlukan agar konfigurasi agregasi FPS komposisi aktif.
+                transformerBuilder.setFrameProcessorFactory(
+                    DefaultGlFrameProcessor.Factory.Builder(this).build()
+                )
+            }
+            val transformer = transformerBuilder.build()
             exportTransformer = transformer
             transformer.start(composition, output.absolutePath)
             handler.post(exportProgressRunnable)
