@@ -158,6 +158,8 @@ class MainActivity : AppCompatActivity() {
     private var playbackListener: Player.Listener? = null
     // Mencegah callback refresh preview lama menimpa hasil edit yang lebih baru.
     private var previewRefreshGeneration = 0
+    // Tahan sinkronisasi posisi dari callback player selama playlist hasil edit dibangun ulang.
+    private var isRefreshingEditedPreview = false
     private var previewQualityShortSide = 720
     private var selectedPreviewRatio = ""
     private var previewRatioOverlay: View? = null
@@ -2281,8 +2283,12 @@ class MainActivity : AppCompatActivity() {
     /** Rebuild playlist setelah edit, lalu seek dan lanjutkan playback setelah decoder siap. */
     private fun refreshEditedPreview(positionMs: Long = currentTimelinePosition()) {
         val generation = ++previewRefreshGeneration
+        // Kunci posisi visual agar callback playlist lama/tidak sinkron tidak
+        // menggeser seluruh timeline sebelum seek ke titik edit selesai.
+        isRefreshingEditedPreview = true
 
         if (videoClipManager.clips.isEmpty()) {
+            isRefreshingEditedPreview = false
             player.pause()
             timelineController.setDuration(0L)
             timeline.invalidate()
@@ -2312,11 +2318,16 @@ class MainActivity : AppCompatActivity() {
                 seekTimelinePosition(safePosition)
                 syncVideoClipProperties()
                 updateTime()
+                isRefreshingEditedPreview = false
                 if (wasPlaying) player.play()
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                 player.removeListener(this)
+                if (generation == previewRefreshGeneration) {
+                    isRefreshingEditedPreview = false
+                    updateTime()
+                }
             }
         }
         player.addListener(refreshListener)
@@ -4086,7 +4097,10 @@ class MainActivity : AppCompatActivity() {
 
         if (!::timeLabel.isInitialized) return
 
-        val position = if (isTimelineScrubbing) {
+        val position = if (isRefreshingEditedPreview) {
+            // Pertahankan titik edit yang sudah dipasang di controller.
+            timelineController.positionMs.coerceIn(0L, videoClipManager.durationMs)
+        } else if (isTimelineScrubbing) {
             pendingScrubPositionMs.coerceIn(0L, videoClipManager.durationMs)
         } else {
             currentTimelinePosition()
@@ -4920,7 +4934,7 @@ class TimelineView(
         // jari (onChange). Callback player bisa datang terlambat dari seek
         // sebelumnya; jika diterapkan, controller.centerPlayhead() akan
         // mengembalikan offset ke waktu lama dan timeline tampak meloncat.
-        if (isDraggingClip || isScrubbingTimeline) return
+        if (isDraggingClip || isScrubbingTimeline || isRefreshingEditedPreview) return
 
         controller.setPosition(value)
 
