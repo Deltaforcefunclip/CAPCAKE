@@ -2878,6 +2878,14 @@ class MainActivity : AppCompatActivity() {
                 when (pair.second) {
 
                     "Potong" -> {
+                        if (selectedEffectClipId != null) {
+                            val effect = effectClipManager.find(selectedEffectClipId) ?: return@setOnClickListener
+                            pushUndoSnapshot()
+                            val secondEffect = effectClipManager.split(effect.id, currentTimelinePosition())
+                            if (secondEffect != null) { selectedEffectClipId = secondEffect.id; refreshEffectTracks(); saveCurrentProject(); updateToolMenu() }
+                            else { undoStack.removeLastOrNull(); Toast.makeText(this, "Geser playhead ke dalam clip Effect untuk memotong.", Toast.LENGTH_SHORT).show() }
+                            return@setOnClickListener
+                        }
                         if (selectedTextClipId != null) {
                             splitSelectedText()
                             return@setOnClickListener
