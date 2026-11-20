@@ -3493,6 +3493,60 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun refreshEffectTracks() {
+        if (!::thisEffectTracksContainer.isInitialized) return
+        thisEffectTracksContainer.removeAllViews()
+        val laneCount = (effectClipManager.clips.maxOfOrNull { it.trackIndex } ?: 0) + 1
+        repeat(laneCount.coerceAtLeast(1)) { lane ->
+            val view = EffectTrackView(
+                this, timelineController, lane, { effectClipManager.clips },
+                onSelected = { clip ->
+                    selectedEffectClipId = clip?.id
+                    selectedTextClipId = null
+                    selectedAudioClipId = null
+                    selectedVideoClipId = null
+                    videoSelected = false
+                    clearAudioTrackSelection()
+                    timeline.selectClip(null)
+                    timeline.updateSelection(false)
+                    for (i in 0 until thisTextTracksContainer.childCount) {
+                        (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
+                    }
+                    for (i in 0 until thisEffectTracksContainer.childCount) {
+                        (thisEffectTracksContainer.getChildAt(i) as? EffectTrackView)?.select(clip?.id)
+                    }
+                    if (clip != null) activeLayerGroup = "EFFECT"
+                    updateLayerGroupVisibility()
+                    updateToolMenu()
+                },
+                onChanged = { saveCurrentProject(); invalidateEffectTrackViews() },
+                onTimelineScrolled = { position ->
+                    pendingScrubPositionMs = position
+                    if (!isTimelineScrubbing) {
+                        isTimelineScrubbing = true
+                        if (player.isPlaying) player.pause()
+                        player.setScrubbingModeEnabled(true)
+                        updatePlayButton()
+                    }
+                    seekTimelinePosition(position)
+                    handler.removeCallbacks(scrubFinishRunnable)
+                    handler.postDelayed(scrubFinishRunnable, 140L)
+                    updateTime()
+                }
+            )
+            view.select(selectedEffectClipId)
+            thisEffectTracksContainer.addView(view, LinearLayout.LayoutParams(-1, dp(36)))
+        }
+        updateLayerGroupVisibility()
+    }
+
+    private fun invalidateEffectTrackViews() {
+        if (!::thisEffectTracksContainer.isInitialized) return
+        for (i in 0 until thisEffectTracksContainer.childCount) {
+            thisEffectTracksContainer.getChildAt(i).postInvalidateOnAnimation()
+        }
+    }
+
     private fun refreshTextTracks() {
         if (!::thisTextTracksContainer.isInitialized) return
         thisTextTracksContainer.removeAllViews()
@@ -4205,6 +4259,51 @@ class MainActivity : AppCompatActivity() {
         return array.toString()
     }
 
+    private fun encodeEffectClips(): String {
+        val array = JSONArray()
+        effectClipManager.clips.forEach { clip ->
+            array.put(JSONObject().apply {
+                put("id", clip.id); put("effectName", clip.effectName)
+                put("startTimeMs", clip.startTimeMs); put("durationMs", clip.durationMs)
+                put("trackIndex", clip.trackIndex); put("opacity", clip.opacity.toDouble())
+            })
+        }
+        return array.toString()
+    }
+
+    private fun restoreEffectClips(json: String?) {
+        effectClipManager.clips.clear()
+        if (json.isNullOrBlank()) return
+        runCatching {
+            val array = JSONArray(json)
+            for (i in 0 until array.length()) {
+                val item = array.getJSONObject(i)
+                effectClipManager.clips.add(EffectClip(
+                    id = item.optString("id"), effectName = item.optString("effectName", "Dreamy"),
+                    startTimeMs = item.optLong("startTimeMs"), durationMs = item.optLong("durationMs", 2000L),
+                    trackIndex = item.optInt("trackIndex", 0), opacity = item.optDouble("opacity", 1.0).toFloat()
+                ))
+            }
+            effectClipManager.compactLanes()
+        }.onFailure { effectClipManager.clips.clear() }
+    }
+
+    private fun encodeTextAndEffects(): String = JSONObject()
+        .put("text", JSONArray(encodeTextClips()))
+        .put("effects", JSONArray(encodeEffectClips())).toString()
+
+    private fun restoreTextAndEffects(json: String?) {
+        if (json.isNullOrBlank()) { restoreTextClips(null); restoreEffectClips(null); return }
+        runCatching {
+            val root = JSONObject(json)
+            restoreTextClips(root.optJSONArray("text")?.toString())
+            restoreEffectClips(root.optJSONArray("effects")?.toString())
+        }.onFailure {
+            restoreTextClips(json)
+            restoreEffectClips(null)
+        }
+    }
+
     private fun restoreTextClips(json: String?) {
         textClipManager.clips.clear()
         if (json.isNullOrBlank()) return
@@ -4751,7 +4850,7 @@ class MainActivity : AppCompatActivity() {
             Triple(
                 TimelineStateCodec.encodeVideo(videoClipManager),
                 TimelineStateCodec.encodeAudio(audioClipManager),
-                encodeTextClips()
+                encodeTextAndEffects()
             )
         )
         while (undoStack.size > 25) undoStack.removeFirst()
@@ -4761,12 +4860,13 @@ class MainActivity : AppCompatActivity() {
     private fun restoreTimelineSnapshot(snapshot: Triple<String, String, String>) {
         TimelineStateCodec.restoreVideo(snapshot.first, videoClipManager)
         TimelineStateCodec.restoreAudio(snapshot.second, audioClipManager)
-        restoreTextClips(snapshot.third)
+        restoreTextAndEffects(snapshot.third)
         selectedVideoClipId = videoClipManager.clips.firstOrNull()?.id
         selectedAudioClipId = null
         videoSelected = false
         refreshAudioTracks()
         refreshTextTracks()
+        refreshEffectTracks()
         if (::timeline.isInitialized) {
             timeline.selectClip(selectedVideoClipId)
             // setDuration mempertahankan tingkat zoom yang sedang dipakai.
@@ -4786,7 +4886,7 @@ class MainActivity : AppCompatActivity() {
             Triple(
                 TimelineStateCodec.encodeVideo(videoClipManager),
                 TimelineStateCodec.encodeAudio(audioClipManager),
-                encodeTextClips()
+                encodeTextAndEffects()
             )
         )
         restoreTimelineSnapshot(undoStack.removeLast())
@@ -4801,7 +4901,7 @@ class MainActivity : AppCompatActivity() {
             Triple(
                 TimelineStateCodec.encodeVideo(videoClipManager),
                 TimelineStateCodec.encodeAudio(audioClipManager),
-                encodeTextClips()
+                encodeTextAndEffects()
             )
         )
         restoreTimelineSnapshot(redoStack.removeLast())
