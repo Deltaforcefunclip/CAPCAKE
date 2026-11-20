@@ -13,7 +13,9 @@ vec3 screenBlend(vec3 baseColor, vec3 glowColor) {
 
 void main() {
     vec4 original = texture2D(sTexture, vTextureCoord);
-    vec2 stepSize = max(uTexelSize, vec2(0.000001)) * max(uBlurRadius, 0.0);
+    // Radius is expressed in normalized texture coordinates, not texel units.
+    // Multiplying by texel size here made the blur sub-pixel and practically invisible.
+    vec2 stepSize = vec2(max(uBlurRadius, 0.0));
 
     // Compact 9-tap cross blur. The blur is intentionally bounded so the
     // first GPU integration remains suitable for mobile preview/export.
