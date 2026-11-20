@@ -1597,7 +1597,8 @@ class MainActivity : AppCompatActivity() {
             videoClipManager,
             onTransitionClick = { transition -> showTransitionPicker(transition) },
             onChange = { position ->
-                // Media3 Scrubbing Mode mengelola seek cepat dan membuang target                // lama yang sudah tidak relevan. Kirim posisi terbaru langsung.
+                // Media3 Scrubbing Mode mengelola seek cepat dan membuang target
+                // lama yang sudah tidak relevan. Kirim posisi terbaru langsung.
                 pendingScrubPositionMs = position
                 if (!isTimelineScrubbing) {
                     isTimelineScrubbing = true
@@ -3196,7 +3197,8 @@ class MainActivity : AppCompatActivity() {
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 setPadding(dp(18), dp(8), dp(18), dp(8))
-                setTextColor(if (accent) 0xFFE5674E.toInt() else Color.LTGRAY)                background = android.graphics.drawable.GradientDrawable().apply {
+                setTextColor(if (accent) 0xFFE5674E.toInt() else Color.LTGRAY)
+                background = android.graphics.drawable.GradientDrawable().apply {
                     setColor(Color.TRANSPARENT)
                     setStroke(dp(1), if (accent) 0xFFE5674E.toInt() else Color.rgb(105, 105, 105))
                     cornerRadius = dp(4).toFloat()
@@ -4795,7 +4797,8 @@ class MainActivity : AppCompatActivity() {
                                     val ratioParts = selectedPreviewRatio.split(":")
                                     val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
                                     val frameW = playerView.width.coerceAtLeast(1).toFloat()
-                                    val frameH = playerView.height.coerceAtLeast(1).toFloat()                                    val frameAspect = frameW / frameH
+                                    val frameH = playerView.height.coerceAtLeast(1).toFloat()
+                                    val frameAspect = frameW / frameH
                                     val boxW: Float
                                     val boxH: Float
                                     if (outputAspect >= frameAspect) {
