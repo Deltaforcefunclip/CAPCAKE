@@ -67,6 +67,7 @@ class EffectTrackView(
     private val laneIndex: Int,
     private val allClips: () -> List<EffectClip>,
     private val onSelected: (EffectClip?) -> Unit,
+    private val onEditStarted: () -> Unit,
     private val onChanged: () -> Unit,
     private val onTimelineScrolled: (Long) -> Unit
 ) : View(context) {
@@ -88,6 +89,7 @@ class EffectTrackView(
     private var originDuration = 0L
     private var mode = 0 // 1 move, 2 trim start, 3 trim end
     private var moved = false
+    private var editStarted = false
 
     fun select(id: String?) { selectedId = id; invalidate() }
 
@@ -123,6 +125,7 @@ class EffectTrackView(
                 downX = event.x
                 lastX = event.x
                 moved = false
+                editStarted = false
                 touched = hit(event.x)
                 selectedId = touched?.id
                 mode = 0
@@ -145,6 +148,7 @@ class EffectTrackView(
             MotionEvent.ACTION_MOVE -> {
                 val clip = touched
                 if (clip != null && controller.pixelsPerMs > 0f) {
+                    if (!editStarted) { onEditStarted(); editStarted = true }
                     val delta = ((event.x - downX) / controller.pixelsPerMs).toLong()
                     when (mode) {
                         2 -> {
@@ -157,7 +161,6 @@ class EffectTrackView(
                         else -> clip.startTimeMs = (originStart + delta).coerceAtLeast(0L)
                     }
                     moved = true
-                    onChanged()
                     invalidate()
                 } else if (clip == null) {
                     val dx = event.x - lastX
@@ -175,7 +178,7 @@ class EffectTrackView(
                 return true
             }
             MotionEvent.ACTION_UP -> {
-                if (moved) onChanged()
+                if (moved && editStarted) onChanged()
                 touched = null
                 mode = 0
                 performClick()
