@@ -2585,9 +2585,17 @@ class MainActivity : AppCompatActivity() {
                             if (videoClipManager.remove(selectedVideoClipId)) {
                                 val nextClip = videoClipManager.clips.firstOrNull {
                                     it.timelineStartMs >= (removedClip?.timelineStartMs ?: 0L)
-                                } ?: videoClipManager.clips.lastOrNull()
-                                selectedVideoClipId = nextClip?.id
-                                val newPosition = nextClip?.timelineStartMs ?: videoClipManager.durationMs
+                                }
+                                val remainingLastClip = videoClipManager.clips.lastOrNull()
+                                val targetClip = nextClip ?: remainingLastClip
+                                selectedVideoClipId = targetClip?.id
+                                // Jika clip yang dihapus adalah clip paling akhir,
+                                // playhead harus menuju ujung clip terakhir yang tersisa.
+                                val newPosition = if (nextClip == null && remainingLastClip != null) {
+                                    remainingLastClip.timelineEndMs
+                                } else {
+                                    targetClip?.timelineStartMs ?: videoClipManager.durationMs
+                                }
                                 refreshEditedPreview(newPosition)
                                 saveCurrentProject()
                             }
@@ -5270,7 +5278,12 @@ class TimelineView(
         transitionHitBoxes.clear()
         val displayedClips = displayedClipPositions()
         displayedClips.forEachIndexed { index, (videoClip, clipStartMs) ->
-            val clipEndMs = clipStartMs + videoClip.timelineDurationMs
+            val baseClipEndMs = clipStartMs + videoClip.timelineDurationMs
+            val isLiveTrimmingRight = trimClipId == videoClip.id && trimEdge > 0
+            val previewExtensionMs = if (isLiveTrimmingRight) {
+                (trimDeltaMs / videoClip.speed.coerceIn(0.25f, 3f)).toLong().coerceAtLeast(0L)
+            } else 0L
+            val clipEndMs = baseClipEndMs + previewExtensionMs
             val clipLeft = timeToX(clipStartMs)
             val clipRight = timeToX(clipEndMs)
             val isMoving = isDraggingClip && videoClip.id == pressedClip?.id
@@ -5283,6 +5296,17 @@ class TimelineView(
                 trackBottom,
                 if (isMoving) 220 else 255
             )
+            // Tampilkan area pemulihan durasi secara langsung saat jari digerakkan.
+            if (previewExtensionMs > 0L) {
+                paint.style = Paint.Style.FILL
+                paint.alpha = 210
+                paint.color = Color.rgb(43, 105, 85)
+                canvas.drawRect(
+                    timeToX(baseClipEndMs), trackTop,
+                    clipRight, trackBottom, paint
+                )
+                paint.alpha = 255
+            }
 
             paint.alpha = if (isMoving) 230 else 255
             paint.color = if (isMoving || videoClip.id == selectedClipId) green else Color.WHITE
