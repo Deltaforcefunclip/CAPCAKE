@@ -20,6 +20,8 @@ class AudioTrackView(
     private val lane: AudioLane,
     private val onClipSelected: (AudioClip?) -> Unit,
     private val onClipMoved: () -> Unit,
+    private val onClipTrimStart: (AudioClip) -> Unit,
+    private val onClipTrimFinish: (AudioClip) -> Unit,
     private val onTimelineScrolled: (Long) -> Unit,
     private val onClipDropped: (AudioClip, Float) -> Unit
 ) : View(context) {
@@ -50,6 +52,11 @@ class AudioTrackView(
 
     private var selectedClipId: String? = null
     private var touchedClip: AudioClip? = null
+    private var gestureMode = 0 // 1 move, 2 trim start, 3 trim end
+    private var originStartMs = 0L
+    private var originDurationMs = 0L
+    private var originSourceStartMs = 0L
+    private var trimUndoStarted = false
     private var lastTouchX = 0f
     private var downX = 0f
     private var downY = 0f
@@ -155,6 +162,17 @@ class AudioTrackView(
 
             if (clip.id == selectedClipId) {
                 canvas.drawRoundRect(rect, 4f * density, 4f * density, selectedPaint)
+                val handleWidth = 10f * density
+                val handleTop = rect.top + 4f * density
+                val handleBottom = rect.bottom - 4f * density
+                canvas.drawRoundRect(
+                    RectF(rect.left + 2f * density, handleTop, rect.left + handleWidth, handleBottom),
+                    2f * density, 2f * density, selectedPaint
+                )
+                canvas.drawRoundRect(
+                    RectF(rect.right - handleWidth, handleTop, rect.right - 2f * density, handleBottom),
+                    2f * density, 2f * density, selectedPaint
+                )
             }
             canvas.save()
             canvas.clipRect(rect)
@@ -234,17 +252,69 @@ class AudioTrackView(
                 snapGuideTimeMs = null
                 touchedClip = clipAt(event.x)
                 selectedClipId = touchedClip?.id
-                onClipSelected(touchedClip)
-                if (touchedClip != null) {
+                gestureMode = 0
+                trimUndoStarted = false
+                touchedClip?.let { clip ->
+                    originStartMs = clip.startTimeMs
+                    originDurationMs = clip.durationMs
+                    originSourceStartMs = clip.sourceStartMs
+                    val left = controller.timeToX(clip.startTimeMs)
+                    val right = controller.timeToX(clip.endTimeMs)
+                    val edge = 26f * density
+                    gestureMode = when {
+                        event.x - left <= edge -> 2
+                        right - event.x <= edge -> 3
+                        else -> 1
+                    }
                     parent?.requestDisallowInterceptTouchEvent(true)
-                    handler.postDelayed(longPressRunnable, 500L)
+                    if (gestureMode == 1) handler.postDelayed(longPressRunnable, 500L)
                 }
+                onClipSelected(touchedClip)
                 invalidate()
                 return true
             }
 
             MotionEvent.ACTION_MOVE -> {
                 panVelocityTracker?.addMovement(event)
+                val trimClip = touchedClip
+                if (trimClip != null && (gestureMode == 2 || gestureMode == 3)) {
+                    if (controller.pixelsPerMs <= 0f) return true
+                    val deltaMs = ((event.x - downX) / controller.pixelsPerMs).toLong()
+                    if (deltaMs != 0L && !trimUndoStarted) {
+                        trimUndoStarted = true
+                        onClipTrimStart(trimClip)
+                    }
+                    if (gestureMode == 2) {
+                        val minStart = (originStartMs - originSourceStartMs).coerceAtLeast(0L)
+                        val proposedStart = (originStartMs + deltaMs)
+                            .coerceIn(minStart, originStartMs + originDurationMs - 100L)
+                        val proposedSourceStart = originSourceStartMs + (proposedStart - originStartMs)
+                        val proposedDuration = originStartMs + originDurationMs - proposedStart
+                        val overlaps = lane.clips.any { other ->
+                            other.id != trimClip.id &&
+                                proposedStart < other.endTimeMs &&
+                                proposedStart + proposedDuration > other.startTimeMs
+                        }
+                        if (!overlaps) {
+                            trimClip.startTimeMs = proposedStart
+                            trimClip.sourceStartMs = proposedSourceStart
+                            trimClip.durationMs = proposedDuration
+                        }
+                    } else {
+                        val maxDuration = (trimClip.sourceDurationMs - originSourceStartMs)
+                            .coerceAtLeast(100L)
+                        val proposedDuration = (originDurationMs + deltaMs).coerceIn(100L, maxDuration)
+                        val proposedEnd = originStartMs + proposedDuration
+                        val overlaps = lane.clips.any { other ->
+                            other.id != trimClip.id &&
+                                originStartMs < other.endTimeMs &&
+                                proposedEnd > other.startTimeMs
+                        }
+                        if (!overlaps) trimClip.durationMs = proposedDuration
+                    }
+                    invalidate()
+                    return true
+                }
                 if (!longPressTriggered) {
                     val dxFromDown = event.x - downX
                     if (abs(dxFromDown) > 8f * density) {
@@ -308,9 +378,14 @@ class AudioTrackView(
                 if (longPressTriggered) {
                     touchedClip?.let { onClipDropped(it, event.rawY) }
                 }
+                if (trimUndoStarted) {
+                    touchedClip?.let { onClipTrimFinish(it) }
+                }
                 isScrollingTimeline = false
                 longPressTriggered = false
                 touchedClip = null
+                gestureMode = 0
+                trimUndoStarted = false
                 snapGuideTimeMs = null
                 invalidate()
                 performClick()
@@ -327,6 +402,8 @@ class AudioTrackView(
                 longPressTriggered = false
                 parent?.requestDisallowInterceptTouchEvent(false)
                 touchedClip = null
+                gestureMode = 0
+                trimUndoStarted = false
                 snapGuideTimeMs = null
                 invalidate()
                 return true
