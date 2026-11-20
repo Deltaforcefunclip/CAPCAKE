@@ -1471,13 +1471,28 @@ class MainActivity : AppCompatActivity() {
         }
 
         playButton.setOnClickListener {
+            // Tombol play selalu melepas seleksi clip dari semua jenis layer.
+            selectedVideoClipId = null
+            selectedAudioClipId = null
+            selectedTextClipId = null
+            videoSelected = false
+            timeline.selectClip(null)
+            timeline.updateSelection(false)
+            clearAudioTrackSelection()
+            if (::thisTextTracksContainer.isInitialized) {
+                for (i in 0 until thisTextTracksContainer.childCount) {
+                    (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
+                }
+            }
+            playerView.foreground = null
+            updateTextPreview()
+            updateToolMenu()
 
             if (player.isPlaying) {
                 player.pause()
             } else {
                 player.play()
             }
-
             updatePlayButton()
         }
 
@@ -1803,6 +1818,22 @@ class MainActivity : AppCompatActivity() {
                         emptyPanActive = true
                         emptyPinchActive = false
                         emptyPanLastX = event.x
+                        // Ketukan/geseran di area kosong bawah layer melepas semua seleksi.
+                        selectedVideoClipId = null
+                        selectedAudioClipId = null
+                        selectedTextClipId = null
+                        videoSelected = false
+                        timeline.selectClip(null)
+                        timeline.updateSelection(false)
+                        clearAudioTrackSelection()
+                        if (::thisTextTracksContainer.isInitialized) {
+                            for (i in 0 until thisTextTracksContainer.childCount) {
+                                (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
+                            }
+                        }
+                        playerView.foreground = null
+                        updateTextPreview()
+                        updateToolMenu()
                         if (player.isPlaying) {
                             player.pause()
                             updatePlayButton()
@@ -5278,35 +5309,39 @@ class TimelineView(
         transitionHitBoxes.clear()
         val displayedClips = displayedClipPositions()
         displayedClips.forEachIndexed { index, (videoClip, clipStartMs) ->
-            val baseClipEndMs = clipStartMs + videoClip.timelineDurationMs
-            val isLiveTrimmingRight = trimClipId == videoClip.id && trimEdge > 0
-            val previewExtensionMs = if (isLiveTrimmingRight) {
-                (trimDeltaMs / videoClip.speed.coerceIn(0.25f, 3f)).toLong().coerceAtLeast(0L)
-            } else 0L
-            val clipEndMs = baseClipEndMs + previewExtensionMs
-            val clipLeft = timeToX(clipStartMs)
+            val isLiveTrimming = trimClipId == videoClip.id
+            val speed = videoClip.speed.coerceIn(0.25f, 3f)
+            val previewSourceDelta = if (isLiveTrimming) (trimDeltaMs * speed).toLong() else 0L
+            val previewClip = if (isLiveTrimming && trimEdge < 0) {
+                val left = previewSourceDelta.coerceIn(0L, (videoClip.durationMs - 1L).coerceAtLeast(0L))
+                videoClip.copy(
+                    sourceStartMs = videoClip.sourceStartMs + left,
+                    durationMs = (videoClip.durationMs - left).coerceAtLeast(1L)
+                )
+            } else if (isLiveTrimming && trimEdge > 0) {
+                val maxDuration = (videoClip.sourceDurationMs - videoClip.sourceStartMs).coerceAtLeast(1L)
+                val newDuration = (videoClip.durationMs + previewSourceDelta)
+                    .coerceIn(1L, maxDuration)
+                videoClip.copy(durationMs = newDuration)
+            } else videoClip
+            val previewClipStartMs = if (isLiveTrimming && trimEdge < 0) {
+                clipStartMs + (videoClip.timelineDurationMs - previewClip.timelineDurationMs)
+            } else clipStartMs
+            val clipEndMs = previewClipStartMs + previewClip.timelineDurationMs
+            val clipLeft = timeToX(previewClipStartMs)
             val clipRight = timeToX(clipEndMs)
             val isMoving = isDraggingClip && videoClip.id == pressedClip?.id
 
+            // Thumbnail dan batas clip memakai salinan sementara agar pemendekan
+            // maupun pemulihan durasi terlihat mengikuti jari sebelum dilepas.
             drawClipThumbnails(
                 canvas,
-                videoClip,
-                clipStartMs,
+                previewClip,
+                previewClipStartMs,
                 trackTop,
                 trackBottom,
                 if (isMoving) 220 else 255
             )
-            // Tampilkan area pemulihan durasi secara langsung saat jari digerakkan.
-            if (previewExtensionMs > 0L) {
-                paint.style = Paint.Style.FILL
-                paint.alpha = 210
-                paint.color = Color.rgb(43, 105, 85)
-                canvas.drawRect(
-                    timeToX(baseClipEndMs), trackTop,
-                    clipRight, trackBottom, paint
-                )
-                paint.alpha = 255
-            }
 
             paint.alpha = if (isMoving) 230 else 255
             paint.color = if (isMoving || videoClip.id == selectedClipId) green else Color.WHITE
@@ -5325,7 +5360,7 @@ class TimelineView(
 
             // Handle trim putih pada klip terpilih (non-drag).
             if (videoClip.id == selectedClipId && !isDraggingClip) {
-                val handleWidth = 5f * density
+                val handleWidth = 9f * density
                 paint.color = Color.WHITE
                 canvas.drawRoundRect(
                     RectF(clipLeft, trackTop + 3f * density, clipLeft + handleWidth, trackBottom - 3f * density),
