@@ -1792,6 +1792,7 @@ class MainActivity : AppCompatActivity() {
                 selectedAudioClipId = null
                 clearAudioTrackSelection()
                 selectedTextClipId = null
+                selectedEffectClipId = null
                 if (::thisTextTracksContainer.isInitialized) {
                     for (i in 0 until thisTextTracksContainer.childCount) {
                         (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
@@ -1823,6 +1824,7 @@ class MainActivity : AppCompatActivity() {
                     selectedAudioClipId = null
                     clearAudioTrackSelection()
                     selectedTextClipId = null
+                    selectedEffectClipId = null
                     if (::thisTextTracksContainer.isInitialized) {
                         for (i in 0 until thisTextTracksContainer.childCount) {
                             (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
@@ -2063,6 +2065,7 @@ class MainActivity : AppCompatActivity() {
                                 selectedVideoClipId = null
                                 selectedAudioClipId = null
                                 selectedTextClipId = null
+                                selectedEffectClipId = null
                                 videoSelected = false
                                 timeline.selectClip(null)
                                 timeline.updateSelection(false)
@@ -3012,6 +3015,7 @@ class MainActivity : AppCompatActivity() {
                         if (activeLayerGroup != "AUDIO") {
                             activeLayerGroup = "AUDIO"
                             selectedTextClipId = null
+                            selectedEffectClipId = null
                             selectedAudioClipId = null
                             updateLayerGroupVisibility()
                             updateToolMenu()
@@ -3022,6 +3026,7 @@ class MainActivity : AppCompatActivity() {
                         activeLayerGroup = "TEXT"
                         selectedAudioClipId = null
                         selectedTextClipId = null
+                        selectedEffectClipId = null
                         updateLayerGroupVisibility()
                         updateToolMenu()
                         showTextEditor()
@@ -3031,6 +3036,7 @@ class MainActivity : AppCompatActivity() {
                         activeLayerGroup = if (pair.second == "Overlay") "OVERLAY" else "STICKER"
                         selectedAudioClipId = null
                         selectedTextClipId = null
+                        selectedEffectClipId = null
                         updateLayerGroupVisibility()
                         updateToolMenu()
                     }
@@ -4437,6 +4443,7 @@ class MainActivity : AppCompatActivity() {
                     // Satu pilihan aktif untuk seluruh jenis layer.
                     selectedVideoClipId = null
                     selectedTextClipId = null
+                    selectedEffectClipId = null
                     videoSelected = false
                     timeline.selectClip(null)
                     timeline.updateSelection(false)
