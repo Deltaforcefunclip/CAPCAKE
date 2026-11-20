@@ -1220,7 +1220,8 @@ class MainActivity : AppCompatActivity() {
             durationMs = durationMs,
             filePath = uri.toString(),
             sourceStartMs = 0L,
-            name = displayName
+            name = displayName,
+            sourceDurationMs = durationMs
         )
 
         audioClipManager.addClip(clip)
@@ -4087,6 +4088,15 @@ class MainActivity : AppCompatActivity() {
                 onClipMoved = {
                     syncAudioPlayback()
                 },
+                onClipTrimStart = { clip ->
+                    pushUndoSnapshot()
+                    audioPlayers[clip.id]?.pause()
+                },
+                onClipTrimFinish = { clip ->
+                    audioPlayers.remove(clip.id)?.release()
+                    saveCurrentProject()
+                    syncAudioPlayback()
+                },
                 onTimelineScrolled = { position ->
                     pendingScrubPositionMs = position
                     if (!isTimelineScrubbing) {
@@ -4475,8 +4485,20 @@ class MainActivity : AppCompatActivity() {
                     )
                     .build()
                 created.setMediaItem(audioItem)
-                created.prepare()
+                created.addListener(object : Player.Listener {
+                    override fun onPlaybackStateChanged(playbackState: Int) {
+                        if (playbackState != Player.STATE_READY || !player.isPlaying) return
+                        val positionNow = currentTimelinePosition()
+                        if (positionNow >= clip.startTimeMs && positionNow < clip.endTimeMs) {
+                            val offset = ((positionNow - clip.startTimeMs).coerceAtLeast(0L) * clip.speed)
+                                .toLong().coerceAtLeast(0L)
+                            created.seekTo(offset)
+                            created.playWhenReady = true
+                        }
+                    }
+                })
                 audioPlayers[clip.id] = created
+                created.prepare()
             }
 
             instance.volume = clip.volume
