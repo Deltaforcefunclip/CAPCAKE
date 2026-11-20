@@ -133,6 +133,8 @@ class MainActivity : AppCompatActivity() {
     private val audioTrackViews = mutableMapOf<String, AudioTrackView>()
     private val audioPlayers = mutableMapOf<String, ExoPlayer>()
     private var exportTransformer: Transformer? = null
+    // Penyalinan file dan pembacaan metadata hasil export tidak boleh membebani UI thread.
+    private val exportFinalizeExecutor = Executors.newSingleThreadExecutor()
     private var exportDialog: androidx.appcompat.app.AlertDialog? = null
     private var exportProgressBar: ProgressBar? = null
     private var exportProgressText: TextView? = null
@@ -5038,39 +5040,54 @@ class MainActivity : AppCompatActivity() {
                 exportTransformer = null
                 handler.removeCallbacks(exportProgressRunnable)
                 exportProgressBar?.progress = 100
-                exportProgressText?.text = "Menyimpan video…"
-                var completedInfo: Triple<String, Long, Pair<Pair<Int, Int>?, Float?>>? = null
-                try {
-                    val outputName = saveVideo(output)
-                    val outputSize = output.length()
-                    val actualFps = readExportedVideoFps(output)
-                    val actualResolution = readExportedVideoResolution(output)
-                    completedInfo = Triple(
-                        outputName,
-                        outputSize,
-                        actualResolution to actualFps
-                    )
-                } catch (error: Exception) {
-                    showMessage("Gagal menyimpan video: ${error.message}")
-                } finally {
-                    output.delete()
-                    // Tutup dialog progres lebih dahulu agar dialog hasil tidak
-                    // dianimasikan bersamaan dengan jendela yang masih terbuka.
-                    exportDialog?.dismiss()
-                    exportDialog = null
-                    exportProgressBar = null
-                    exportProgressText = null
-                }
-                completedInfo?.let { info ->
-                    // Tampilkan setelah frame UI berikutnya agar transisi dialog bersih.
+                exportProgressText?.text = "Menyiapkan hasil export…"
+
+                // Copy file ke MediaStore dan pembacaan metadata dapat memakan waktu,
+                // terutama untuk video besar. Jalankan di worker agar animasi UI
+                // dan dialog hasil tidak tersendat oleh pekerjaan I/O.
+                exportFinalizeExecutor.execute {
+                    var completedInfo: Triple<String, Long, Pair<Pair<Int, Int>?, Float?>>? = null
+                    var failureMessage: String? = null
+                    try {
+                        val outputName = saveVideo(output)
+                        val outputSize = output.length()
+                        val actualFps = readExportedVideoFps(output)
+                        val actualResolution = readExportedVideoResolution(output)
+                        completedInfo = Triple(
+                            outputName,
+                            outputSize,
+                            actualResolution to actualFps
+                        )
+                    } catch (error: Exception) {
+                        failureMessage = "Gagal menyimpan video: ${error.message}"
+                    } finally {
+                        output.delete()
+                    }
+
                     handler.post {
-                        if (!isFinishing && !isDestroyed) {
-                            showExportCompletedDialog(
-                                info.first,
-                                info.second,
-                                info.third.first,
-                                info.third.second
-                            )
+                        // Tutup progress dialog di UI thread, lalu tampilkan hasil
+                        // setelah satu frame agar kedua dialog tidak bertumpuk.
+                        exportDialog?.dismiss()
+                        exportDialog = null
+                        exportProgressBar = null
+                        exportProgressText = null
+
+                        if (isFinishing || isDestroyed) return@post
+                        failureMessage?.let {
+                            showMessage(it)
+                            return@post
+                        }
+                        completedInfo?.let { info ->
+                            handler.post {
+                                if (!isFinishing && !isDestroyed) {
+                                    showExportCompletedDialog(
+                                        info.first,
+                                        info.second,
+                                        info.third.first,
+                                        info.third.second
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -5424,6 +5441,7 @@ class MainActivity : AppCompatActivity() {
         saveCurrentProject()
 
         handler.removeCallbacksAndMessages(null)
+        exportFinalizeExecutor.shutdown()
 
         playbackListener?.let {
             player.removeListener(it)
