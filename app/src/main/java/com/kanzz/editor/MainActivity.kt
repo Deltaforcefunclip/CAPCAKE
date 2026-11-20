@@ -5987,6 +5987,14 @@ class TimelineView(
             val clipRight = timeToX(clipEndMs)
             val isMoving = isDraggingClip && videoClip.id == pressedClip?.id
 
+            // Lewati seluruh proses thumbnail dan dekorasi untuk klip yang
+            // benar-benar berada di luar viewport. Margin menjaga handle/tepi
+            // klip tetap tergambar ketika baru masuk atau keluar layar.
+            val visibleMargin = 24f * density
+            if (clipRight < -visibleMargin || clipLeft > width + visibleMargin) {
+                return@forEachIndexed
+            }
+
             // Thumbnail dan batas clip memakai salinan sementara agar pemendekan
             // maupun pemulihan durasi terlihat mengikuti jari sebelum dilepas.
             drawClipThumbnails(
@@ -6037,6 +6045,11 @@ class TimelineView(
                     ?: VideoTransition(leftClipId = videoClip.id, rightClipId = next.id)
                 val x = timeToX(clipStartMs + videoClip.timelineDurationMs)
                 val halfSize = 10.8f * density // 20% lebih besar dari ukuran sebelumnya.
+                // Tombol transisi di luar layar tidak perlu digambar atau
+                // dimasukkan ke daftar hit-test sampai masuk viewport.
+                if (x + halfSize < 0f || x - halfSize > width.toFloat()) {
+                    return@forEachIndexed
+                }
                 val box = RectF(
                     x - halfSize,
                     (trackTop + trackBottom) / 2f - halfSize,
