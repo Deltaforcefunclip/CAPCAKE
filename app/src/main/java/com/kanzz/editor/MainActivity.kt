@@ -99,6 +99,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var genericLayerPlaceholder: TextView
     private lateinit var fontPickerPanel: LinearLayout
     private lateinit var fontPickerAnchorView: View
+    private lateinit var previewFrameContainer: FrameLayout
     private lateinit var editorOverlayRoot: FrameLayout
     private var fontPickerOriginalFont: String? = null
     private var fontPickerClipId: String? = null
@@ -1194,6 +1195,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.BLACK)
         }
         fontPickerAnchorView = previewFrame
+        previewFrameContainer = previewFrame
 
         playerView = PlayerView(this).apply {
 
@@ -3320,7 +3322,7 @@ class MainActivity : AppCompatActivity() {
         val activeIds = additional.map { it.id }.toSet()
         val staleIds = additionalTextPreviewViews.keys.filter { it !in activeIds }
         staleIds.forEach { id ->
-            additionalTextPreviewViews.remove(id)?.let { fontPickerAnchorView.removeView(it) }
+            additionalTextPreviewViews.remove(id)?.let { previewFrameContainer.removeView(it) }
         }
 
         additional.forEach { clip ->
@@ -3335,11 +3337,11 @@ class MainActivity : AppCompatActivity() {
                     isFocusable = false
                 }.also { created ->
                     val selectionIndex = if (::textSelectionOverlay.isInitialized) {
-                        fontPickerAnchorView.indexOfChild(textSelectionOverlay).coerceAtLeast(0)
+                        previewFrameContainer.indexOfChild(textSelectionOverlay).coerceAtLeast(0)
                     } else {
-                        fontPickerAnchorView.childCount
+                        previewFrameContainer.childCount
                     }
-                    fontPickerAnchorView.addView(
+                    previewFrameContainer.addView(
                         created,
                         selectionIndex,
                         FrameLayout.LayoutParams(-2, -2, Gravity.CENTER)
