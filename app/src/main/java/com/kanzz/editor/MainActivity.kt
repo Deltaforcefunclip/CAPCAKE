@@ -4512,25 +4512,129 @@ class MainActivity : AppCompatActivity() {
             showMessage("Tidak dapat membaca informasi FPS dan resolusi video sumber.")
             return
         }
-        val knownFps = profiles.map { it.frameRate }.filter { it > 0f }
-        val fpsUniform = knownFps.size == profiles.size &&
-            knownFps.all { kotlin.math.abs(it - knownFps.first()) < 0.5f }
-        val resolutionUniform = profiles.map { it.resolutionLabel }.distinct().size == 1
-        val sameSourceProfile = fpsUniform && resolutionUniform
-        val details = profiles.mapIndexed { index, item ->
-            "Sumber ${index + 1}: ${item.resolutionLabel} • ${item.fpsLabel}"
-        }.joinToString("\n")
-        val mode = if (sameSourceProfile) {
-            "MODE FPS SUMBER TERSEDIA\nSemua sumber memiliki FPS dan resolusi yang sama."
-        } else {
-            "MODE CAMPURAN TERDETEKSI\nFPS atau resolusi sumber berbeda. Pilihan FPS 30/60 dan resolusi output akan disediakan pada tahap pengaturan export."
+
+        // Satukan nilai FPS yang nyaris sama (mis. 29.97 dan 30) dan resolusi identik.
+        val fpsOptions = profiles.map { it.frameRate }
+            .filter { it > 0f }
+            .sorted()
+            .fold(mutableListOf<Float>()) { result, value ->
+                if (result.none { kotlin.math.abs(it - value) < 0.5f }) result.add(value)
+                result
+            }
+        val resolutionOptions = profiles
+            .distinctBy { "${it.width}x${it.height}" }
+            .sortedWith(compareBy<ExportSourceProfile> { it.width * it.height }.thenBy { it.width })
+
+        if (fpsOptions.isEmpty() || resolutionOptions.isEmpty()) {
+            showMessage("FPS atau resolusi sumber tidak dapat dibaca.")
+            return
         }
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Analisis sumber export")
-            .setMessage("$details\n\n$mode")
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            setBackgroundColor(Color.BLACK)
+        }
+
+        fun addSectionTitle(label: String) {
+            content.addView(TextView(this).apply {
+                text = label
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(green)
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(4), dp(12), dp(4), dp(6))
+            }, LinearLayout.LayoutParams(-1, dp(34)))
+        }
+
+        fun addOption(group: RadioGroup, label: String, checked: Boolean) {
+            val radio = RadioButton(this).apply {
+                text = label
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                buttonTintList = android.content.res.ColorStateList.valueOf(green)
+                setPadding(dp(10), dp(2), dp(10), dp(2))
+                isChecked = checked
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(29, 29, 29))
+                    setStroke(dp(1), Color.rgb(55, 55, 55))
+                    cornerRadius = dp(7).toFloat()
+                }
+            }
+            val params = RadioGroup.LayoutParams(-1, dp(42))
+            params.bottomMargin = dp(6)
+            group.addView(radio, params)
+        }
+
+        addSectionTitle("FPS VIDEO")
+        val fpsGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        fpsOptions.forEachIndexed { index, fps ->
+            val label = if (kotlin.math.abs(fps - fps.toInt()) < 0.05f) {
+                "${fps.toInt()} FPS"
+            } else {
+                String.format(Locale.US, "%.2f FPS", fps)
+            }
+            addOption(fpsGroup, label, index == 0)
+        }
+        content.addView(fpsGroup)
+
+        addSectionTitle("RESOLUSI VIDEO")
+        val resolutionGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        resolutionOptions.forEachIndexed { index, profile ->
+            addOption(resolutionGroup, profile.resolutionLabel, index == 0)
+        }
+        content.addView(resolutionGroup)
+
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            addView(content, android.view.ViewGroup.LayoutParams(-1, -2))
+        }
+
+        val titleView = TextView(this).apply {
+            text = "PENGATURAN EXPORT"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            setPadding(dp(20), dp(16), dp(20), dp(8))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setCustomTitle(titleView)
+            .setView(scroll)
             .setNegativeButton("BATAL", null)
-            .setPositiveButton("LANJUT EXPORT") { _, _ -> startExportVideo() }
-            .show()
+            .setPositiveButton("EXPORT", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(
+                android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(15, 15, 15))
+                    setStroke(dp(1), Color.rgb(55, 55, 55))
+                    cornerRadius = dp(12).toFloat()
+                }
+            )
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
+                setTextColor(green)
+                setOnClickListener {
+                    val fpsIndex = fpsGroup.checkedRadioButtonId
+                    val resolutionIndex = resolutionGroup.checkedRadioButtonId
+                    val selectedFps = fpsOptions.getOrElse(
+                        fpsGroup.indexOfChild(fpsGroup.findViewById(fpsIndex))
+                    ) { fpsOptions.first() }
+                    val selectedResolution = resolutionOptions.getOrElse(
+                        resolutionGroup.indexOfChild(resolutionGroup.findViewById(resolutionIndex))
+                    ) { resolutionOptions.first() }
+                    dialog.dismiss()
+                    startExportVideo(
+                        selectedFps,
+                        selectedResolution.width,
+                        selectedResolution.height
+                    )
+                }
+            }
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)
+                ?.setTextColor(Color.LTGRAY)
+        }
+        dialog.show()
     }
 
     private fun exportVideo() {
@@ -4545,7 +4649,7 @@ class MainActivity : AppCompatActivity() {
         analyzeExportSources(::showExportSourceAnalysis)
     }
 
-    private fun startExportVideo() {
+    private fun startExportVideo(outputFps: Float, outputWidth: Int, outputHeight: Int) {
 
         val editedItems = try {
             videoClipManager.clips.map { clip ->
@@ -4584,6 +4688,8 @@ class MainActivity : AppCompatActivity() {
                             audioProcessors,
                             buildList {
                                 add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 4f)))
+                                // Batasi frame rate setelah perubahan speed agar 2x tidak menggandakan FPS.
+                                add(FrameDropEffect.createDefaultFrameDropEffect(outputFps))
 
                                 // Bentuk kanvas output terlebih dahulu. Setelah kanvas terbentuk,
                                 // zoom/crop diterapkan pada kanvas tersebut, bukan pada sumber 16:9.
@@ -4771,6 +4877,15 @@ class MainActivity : AppCompatActivity() {
                                     }
                                     add(OverlayEffect(listOf(overlay)))
                                 }
+
+                                // Samakan dimensi akhir semua klip ke resolusi yang dipilih.
+                                add(
+                                    Presentation.createForWidthAndHeight(
+                                        outputWidth,
+                                        outputHeight,
+                                        Presentation.LAYOUT_SCALE_TO_FIT
+                                    )
+                                )
                             }
                         )
                     )
