@@ -122,6 +122,7 @@ class EffectTrackView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
                 downX = event.x
                 lastX = event.x
                 moved = false
@@ -148,6 +149,10 @@ class EffectTrackView(
             MotionEvent.ACTION_MOVE -> {
                 val clip = touched
                 if (clip != null && controller.pixelsPerMs > 0f) {
+                    if (abs(event.x - downX) < 4f * density) {
+                        lastX = event.x
+                        return true
+                    }
                     if (!editStarted) { onEditStarted(); editStarted = true }
                     val delta = ((event.x - downX) / controller.pixelsPerMs).toLong()
                     when (mode) {
@@ -179,12 +184,14 @@ class EffectTrackView(
             }
             MotionEvent.ACTION_UP -> {
                 if (moved && editStarted) onChanged()
+                parent?.requestDisallowInterceptTouchEvent(false)
                 touched = null
                 mode = 0
                 performClick()
                 return true
             }
             MotionEvent.ACTION_CANCEL -> {
+                parent?.requestDisallowInterceptTouchEvent(false)
                 touched = null
                 mode = 0
                 return true
