@@ -14,6 +14,9 @@ import android.provider.OpenableColumns
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.ScaleGestureDetector
+import android.view.VelocityTracker
+import android.animation.ValueAnimator
+import android.view.animation.DecelerateInterpolator
 import android.view.View
 import android.widget.*
 import androidx.activity.result.contract.ActivityResultContracts
@@ -1689,16 +1692,18 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(-1, dp(100))
         )
 
-        // Area kosong di bawah layer tetap bisa dipakai menggeser seluruh timeline.
+        // Area kosong di bawah layer mendukung drag langsung dan momentum seperti galeri.
         audioTimelineFrame = object : FrameLayout(this) {
             private var emptyPanActive = false
             private var emptyPanLastX = 0f
             private var emptyPinchActive = false
+            private var panVelocityTracker: VelocityTracker? = null
+            private var flingAnimator: ValueAnimator? = null
+
             private val emptyScaleDetector = ScaleGestureDetector(
                 this@MainActivity,
                 object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                     override fun onScale(detector: ScaleGestureDetector): Boolean {
-                        // Faktor pangkat membuat zoom lebih responsif pada gerakan pendek.
                         val responsiveFactor = Math.pow(
                             detector.scaleFactor.toDouble(), 1.8
                         ).toFloat().coerceIn(0.65f, 1.55f)
@@ -1720,6 +1725,60 @@ class MainActivity : AppCompatActivity() {
                 return y > visibleHeight + dp(2)
             }
 
+            private fun applyPanDelta(deltaX: Float) {
+                if (deltaX == 0f) return
+                timelineController.offsetPx -= deltaX
+                timelineController.clampOffset()
+                val position = timelineController.xToTime(width / 2f)
+                timelineController.positionMs = position
+                pendingScrubPositionMs = position
+                if (!isTimelineScrubbing) {
+                    isTimelineScrubbing = true
+                    if (player.isPlaying) player.pause()
+                    player.setScrubbingModeEnabled(true)
+                    updatePlayButton()
+                }
+                seekTimelinePosition(position)
+                handler.removeCallbacks(scrubFinishRunnable)
+                handler.postDelayed(scrubFinishRunnable, 140L)
+                updateTime()
+                timeline.postInvalidateOnAnimation()
+                audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
+                invalidateTextTrackViews()
+            }
+
+            private fun startPanFling(velocityX: Float) {
+                val velocity = velocityX.coerceIn(-5000f, 5000f)
+                if (kotlin.math.abs(velocity) < 450f) return
+
+                // Jarak momentum dihitung dari kecepatan awal dengan perlambatan bertahap.
+                val duration = (kotlin.math.abs(velocity) * 0.16f)
+                    .toInt().coerceIn(220, 850)
+                val totalDistance = velocity * duration / 2000f
+                var previousFraction = 0f
+                flingAnimator?.cancel()
+                flingAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+                    this.duration = duration.toLong()
+                    interpolator = DecelerateInterpolator(1.8f)
+                    addUpdateListener { animator ->
+                        val fraction = animator.animatedValue as Float
+                        val delta = totalDistance * (fraction - previousFraction)
+                        previousFraction = fraction
+                        applyPanDelta(delta)
+                    }
+                    addListener(object : android.animation.AnimatorListenerAdapter() {
+                        override fun onAnimationEnd(animation: android.animation.Animator) {
+                            if (flingAnimator === this@apply) {
+                                handler.removeCallbacks(scrubFinishRunnable)
+                                handler.postDelayed(scrubFinishRunnable, 140L)
+                                flingAnimator = null
+                            }
+                        }
+                    })
+                    start()
+                }
+            }
+
             override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) {
                     emptyPanActive = isBelowVisibleLanes(event.y)
@@ -1735,6 +1794,11 @@ class MainActivity : AppCompatActivity() {
             override fun onTouchEvent(event: MotionEvent): Boolean {
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
+                        flingAnimator?.cancel()
+                        flingAnimator = null
+                        handler.removeCallbacks(scrubFinishRunnable)
+                        panVelocityTracker?.recycle()
+                        panVelocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
                         emptyPanActive = true
                         emptyPinchActive = false
                         emptyPanLastX = event.x
@@ -1747,45 +1811,52 @@ class MainActivity : AppCompatActivity() {
                         return true
                     }
                     MotionEvent.ACTION_POINTER_DOWN -> {
+                        panVelocityTracker?.addMovement(event)
                         emptyPinchActive = true
                         emptyScaleDetector.onTouchEvent(event)
                         return true
                     }
                     MotionEvent.ACTION_MOVE -> {
+                        panVelocityTracker?.addMovement(event)
                         emptyScaleDetector.onTouchEvent(event)
                         if (emptyPinchActive || event.pointerCount > 1) return true
                         if (emptyPanActive) {
                             val dx = event.x - emptyPanLastX
-                            timelineController.offsetPx -= dx
-                            timelineController.clampOffset()
-                            val position = timelineController.xToTime(width / 2f)
-                            timelineController.positionMs = position
                             emptyPanLastX = event.x
-                            pendingScrubPositionMs = position
-                            if (!isTimelineScrubbing) {
-                                isTimelineScrubbing = true
-                                if (player.isPlaying) player.pause()
-                                player.setScrubbingModeEnabled(true)
-                                updatePlayButton()
-                            }
-                            seekTimelinePosition(position)
-                            handler.removeCallbacks(scrubFinishRunnable)
-                            handler.postDelayed(scrubFinishRunnable, 140L)
-                            updateTime()
-                            timeline.postInvalidateOnAnimation()
-                            audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
-                            invalidateTextTrackViews()
+                            applyPanDelta(dx)
                         }
                         return true
                     }
                     MotionEvent.ACTION_POINTER_UP -> {
+                        panVelocityTracker?.addMovement(event)
                         emptyScaleDetector.onTouchEvent(event)
                         return true
                     }
-                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    MotionEvent.ACTION_UP -> {
+                        panVelocityTracker?.addMovement(event)
                         emptyScaleDetector.onTouchEvent(event)
+                        if (!emptyPinchActive) {
+                            panVelocityTracker?.computeCurrentVelocity(1000)
+                            startPanFling(panVelocityTracker?.xVelocity ?: 0f)
+                        } else {
+                            handler.removeCallbacks(scrubFinishRunnable)
+                            handler.postDelayed(scrubFinishRunnable, 140L)
+                        }
+                        panVelocityTracker?.recycle()
+                        panVelocityTracker = null
                         emptyPanActive = false
                         emptyPinchActive = false
+                        parent?.requestDisallowInterceptTouchEvent(false)
+                        return true
+                    }
+                    MotionEvent.ACTION_CANCEL -> {
+                        emptyScaleDetector.onTouchEvent(event)
+                        panVelocityTracker?.recycle()
+                        panVelocityTracker = null
+                        emptyPanActive = false
+                        emptyPinchActive = false
+                        handler.removeCallbacks(scrubFinishRunnable)
+                        handler.postDelayed(scrubFinishRunnable, 140L)
                         parent?.requestDisallowInterceptTouchEvent(false)
                         return true
                     }
