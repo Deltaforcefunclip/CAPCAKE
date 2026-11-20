@@ -94,6 +94,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioTimelineFrame: FrameLayout
     private lateinit var previewTextOverlay: TextView
     private lateinit var textSelectionOverlay: View
+    private val additionalTextPreviewViews = mutableMapOf<String, TextView>()
     private lateinit var thisTextTracksContainer: LinearLayout
     private lateinit var genericLayerPlaceholder: TextView
     private lateinit var fontPickerPanel: LinearLayout
@@ -3291,19 +3292,63 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateTextPreview() {
         if (!::previewTextOverlay.isInitialized) return
+
         val position = currentTimelinePosition()
         val selected = textClipManager.find(selectedTextClipId)
-        val active = selected ?: textClipManager.clips.lastOrNull { position >= it.startTimeMs && position < it.endTimeMs }
-        previewTextOverlay.text = active?.text ?: ""
-        previewTextOverlay.setTextColor(active?.color ?: Color.WHITE)
-        previewTextOverlay.alpha = active?.opacity ?: 1f
-        previewTextOverlay.typeface = active?.let { getLibraryTypeface(it.fontName, it.bold) } ?: Typeface.DEFAULT
-        previewTextOverlay.visibility = if (active == null) View.GONE else View.VISIBLE
-        previewTextOverlay.scaleX = active?.scale ?: 1f
-        previewTextOverlay.scaleY = active?.scale ?: 1f
-        previewTextOverlay.rotation = active?.rotation ?: 0f
-        previewTextOverlay.translationX = active?.positionX ?: 0f
-        previewTextOverlay.translationY = active?.positionY ?: 0f
+        val activeClips = textClipManager.clips.filter {
+            position >= it.startTimeMs && position < it.endTimeMs
+        }
+        // Clip terpilih tetap menjadi target transformasi. Clip aktif lain tetap
+        // dirender sebagai TextView terpisah agar dua layer dapat tampil bersamaan.
+        val primary = selected ?: activeClips.lastOrNull()
+        fun applyText(view: TextView, clip: TextClip?) {
+            view.text = clip?.text ?: ""
+            view.setTextColor(clip?.color ?: Color.WHITE)
+            view.alpha = clip?.opacity ?: 1f
+            view.typeface = clip?.let { getLibraryTypeface(it.fontName, it.bold) } ?: Typeface.DEFAULT
+            view.visibility = if (clip == null) View.GONE else View.VISIBLE
+            view.scaleX = clip?.scale ?: 1f
+            view.scaleY = clip?.scale ?: 1f
+            view.rotation = clip?.rotation ?: 0f
+            view.translationX = clip?.positionX ?: 0f
+            view.translationY = clip?.positionY ?: 0f
+        }
+
+        applyText(previewTextOverlay, primary)
+
+        val additional = activeClips.filter { it.id != primary?.id }
+        val activeIds = additional.map { it.id }.toSet()
+        val staleIds = additionalTextPreviewViews.keys.filter { it !in activeIds }
+        staleIds.forEach { id ->
+            additionalTextPreviewViews.remove(id)?.let { previewFrame.removeView(it) }
+        }
+
+        additional.forEach { clip ->
+            val view = additionalTextPreviewViews.getOrPut(clip.id) {
+                TextView(this).apply {
+                    gravity = Gravity.CENTER
+                    textAlignment = View.TEXT_ALIGNMENT_CENTER
+                    textSize = 32f
+                    setShadowLayer(dp(3).toFloat(), dp(1).toFloat(), dp(2).toFloat(), Color.BLACK)
+                    setPadding(dp(18), dp(12), dp(18), dp(12))
+                    isClickable = false
+                    isFocusable = false
+                }.also { created ->
+                    val selectionIndex = if (::textSelectionOverlay.isInitialized) {
+                        previewFrame.indexOfChild(textSelectionOverlay).coerceAtLeast(0)
+                    } else {
+                        previewFrame.childCount
+                    }
+                    previewFrame.addView(
+                        created,
+                        selectionIndex,
+                        FrameLayout.LayoutParams(-2, -2, Gravity.CENTER)
+                    )
+                }
+            }
+            applyText(view, clip)
+        }
+
         if (::textSelectionOverlay.isInitialized) {
             textSelectionOverlay.visibility = if (selected != null) View.VISIBLE else View.GONE
             textSelectionOverlay.invalidate()
@@ -4113,7 +4158,10 @@ class MainActivity : AppCompatActivity() {
                                         override fun onDraw(canvas: Canvas, presentationTimeUs: Long) {
                                             try {
                                                 canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-                                                val globalMs = videoClip.timelineStartMs + presentationTimeUs / 1000L
+                                                // Timestamp dari frame processor sudah berada pada garis waktu sequence.
+                                                // Jangan menambahkan timelineStartMs lagi: itu menggandakan offset
+                                                // setiap clip setelah clip pertama.
+                                                val globalMs = presentationTimeUs / 1000L
                                                 val previewAspect = previewW / previewH
                                                 val previewContentW: Float
                                                 val previewContentH: Float
