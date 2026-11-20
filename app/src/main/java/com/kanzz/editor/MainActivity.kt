@@ -1937,6 +1937,7 @@ class MainActivity : AppCompatActivity() {
                 val visibleHeight = when (activeLayerGroup) {
                     "AUDIO" -> (audioTracksContainer.height - audioTracksScroll.scrollY).coerceAtLeast(0)
                     "TEXT" -> (thisTextTracksContainer.height - textTracksScroll.scrollY).coerceAtLeast(0)
+                    "EFFECT" -> (thisEffectTracksContainer.height - effectTracksScroll.scrollY).coerceAtLeast(0)
                     else -> 0
                 }
                 return y > visibleHeight + dp(2)
