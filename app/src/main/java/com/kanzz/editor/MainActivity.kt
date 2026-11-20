@@ -1587,6 +1587,10 @@ class MainActivity : AppCompatActivity() {
                 timeline.updateSelection(false)
                 playerView.foreground = null
                 updateTextPreview()
+                if (tappedClip == null && player.isPlaying) {
+                    player.pause()
+                    updatePlayButton()
+                }
                 updateToolMenu()
             },
             onViewportChanged = {
@@ -1687,6 +1691,23 @@ class MainActivity : AppCompatActivity() {
         audioTimelineFrame = object : FrameLayout(this) {
             private var emptyPanActive = false
             private var emptyPanLastX = 0f
+            private var emptyPinchActive = false
+            private val emptyScaleDetector = ScaleGestureDetector(
+                this@MainActivity,
+                object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
+                    override fun onScale(detector: ScaleGestureDetector): Boolean {
+                        // Faktor pangkat membuat zoom lebih responsif pada gerakan pendek.
+                        val responsiveFactor = Math.pow(
+                            detector.scaleFactor.toDouble(), 1.8
+                        ).toFloat().coerceIn(0.65f, 1.55f)
+                        timelineController.zoomAroundPlayhead(responsiveFactor)
+                        timeline.invalidate()
+                        audioTrackViews.values.forEach { it.invalidate() }
+                        invalidateTextTrackViews()
+                        return true
+                    }
+                }
+            )
 
             private fun isBelowVisibleLanes(y: Float): Boolean {
                 val visibleHeight = when (activeLayerGroup) {
@@ -1703,6 +1724,9 @@ class MainActivity : AppCompatActivity() {
                     emptyPanLastX = event.x
                     return emptyPanActive
                 }
+                if (emptyPanActive && event.actionMasked == MotionEvent.ACTION_POINTER_DOWN) {
+                    emptyPinchActive = true
+                }
                 return emptyPanActive
             }
 
@@ -1710,11 +1734,24 @@ class MainActivity : AppCompatActivity() {
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         emptyPanActive = true
+                        emptyPinchActive = false
                         emptyPanLastX = event.x
+                        if (player.isPlaying) {
+                            player.pause()
+                            updatePlayButton()
+                        }
+                        emptyScaleDetector.onTouchEvent(event)
                         parent?.requestDisallowInterceptTouchEvent(true)
                         return true
                     }
+                    MotionEvent.ACTION_POINTER_DOWN -> {
+                        emptyPinchActive = true
+                        emptyScaleDetector.onTouchEvent(event)
+                        return true
+                    }
                     MotionEvent.ACTION_MOVE -> {
+                        emptyScaleDetector.onTouchEvent(event)
+                        if (emptyPinchActive || event.pointerCount > 1) return true
                         if (emptyPanActive) {
                             val dx = event.x - emptyPanLastX
                             timelineController.offsetPx -= dx
@@ -1739,8 +1776,14 @@ class MainActivity : AppCompatActivity() {
                         }
                         return true
                     }
+                    MotionEvent.ACTION_POINTER_UP -> {
+                        emptyScaleDetector.onTouchEvent(event)
+                        return true
+                    }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        emptyScaleDetector.onTouchEvent(event)
                         emptyPanActive = false
+                        emptyPinchActive = false
                         parent?.requestDisallowInterceptTouchEvent(false)
                         return true
                     }
@@ -2450,8 +2493,7 @@ class MainActivity : AppCompatActivity() {
                                 val newPosition = nextClip?.timelineStartMs ?: 0L
                                 refreshEditedPreview(newPosition)
                                 saveCurrentProject()
-                                showMessage("Klip dihapus dari preview. Bagian setelahnya otomatis merapat.")
-                            } else showMessage("Pilih klip video yang ingin dihapus.")
+                            }
                         }
                         updateToolMenu()
                     }
@@ -2870,6 +2912,10 @@ class MainActivity : AppCompatActivity() {
                 allClips = { textClipManager.clips },
                 onSelected = { clip ->
                     selectedTextClipId = clip?.id
+                    if (clip == null && player.isPlaying) {
+                        player.pause()
+                        updatePlayButton()
+                    }
                     selectedAudioClipId = null
                     clearAudioTrackSelection()
                     selectedVideoClipId = null
@@ -3492,6 +3538,10 @@ class MainActivity : AppCompatActivity() {
                 lane,
                 onClipSelected = { clip ->
                     selectedAudioClipId = clip?.id
+                    if (clip == null && player.isPlaying) {
+                        player.pause()
+                        updatePlayButton()
+                    }
                     // Satu pilihan aktif untuk seluruh jenis layer.
                     selectedVideoClipId = null
                     selectedTextClipId = null
