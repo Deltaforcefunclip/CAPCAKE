@@ -1597,8 +1597,7 @@ class MainActivity : AppCompatActivity() {
             videoClipManager,
             onTransitionClick = { transition -> showTransitionPicker(transition) },
             onChange = { position ->
-                // Media3 Scrubbing Mode mengelola seek cepat dan membuang target
-                // lama yang sudah tidak relevan. Kirim posisi terbaru langsung.
+                // Media3 Scrubbing Mode mengelola seek cepat dan membuang target                // lama yang sudah tidak relevan. Kirim posisi terbaru langsung.
                 pendingScrubPositionMs = position
                 if (!isTimelineScrubbing) {
                     isTimelineScrubbing = true
@@ -3197,8 +3196,7 @@ class MainActivity : AppCompatActivity() {
                 typeface = android.graphics.Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 setPadding(dp(18), dp(8), dp(18), dp(8))
-                setTextColor(if (accent) 0xFFE5674E.toInt() else Color.LTGRAY)
-                background = android.graphics.drawable.GradientDrawable().apply {
+                setTextColor(if (accent) 0xFFE5674E.toInt() else Color.LTGRAY)                background = android.graphics.drawable.GradientDrawable().apply {
                     setColor(Color.TRANSPARENT)
                     setStroke(dp(1), if (accent) 0xFFE5674E.toInt() else Color.rgb(105, 105, 105))
                     cornerRadius = dp(4).toFloat()
@@ -4797,8 +4795,7 @@ class MainActivity : AppCompatActivity() {
                                     val ratioParts = selectedPreviewRatio.split(":")
                                     val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
                                     val frameW = playerView.width.coerceAtLeast(1).toFloat()
-                                    val frameH = playerView.height.coerceAtLeast(1).toFloat()
-                                    val frameAspect = frameW / frameH
+                                    val frameH = playerView.height.coerceAtLeast(1).toFloat()                                    val frameAspect = frameW / frameH
                                     val boxW: Float
                                     val boxH: Float
                                     if (outputAspect >= frameAspect) {
@@ -5741,11 +5738,33 @@ class TimelineView(
      * Saat drag berlangsung, hitung susunan magnetic secara langsung tanpa
      * mengubah data project sampai jari dilepas.
      */
+    // Cache posisi dasar klip. Nilai hanya dihitung ulang ketika susunan,
+    // durasi, atau posisi timeline klip benar-benar berubah.
+    private var cachedClipPositions = emptyList<Pair<VideoClip, Long>>()
+    private var cachedClipPositionsKey = Long.MIN_VALUE
+
+    private fun clipPositionsKey(): Long {
+        var key = 17L
+        videoClips.clips.forEach { clip ->
+            key = key * 31L + clip.id.hashCode()
+            key = key * 31L + clip.timelineStartMs
+            key = key * 31L + clip.timelineDurationMs
+        }
+        return key * 31L + videoClips.clips.size
+    }
+
     private fun displayedClipPositions(): List<Pair<VideoClip, Long>> {
         if (!isDraggingClip || pressedClip == null) {
-            return videoClips.clips.map { it to it.timelineStartMs }
+            val key = clipPositionsKey()
+            if (key != cachedClipPositionsKey) {
+                cachedClipPositions = videoClips.clips.map { it to it.timelineStartMs }
+                cachedClipPositionsKey = key
+            }
+            return cachedClipPositions
         }
 
+        // Saat drag, susunan sementara tetap dihitung langsung agar magnetic
+        // snapping dan preview posisi klip selalu mengikuti jari.
         val moving = pressedClip!!
         val remaining = videoClips.clips.filter { it.id != moving.id }
         var cursor = 0L
