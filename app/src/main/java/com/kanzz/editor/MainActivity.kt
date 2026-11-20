@@ -4,6 +4,8 @@ package com.kanzz.editor
 import android.content.ContentValues
 import android.graphics.*
 import android.media.MediaMetadataRetriever
+import android.media.MediaExtractor
+import android.media.MediaFormat
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -60,6 +62,21 @@ import kotlin.math.max
 import kotlin.math.min
 import kotlin.math.atan2
 import kotlin.math.sqrt
+
+
+private data class ExportSourceProfile(
+    val uri: String,
+    val width: Int,
+    val height: Int,
+    val frameRate: Float
+) {
+    val resolutionLabel: String get() = "${width}×${height}"
+    val fpsLabel: String get() = if (frameRate > 0f) {
+        String.format(Locale.US, "%.2f FPS", frameRate)
+    } else {
+        "FPS tidak diketahui"
+    }
+}
 
 private data class ExportTextSnapshot(
     val startTimeMs: Long,
@@ -4431,6 +4448,91 @@ class MainActivity : AppCompatActivity() {
     // EXPORT
     // =====================================
 
+
+    /**
+     * Membaca karakteristik sumber asli, bukan karakteristik clip hasil trim/split.
+     * Dua file berbeda tetap satu kelompok jika FPS dan resolusinya sama.
+     */
+    private fun inspectExportSource(uriString: String): ExportSourceProfile? {
+        val uri = Uri.parse(uriString)
+        var width = 0
+        var height = 0
+        var frameRate = 0f
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(this, uri, null)
+            for (index in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(index)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (!mime.startsWith("video/")) continue
+                if (format.containsKey(MediaFormat.KEY_WIDTH)) width = format.getInteger(MediaFormat.KEY_WIDTH)
+                if (format.containsKey(MediaFormat.KEY_HEIGHT)) height = format.getInteger(MediaFormat.KEY_HEIGHT)
+                if (format.containsKey(MediaFormat.KEY_FRAME_RATE)) {
+                    frameRate = format.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat()
+                }
+                break
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { extractor.release() } catch (_: Exception) {}
+        }
+
+        if (width <= 0 || height <= 0 || frameRate <= 0f) {
+            val retriever = MediaMetadataRetriever()
+            try {
+                retriever.setDataSource(this, uri)
+                if (width <= 0) width = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+                )?.toIntOrNull() ?: 0
+                if (height <= 0) height = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+                )?.toIntOrNull() ?: 0
+                if (frameRate <= 0f) frameRate = retriever.extractMetadata(
+                    MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE
+                )?.toFloatOrNull() ?: 0f
+            } catch (_: Exception) {
+            } finally {
+                try { retriever.release() } catch (_: Exception) {}
+            }
+        }
+        if (width <= 0 || height <= 0) return null
+        return ExportSourceProfile(uriString, width, height, frameRate)
+    }
+
+    private fun analyzeExportSources(onComplete: (List<ExportSourceProfile>) -> Unit) {
+        val sourceUris = videoClipManager.clips.map { it.sourceUri }.distinct()
+        Thread {
+            val profiles = sourceUris.mapNotNull { inspectExportSource(it) }
+            runOnUiThread { onComplete(profiles) }
+        }.start()
+    }
+
+    private fun showExportSourceAnalysis(profiles: List<ExportSourceProfile>) {
+        if (profiles.isEmpty()) {
+            showMessage("Tidak dapat membaca informasi FPS dan resolusi video sumber.")
+            return
+        }
+        val knownFps = profiles.map { it.frameRate }.filter { it > 0f }
+        val fpsUniform = knownFps.size == profiles.size &&
+            knownFps.all { kotlin.math.abs(it - knownFps.first()) < 0.5f }
+        val resolutionUniform = profiles.map { it.resolutionLabel }.distinct().size == 1
+        val sameSourceProfile = fpsUniform && resolutionUniform
+        val details = profiles.mapIndexed { index, item ->
+            "Sumber ${index + 1}: ${item.resolutionLabel} • ${item.fpsLabel}"
+        }.joinToString("\n")
+        val mode = if (sameSourceProfile) {
+            "MODE FPS SUMBER TERSEDIA\nSemua sumber memiliki FPS dan resolusi yang sama."
+        } else {
+            "MODE CAMPURAN TERDETEKSI\nFPS atau resolusi sumber berbeda. Pilihan FPS 30/60 dan resolusi output akan disediakan pada tahap pengaturan export."
+        }
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Analisis sumber export")
+            .setMessage("$details\n\n$mode")
+            .setNegativeButton("BATAL", null)
+            .setPositiveButton("LANJUT EXPORT") { _, _ -> startExportVideo() }
+            .show()
+    }
+
     private fun exportVideo() {
         if (exportTransformer != null) {
             showMessage("Ekspor sedang berjalan.")
@@ -4440,6 +4542,10 @@ class MainActivity : AppCompatActivity() {
             showMessage("Tidak ada klip video untuk diekspor.")
             return
         }
+        analyzeExportSources(::showExportSourceAnalysis)
+    }
+
+    private fun startExportVideo() {
 
         val editedItems = try {
             videoClipManager.clips.map { clip ->
