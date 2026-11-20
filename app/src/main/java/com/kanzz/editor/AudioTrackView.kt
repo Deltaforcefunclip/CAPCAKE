@@ -8,6 +8,10 @@ import android.os.Handler
 import android.os.Looper
 import android.view.MotionEvent
 import android.view.View
+import android.view.VelocityTracker
+import android.animation.ValueAnimator
+import android.view.animation.DecelerateInterpolator
+import android.animation.AnimatorListenerAdapter
 import kotlin.math.abs
 
 class AudioTrackView(
@@ -54,6 +58,42 @@ class AudioTrackView(
     private var longPressTriggered = false
     private var isScrollingTimeline = false
     private var snapGuideTimeMs: Long? = null
+    private var panVelocityTracker: VelocityTracker? = null
+    private var panFlingAnimator: ValueAnimator? = null
+
+    private fun applyTimelinePan(deltaX: Float) {
+        if (deltaX == 0f) return
+        controller.offsetPx -= deltaX
+        controller.clampOffset()
+        val position = controller.xToTime(width / 2f)
+        controller.positionMs = position
+        onTimelineScrolled(position)
+        invalidate()
+    }
+
+    private fun startTimelineFling(velocityX: Float) {
+        val velocity = velocityX.coerceIn(-5000f, 5000f)
+        if (abs(velocity) < 350f) return
+        val duration = (abs(velocity) * 0.16f).toInt().coerceIn(220, 850)
+        val distance = velocity * duration / 2000f
+        var previous = 0f
+        panFlingAnimator?.cancel()
+        panFlingAnimator = ValueAnimator.ofFloat(0f, 1f).apply {
+            this.duration = duration.toLong()
+            interpolator = DecelerateInterpolator(1.8f)
+            addUpdateListener {
+                val fraction = it.animatedValue as Float
+                applyTimelinePan(distance * (fraction - previous))
+                previous = fraction
+            }
+            addListener(object : AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    if (panFlingAnimator === this@apply) panFlingAnimator = null
+                }
+            })
+            start()
+        }
+    }
     private var lastAppliedStartMs = Long.MIN_VALUE
     private val waveforms = mutableMapOf<String, FloatArray>()
 
@@ -182,6 +222,10 @@ class AudioTrackView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                panFlingAnimator?.cancel()
+                panFlingAnimator = null
+                panVelocityTracker?.recycle()
+                panVelocityTracker = VelocityTracker.obtain().also { it.addMovement(event) }
                 downX = event.x
                 downY = event.y
                 lastTouchX = event.x
@@ -200,6 +244,7 @@ class AudioTrackView(
             }
 
             MotionEvent.ACTION_MOVE -> {
+                panVelocityTracker?.addMovement(event)
                 if (!longPressTriggered) {
                     val dxFromDown = event.x - downX
                     if (abs(dxFromDown) > 8f * density) {
@@ -211,13 +256,8 @@ class AudioTrackView(
                     }
                     if (isScrollingTimeline) {
                         val dx = event.x - lastTouchX
-                        controller.offsetPx -= dx
-                        controller.clampOffset()
-                        val position = controller.xToTime(width / 2f)
-                        controller.positionMs = position
+                        applyTimelinePan(dx)
                         lastTouchX = event.x
-                        onTimelineScrolled(position)
-                        invalidate()
                     }
                     return true
                 }
@@ -256,7 +296,14 @@ class AudioTrackView(
             }
 
             MotionEvent.ACTION_UP -> {
+                panVelocityTracker?.addMovement(event)
                 handler.removeCallbacks(longPressRunnable)
+                if (isScrollingTimeline) {
+                    panVelocityTracker?.computeCurrentVelocity(1000)
+                    startTimelineFling(panVelocityTracker?.xVelocity ?: 0f)
+                }
+                panVelocityTracker?.recycle()
+                panVelocityTracker = null
                 parent?.requestDisallowInterceptTouchEvent(false)
                 if (longPressTriggered) {
                     touchedClip?.let { onClipDropped(it, event.rawY) }
@@ -271,6 +318,10 @@ class AudioTrackView(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                panFlingAnimator?.cancel()
+                panFlingAnimator = null
+                panVelocityTracker?.recycle()
+                panVelocityTracker = null
                 handler.removeCallbacks(longPressRunnable)
                 isScrollingTimeline = false
                 longPressTriggered = false
