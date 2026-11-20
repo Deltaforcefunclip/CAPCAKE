@@ -3165,37 +3165,34 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(12), dp(10), dp(12), dp(10))
             setBackgroundColor(Color.rgb(15, 15, 15))
         }
-        // Kolom teks berada di atas; aksi batal/konfirmasi berada tepat di bawahnya.
         root.addView(input, LinearLayout.LayoutParams(-1, dp(82)))
+
         val actionRow = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.END or Gravity.CENTER_VERTICAL
         }
-        val cancel = TextView(this).apply {
-            text = "✕"
-            textSize = 24f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(Color.rgb(55, 55, 55))
-                cornerRadius = dp(7).toFloat()
+        fun outlinedAction(label: String, accent: Boolean): TextView {
+            return TextView(this).apply {
+                text = label
+                textSize = 13f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setPadding(dp(18), dp(8), dp(18), dp(8))
+                setTextColor(if (accent) 0xFFE5674E.toInt() else Color.LTGRAY)
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.TRANSPARENT)
+                    setStroke(dp(1), if (accent) 0xFFE5674E.toInt() else Color.rgb(105, 105, 105))
+                    cornerRadius = dp(4).toFloat()
+                }
             }
         }
-        val confirm = TextView(this).apply {
-            text = "✓"
-            textSize = 26f
-            gravity = Gravity.CENTER
-            setTextColor(Color.BLACK)
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(0xFFE5674E.toInt())
-                cornerRadius = dp(7).toFloat()
-            }
-        }
-        val actionParams = LinearLayout.LayoutParams(dp(48), dp(44))
-        actionParams.topMargin = dp(8)
-        actionParams.marginStart = dp(8)
-        actionRow.addView(cancel, actionParams)
-        actionRow.addView(confirm, LinearLayout.LayoutParams(dp(48), dp(44)).apply {
+        val cancel = outlinedAction("CANCEL", false)
+        val confirm = outlinedAction("CONFIRM", true)
+        actionRow.addView(cancel, LinearLayout.LayoutParams(-2, -2).apply {
+            topMargin = dp(8)
+            marginEnd = dp(8)
+        })
+        actionRow.addView(confirm, LinearLayout.LayoutParams(-2, -2).apply {
             topMargin = dp(8)
         })
         root.addView(actionRow, LinearLayout.LayoutParams(-1, -2))
@@ -3220,32 +3217,35 @@ class MainActivity : AppCompatActivity() {
             }
         }
         dialog.setOnShowListener {
-            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-            dialog.window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE)
-            dialog.window?.setLayout(
-                android.view.WindowManager.LayoutParams.MATCH_PARENT,
-                android.view.WindowManager.LayoutParams.WRAP_CONTENT
-            )
-            // Letakkan panel tepat di atas kontrol play di area bawah editor.
-            playButton.post {
-                val location = IntArray(2)
-                playButton.getLocationOnScreen(location)
-                val screenHeight = resources.displayMetrics.heightPixels
-                val params = dialog.window?.attributes
-                if (params != null) {
-                    params.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
-                    params.y = (screenHeight - location[1] + dp(6)).coerceAtLeast(dp(6))
-                    dialog.window?.attributes = params
-                }
+            dialog.window?.apply {
+                setBackgroundDrawableResource(android.R.color.transparent)
+                setLayout(
+                    android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                    android.view.WindowManager.LayoutParams.WRAP_CONTENT
+                )
+                setSoftInputMode(
+                    android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+                        android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+                )
+                val params = attributes
+                params.gravity = Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL
+                params.y = 0
+                attributes = params
             }
             input.requestFocus()
         }
         dialog.show()
-        dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-        dialog.window?.setLayout(
-            android.view.WindowManager.LayoutParams.MATCH_PARENT,
-            android.view.WindowManager.LayoutParams.WRAP_CONTENT
-        )
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(
+                android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            )
+            setSoftInputMode(
+                android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+                    android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE
+            )
+        }
         input.post {
             val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
             imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
