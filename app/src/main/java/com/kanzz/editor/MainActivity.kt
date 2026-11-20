@@ -131,6 +131,10 @@ class MainActivity : AppCompatActivity() {
     private var fontPickerOriginalFont: String? = null
     private var fontPickerClipId: String? = null
     private val textClipManager = TextClipManager()
+    private val effectClipManager = EffectClipManager()
+    private var selectedEffectClipId: String? = null
+    private lateinit var effectTracksScroll: ScrollView
+    private lateinit var thisEffectTracksContainer: LinearLayout
     private var selectedTextClipId: String? = null
     private var textDragUndoSaved = false
     private var activeLayerGroup = "AUDIO"
@@ -427,6 +431,8 @@ class MainActivity : AppCompatActivity() {
                     // Project baru dimulai tanpa audio clip lama.
                     audioClipManager.clear()
                     textClipManager.clips.clear()
+                    effectClipManager.clips.clear()
+                    selectedEffectClipId = null
                     selectedTextClipId = null
                     activeLayerGroup = "AUDIO"
                     videoClipManager.clips.clear()
@@ -734,6 +740,7 @@ class MainActivity : AppCompatActivity() {
                     .remove("video_timeline_${project.id}")
                     .remove("audio_timeline_${project.id}")
                     .remove("text_timeline_${project.id}")
+                    .remove("effect_timeline_${project.id}")
                     .apply()
 
                 saveProjects()
@@ -807,6 +814,8 @@ class MainActivity : AppCompatActivity() {
         // Audio clip belum disimpan ke data project.
         audioClipManager.clear()
         textClipManager.clips.clear()
+        effectClipManager.clips.clear()
+        selectedEffectClipId = null
         selectedTextClipId = null
         activeLayerGroup = "AUDIO"
         videoClipManager.clips.clear()
@@ -825,6 +834,7 @@ class MainActivity : AppCompatActivity() {
             audioClipManager
         )
         restoreTextClips(prefs.getString("text_timeline_${project.id}", null))
+        restoreEffectClips(prefs.getString("effect_timeline_${project.id}", null))
 
         try {
 
@@ -1737,6 +1747,12 @@ class MainActivity : AppCompatActivity() {
             overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
             addView(audioTracksContainer, android.view.ViewGroup.LayoutParams(-1, -2))
         }
+        val effectTracksContainer = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setBackgroundColor(bg) }
+        effectTracksScroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false; isFillViewport = false
+            addView(effectTracksContainer, android.view.ViewGroup.LayoutParams(-1, -2)); visibility = View.GONE
+        }
+        thisEffectTracksContainer = effectTracksContainer
         val textTracksContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -2093,6 +2109,7 @@ class MainActivity : AppCompatActivity() {
             textTracksScroll,
             FrameLayout.LayoutParams(-1, -1)
         )
+        audioTimelineFrame.addView(effectTracksScroll, FrameLayout.LayoutParams(-1, -1))
         genericLayerPlaceholder = TextView(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), 0, dp(12), 0)
@@ -2127,6 +2144,7 @@ class MainActivity : AppCompatActivity() {
 
         refreshAudioTracks()
         refreshTextTracks()
+        refreshEffectTracks()
 
         // PANEL FONT dibuat sebagai overlay terpisah agar tidak mengubah ukuran
         // root dan tidak mendorong menu utama ke luar layar.
@@ -2767,7 +2785,9 @@ class MainActivity : AppCompatActivity() {
 
         toolsContainer.removeAllViews()
 
-        val names = if (selectedTextClipId != null) {
+        val names = if (selectedEffectClipId != null) {
+            listOf("◐" to "Opasitas", "✂" to "Potong", "▣" to "Duplikat", "⌫" to "Hapus")
+        } else if (selectedTextClipId != null) {
             listOf(
                 "✎" to "Edit Text", "Aa" to "Font", "▣" to "Salin",
                 "●" to "Warna", "▤" to "Gaya", "✂" to "Potong",
@@ -2961,7 +2981,7 @@ class MainActivity : AppCompatActivity() {
                     "Rasio" -> {
                         showAspectRatioPicker()
                     }
-                    "Effect" -> showEffectPanel()
+                    "Effect" -> showEffectPicker()
 
                     "Audio" -> {
                         if (activeLayerGroup != "AUDIO") {
@@ -3459,6 +3479,7 @@ class MainActivity : AppCompatActivity() {
         if (!::audioTracksScroll.isInitialized || !::textTracksScroll.isInitialized) return
         audioTracksScroll.visibility = if (activeLayerGroup == "AUDIO") View.VISIBLE else View.GONE
         textTracksScroll.visibility = if (activeLayerGroup == "TEXT") View.VISIBLE else View.GONE
+        effectTracksScroll.visibility = if (activeLayerGroup == "EFFECT") View.VISIBLE else View.GONE
         if (::genericLayerPlaceholder.isInitialized) {
             genericLayerPlaceholder.visibility = if (activeLayerGroup == "OVERLAY" || activeLayerGroup == "STICKER") View.VISIBLE else View.GONE
             genericLayerPlaceholder.text = if (activeLayerGroup == "OVERLAY") "Overlay Layer" else "Sticker Layer"
@@ -4807,6 +4828,7 @@ class MainActivity : AppCompatActivity() {
                     TimelineStateCodec.encodeAudio(audioClipManager)
                 )
                 .putString("text_timeline_${it.id}", encodeTextClips())
+                .putString("effect_timeline_${it.id}", encodeEffectClips())
                 .apply()
         }
 
