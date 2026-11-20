@@ -2603,7 +2603,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         val target = positionMs.coerceIn(0L, videoClipManager.durationMs)
-        val clip = videoClipManager.clips.lastOrNull { target <= it.timelineEndMs }
+        val clip = videoClipManager.clips.lastOrNull { target < it.timelineEndMs }
             ?: videoClipManager.clips.last()
         val localTimelineMs = (target - clip.timelineStartMs).coerceIn(0L, clip.timelineDurationMs)
         val sourceOffset = (localTimelineMs * clip.speed.coerceIn(0.25f, 4f)).toLong()
