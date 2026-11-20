@@ -5,7 +5,6 @@ uniform sampler2D sTexture;
 uniform float uIntensity;
 uniform float uBlurRadius;
 uniform float uWarmth;
-uniform vec2 uTexelSize;
 
 vec3 screenBlend(vec3 baseColor, vec3 glowColor) {
     return 1.0 - ((1.0 - baseColor) * (1.0 - glowColor));
