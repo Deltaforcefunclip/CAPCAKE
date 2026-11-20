@@ -4136,20 +4136,7 @@ class MainActivity : AppCompatActivity() {
                                     val previewW = fontPickerAnchorView.width.coerceAtLeast(1).toFloat()
                                     val previewH = fontPickerAnchorView.height.coerceAtLeast(1).toFloat()
                                     val previewTextSize = previewTextOverlay.textSize
-                                    val exportOutputAspect = runCatching {
-                                        if (selectedPreviewRatio.isNotBlank()) {
-                                            val parts = selectedPreviewRatio.split(":")
-                                            parts[0].toFloat() / parts[1].toFloat()
-                                        } else {
-                                            val size = player.videoSize
-                                            if (size.width > 0 && size.height > 0) {
-                                                size.width.toFloat() * size.pixelWidthHeightRatio /
-                                                    size.height.toFloat()
-                                            } else {
-                                                previewW / previewH
-                                            }
-                                        }
-                                    }.getOrDefault(previewW / previewH).coerceAtLeast(0.01f)
+
 
                                     val overlay = object : CanvasOverlay(true) {
                                         private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
@@ -4164,15 +4151,20 @@ class MainActivity : AppCompatActivity() {
                                                 // Jangan menambahkan timelineStartMs lagi: itu menggandakan offset
                                                 // setiap clip setelah clip pertama.
                                                 val globalMs = presentationTimeUs / 1000L
+                                                // Gunakan rasio frame yang benar-benar sedang diproses.
+                                                // Pada proyek gabungan, tiap sumber video bisa memiliki
+                                                // rasio berbeda; player.videoSize hanya mewakili satu sumber.
+                                                val frameAspect = canvas.width.toFloat() /
+                                                    canvas.height.toFloat().coerceAtLeast(1f)
                                                 val previewAspect = previewW / previewH
                                                 val previewContentW: Float
                                                 val previewContentH: Float
-                                                if (exportOutputAspect >= previewAspect) {
+                                                if (frameAspect >= previewAspect) {
                                                     previewContentW = previewW
-                                                    previewContentH = previewW / exportOutputAspect
+                                                    previewContentH = previewW / frameAspect
                                                 } else {
                                                     previewContentH = previewH
-                                                    previewContentW = previewH * exportOutputAspect
+                                                    previewContentW = previewH * frameAspect
                                                 }
                                                 val sx = canvas.width / previewContentW.coerceAtLeast(1f)
                                                 val sy = canvas.height / previewContentH.coerceAtLeast(1f)
