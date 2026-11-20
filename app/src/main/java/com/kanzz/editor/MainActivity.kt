@@ -4521,6 +4521,8 @@ class MainActivity : AppCompatActivity() {
         }
 
         data class ResolutionChoice(val width: Int, val height: Int, val label: String)
+
+        // Rasio kanvas proyek; jika belum dipilih, gunakan rasio sumber utama.
         val ratio = selectedPreviewRatio.split(":").let { parts ->
             if (parts.size == 2) {
                 (parts[0].toFloatOrNull() ?: 0f) /
@@ -4528,28 +4530,62 @@ class MainActivity : AppCompatActivity() {
             } else 0f
         }.takeIf { it > 0f } ?: profiles.first().width.toFloat() /
             profiles.first().height.toFloat().coerceAtLeast(1f)
-        fun widthForHeight(height: Int): Int =
-            (((height * ratio).toInt() / 2) * 2).coerceAtLeast(2)
+
+        fun even(value: Float): Int =
+            ((value.toInt() / 2) * 2).coerceAtLeast(2)
+
+        fun dimensionsForHeight(height: Int): Pair<Int, Int> {
+            val width = even(height * ratio)
+            return width to height
+        }
 
         val resolutionOptions = mutableListOf<ResolutionChoice>()
         listOf(1080, 720).forEach { height ->
-            val width = widthForHeight(height)
+            val (width, actualHeight) = dimensionsForHeight(height)
             resolutionOptions.add(
-                ResolutionChoice(width, height, "${height}p • ${width}×${height}")
+                ResolutionChoice(width, actualHeight, "${height}p • ${width}×${actualHeight}")
             )
         }
-        profiles.sortedWith(compareBy<ExportSourceProfile> { it.width * it.height }
-            .thenBy { it.width }).forEach { profile ->
-            if (resolutionOptions.none {
-                    it.width == profile.width && it.height == profile.height
-                }) {
+
+        // Sumber Video: pertahankan dimensi asli dari masing-masing resolusi sumber unik.
+        profiles.distinctBy { it.width to it.height }
+            .sortedWith(compareBy<ExportSourceProfile> { it.width * it.height }
+                .thenBy { it.width })
+            .forEach { profile ->
                 resolutionOptions.add(
                     ResolutionChoice(
-                        profile.width, profile.height, profile.resolutionLabel
+                        profile.width,
+                        profile.height,
+                        "Sumber Video • ${profile.resolutionLabel}"
                     )
                 )
             }
-        }
+
+        // Sumber Rasio: gunakan rasio kanvas proyek dan ukuran terbesar yang masih
+        // muat di dalam dimensi salah satu video sumber, tanpa memperbesar sumber.
+        val sourceRatioDimensions = profiles.mapNotNull { profile ->
+            val sourceAspect = profile.width.toFloat() /
+                profile.height.toFloat().coerceAtLeast(1f)
+            val width: Int
+            val height: Int
+            if (ratio >= sourceAspect) {
+                width = even(profile.width.toFloat())
+                height = even(width / ratio)
+            } else {
+                height = even(profile.height.toFloat())
+                width = even(height * ratio)
+            }
+            if (width > 0 && height > 0) width to height else null
+        }.maxByOrNull { it.first.toLong() * it.second.toLong() }
+            ?: (even(profiles.first().height * ratio) to profiles.first().height)
+
+        resolutionOptions.add(
+            ResolutionChoice(
+                sourceRatioDimensions.first,
+                sourceRatioDimensions.second,
+                "Sumber Rasio • ${sourceRatioDimensions.first}×${sourceRatioDimensions.second}"
+            )
+        )
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
@@ -4990,16 +5026,16 @@ class MainActivity : AppCompatActivity() {
                 exportProgressBar?.progress = 100
                 exportProgressText?.text = "Menyimpan video…"
                 try {
-                    saveVideo(output)
+                    val outputName = saveVideo(output)
+                    val outputSize = output.length()
                     val actualFps = readExportedVideoFps(output)
-                    val selectedLabel = outputFps?.let { "${it.toInt()} FPS dipilih" } ?: "FPS AUTO"
-                    val actualLabel = actualFps?.let { " • hasil ${String.format(Locale.US, "%.2f", it)} FPS" }
-                        ?: " • FPS hasil tidak terbaca"
-                    Toast.makeText(
-                        this@MainActivity,
-                        "Video tersimpan • $selectedLabel$actualLabel",
-                        Toast.LENGTH_LONG
-                    ).show()
+                    val actualResolution = readExportedVideoResolution(output)
+                    showExportCompletedDialog(
+                        outputName,
+                        outputSize,
+                        actualResolution,
+                        actualFps
+                    )
                 } catch (error: Exception) {
                     showMessage("Gagal menyimpan video: ${error.message}")
                 } finally {
@@ -5108,6 +5144,135 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun readExportedVideoResolution(file: File): Pair<Int, Int>? {
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(file.absolutePath)
+            for (index in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(index)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (mime.startsWith("video/") &&
+                    format.containsKey(MediaFormat.KEY_WIDTH) &&
+                    format.containsKey(MediaFormat.KEY_HEIGHT)
+                ) {
+                    val width = format.getInteger(MediaFormat.KEY_WIDTH)
+                    val height = format.getInteger(MediaFormat.KEY_HEIGHT)
+                    if (width > 0 && height > 0) return width to height
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { extractor.release() } catch (_: Exception) {}
+        }
+
+        val retriever = MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(file.absolutePath)
+            val width = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+            )?.toIntOrNull() ?: 0
+            val height = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+            )?.toIntOrNull() ?: 0
+            if (width > 0 && height > 0) width to height else null
+        } catch (_: Exception) {
+            null
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
+        }
+    }
+
+    private fun formatExportFileSize(bytes: Long): String {
+        val mb = bytes / (1024.0 * 1024.0)
+        return if (mb >= 1024.0) {
+            String.format(Locale.US, "%.2f GB", mb / 1024.0)
+        } else {
+            String.format(Locale.US, "%.2f MB", mb)
+        }
+    }
+
+    private fun showExportCompletedDialog(
+        fileName: String,
+        fileSize: Long,
+        resolution: Pair<Int, Int>?,
+        fps: Float?
+    ) {
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(10), dp(20), dp(8))
+            setBackgroundColor(Color.rgb(15, 15, 15))
+        }
+
+        fun addInfoRow(label: String, value: String) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(12), dp(9), dp(12), dp(9))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(29, 29, 29))
+                    setStroke(dp(1), Color.rgb(55, 55, 55))
+                    cornerRadius = dp(8).toFloat()
+                }
+            }
+            row.addView(TextView(this).apply {
+                text = label.uppercase(Locale.ROOT)
+                textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(green)
+            })
+            row.addView(TextView(this).apply {
+                text = value
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                setPadding(0, dp(3), 0, 0)
+            })
+            content.addView(row, LinearLayout.LayoutParams(-1, -2).apply {
+                bottomMargin = dp(8)
+            })
+        }
+
+        addInfoRow("Nama File", fileName)
+        addInfoRow("Size", formatExportFileSize(fileSize))
+        addInfoRow(
+            "Resolusi",
+            resolution?.let { "${it.first} × ${it.second}" } ?: "Tidak terbaca"
+        )
+        addInfoRow(
+            "FPS",
+            fps?.let { String.format(Locale.US, "%.2f FPS", it) } ?: "Tidak terbaca"
+        )
+
+        val title = TextView(this).apply {
+            text = "EXPORT SELESAI"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(green)
+            setPadding(dp(20), dp(18), dp(20), dp(8))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setCustomTitle(title)
+            .setView(content)
+            .setPositiveButton("TUTUP", null)
+            .create()
+
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(
+                android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(15, 15, 15))
+                    setStroke(dp(1), Color.rgb(55, 55, 55))
+                    cornerRadius = dp(12).toFloat()
+                }
+            )
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+                ?.setTextColor(green)
+            dialog.window?.setLayout(
+                (resources.displayMetrics.widthPixels * 0.88f).toInt(),
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            )
+            dialog.setCanceledOnTouchOutside(true)
+        }
+        dialog.show()
+    }
+
     private fun readExportedVideoFps(file: File): Float? {
         // Baca metadata file hasil export agar pengujian pilihan FPS punya angka nyata.
         val extractor = MediaExtractor()
@@ -5141,13 +5306,14 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun saveVideo(file: File) {
+    private fun saveVideo(file: File): String {
+        val outputName = "CAPCAKE_${System.currentTimeMillis()}.mp4"
 
         val values = ContentValues().apply {
 
             put(
                 MediaStore.Video.Media.DISPLAY_NAME,
-                "CAPCAKE_${System.currentTimeMillis()}.mp4"
+                outputName
             )
 
             put(
@@ -5181,6 +5347,7 @@ class MainActivity : AppCompatActivity() {
         values.put(MediaStore.Video.Media.IS_PENDING, 0)
 
         contentResolver.update(uri, values, null, null)
+        return outputName
     }
 
     // =====================================
