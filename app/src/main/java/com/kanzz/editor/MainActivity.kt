@@ -4938,6 +4938,11 @@ class MainActivity : AppCompatActivity() {
                                     )
                                 }
 
+                                // Batas FPS per klip sebagai fallback pada Media3 stabil.
+                                if (outputFps != null) {
+                                    add(FrameDropEffect.createDefaultFrameDropEffect(outputFps))
+                                }
+
                             }
                         )
                     )
