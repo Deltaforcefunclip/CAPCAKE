@@ -53,6 +53,7 @@ import androidx.media3.effect.Crop
 import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.CanvasOverlay
 import androidx.media3.effect.OverlayEffect
+import androidx.media3.effect.RgbMatrix
 import androidx.media3.transformer.Effects
 import org.json.JSONArray
 import org.json.JSONObject
@@ -334,6 +335,7 @@ class MainActivity : AppCompatActivity() {
     private var proxyTargetQuality = 720
     private var proxyTargetFps = 30
     private var previewProxyFps = 30
+    private var dreamyIntensity = 0f
     private var proxyCompletedCount = 0
     private var proxyFailedCount = 0
     private var proxyGenerationId = 0
@@ -501,10 +503,12 @@ class MainActivity : AppCompatActivity() {
             // Tetap preload awal item berikutnya; renderer prewarming menyiapkan decoder video.
             preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
             addAnalyticsListener(playbackAnalyticsListener)
+            setVideoEffects(buildDreamyVideoEffects(dreamyIntensity))
         }
 
         previewQualityShortSide = prefs.getInt("preview_quality_short_side", 720)
         previewProxyFps = prefs.getInt("preview_proxy_fps", 30)
+        dreamyIntensity = prefs.getFloat("dreamy_intensity_${currentProject?.id ?: "default"}", 0f)
         selectedPreviewRatio = prefs.getString("preview_ratio_${currentProject?.id ?: "default"}", "") ?: ""
 
         handler.post(playbackUpdater)
@@ -2238,6 +2242,7 @@ class MainActivity : AppCompatActivity() {
                     timeline.loadThumbnails(uri, sourceDuration)
 
                     // Replace the original full-length source with the edited clip sequence.
+                    player.setVideoEffects(buildDreamyVideoEffects(dreamyIntensity))
                     player.setMediaItems(buildEditedVideoItems())
                     player.prepare()
                     return
@@ -2949,6 +2954,7 @@ class MainActivity : AppCompatActivity() {
                     "Rasio" -> {
                         showAspectRatioPicker()
                     }
+                    "Effect" -> showEffectPanel()
 
                     "Audio" -> {
                         if (activeLayerGroup != "AUDIO") {
@@ -3079,6 +3085,84 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun buildDreamyColorMatrix(amount: Float): RgbMatrix {
+        val strength = amount.coerceIn(0f, 1f)
+        val scale = 1f - 0.12f * strength
+        val lift = 0.035f * strength
+        val matrix = floatArrayOf(
+            scale, 0f, 0f, 0f,
+            0f, scale, 0f, 0f,
+            0f, 0f, scale, 0f,
+            lift + 0.018f * strength, lift, lift + 0.008f * strength, 1f
+        )
+        return RgbMatrix { _, _ -> matrix }
+    }
+
+    private fun buildDreamyVideoEffects(amount: Float): List<androidx.media3.common.Effect> =
+        if (amount > 0.001f) listOf(buildDreamyColorMatrix(amount)) else emptyList()
+
+    private fun showEffectPanel() {
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(12))
+            setBackgroundColor(Color.rgb(19, 19, 19))
+        }
+        panel.addView(TextView(this).apply {
+            text = "DREAMY"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE)
+        })
+        panel.addView(TextView(this).apply {
+            text = "Soft glow look • warna lembut • kontras lebih halus"
+            textSize = 11f; setTextColor(Color.LTGRAY); setPadding(0, dp(5), 0, dp(12))
+        })
+        val valueLabel = TextView(this).apply {
+            text = "${(dreamyIntensity * 100).toInt()}%"; textSize = 13f
+            gravity = Gravity.CENTER; setTextColor(green)
+        }
+        panel.addView(valueLabel)
+        val slider = SeekBar(this).apply {
+            max = 100; progress = (dreamyIntensity * 100).toInt()
+            progressTintList = android.content.res.ColorStateList.valueOf(green)
+            thumbTintList = android.content.res.ColorStateList.valueOf(green)
+        }
+        panel.addView(slider)
+        val presets = LinearLayout(this).apply { gravity = Gravity.CENTER }
+        listOf(0, 25, 50, 75, 100).forEach { value ->
+            presets.addView(TextView(this).apply {
+                text = if (value == 0) "OFF" else "$value%"
+                textSize = 11f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
+                setPadding(dp(9), dp(9), dp(9), dp(9))
+                setOnClickListener { slider.progress = value }
+            }, LinearLayout.LayoutParams(0, dp(40), 1f))
+        }
+        panel.addView(presets)
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                valueLabel.text = "$progress%"
+                dreamyIntensity = progress / 100f
+                player.setVideoEffects(buildDreamyVideoEffects(dreamyIntensity))
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setView(panel).setNegativeButton("RESET", null).setPositiveButton("SELESAI", null).create()
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(19, 19, 19)); setStroke(dp(1), Color.rgb(58, 58, 58)); cornerRadius = dp(14).toFloat()
+            })
+            dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.88f).toInt(),
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.apply {
+                setTextColor(Color.LTGRAY); setOnClickListener { slider.progress = 0 }
+            }
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setTextColor(green)
+        }
+        dialog.setOnDismissListener {
+            prefs.edit().putFloat("dreamy_intensity_${currentProject?.id ?: "default"}", dreamyIntensity).apply()
+            saveCurrentProject()
+        }
+        dialog.show()
+    }
     private fun showAspectRatioPicker() {
         val ratios = listOf("9:16", "16:9", "1:1", "4:3", "3:4")
         val content = LinearLayout(this).apply {
@@ -5226,6 +5310,8 @@ class MainActivity : AppCompatActivity() {
                                         )
                                     }
                                 }
+
+                                if (dreamyIntensity > 0.001f) add(buildDreamyColorMatrix(dreamyIntensity))
 
                                 // Rotasi tetap dipertahankan sebagai efek terpisah.
                                 if (previewRotation % 360f != 0f) {
