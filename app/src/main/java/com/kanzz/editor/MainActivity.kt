@@ -133,6 +133,7 @@ class MainActivity : AppCompatActivity() {
     private val textClipManager = TextClipManager()
     private val effectClipManager = EffectClipManager()
     private var selectedEffectClipId: String? = null
+    private var effectDragUndoSaved = false
     private lateinit var effectTracksScroll: ScrollView
     private lateinit var thisEffectTracksContainer: LinearLayout
     private var selectedTextClipId: String? = null
@@ -2077,6 +2078,11 @@ class MainActivity : AppCompatActivity() {
                                         (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
                                     }
                                 }
+                                if (::thisEffectTracksContainer.isInitialized) {
+                                    for (i in 0 until thisEffectTracksContainer.childCount) {
+                                        (thisEffectTracksContainer.getChildAt(i) as? EffectTrackView)?.select(null)
+                                    }
+                                }
                                 playerView.foreground = null
                                 updateTextPreview()
                                 updateToolMenu()
@@ -3617,6 +3623,40 @@ class MainActivity : AppCompatActivity() {
                 },
                 onEditStarted = { pushUndoSnapshot() },
                 onChanged = { saveCurrentProject(); invalidateEffectTrackViews() },
+                onClipDrag = { clip, rawY ->
+                    val targetLane = (0 until thisEffectTracksContainer.childCount)
+                        .mapNotNull { index ->
+                            val targetView = thisEffectTracksContainer.getChildAt(index)
+                            val location = IntArray(2)
+                            targetView.getLocationOnScreen(location)
+                            val center = location[1] + targetView.height / 2f
+                            Triple(index, kotlin.math.abs(rawY - center), center)
+                        }.minByOrNull { it.second }?.first
+                    if (targetLane != null && targetLane != clip.trackIndex &&
+                        effectClipManager.canMoveToLane(clip, targetLane)) {
+                        if (!effectDragUndoSaved) { pushUndoSnapshot(); effectDragUndoSaved = true }
+                        effectClipManager.moveClipToLane(clip.id, targetLane)
+                        selectedEffectClipId = clip.id
+                        invalidateEffectTrackViews()
+                    }
+                },
+                onClipDropped = { clip, rawY ->
+                    val lastLaneView = (0 until thisEffectTracksContainer.childCount).lastOrNull()
+                        ?.let { thisEffectTracksContainer.getChildAt(it) }
+                    val lastLocation = IntArray(2)
+                    lastLaneView?.getLocationOnScreen(lastLocation)
+                    val below = lastLaneView != null && rawY > lastLocation[1] + lastLaneView.height + dp(6)
+                    if (below) {
+                        if (!effectDragUndoSaved) pushUndoSnapshot()
+                        effectClipManager.moveClipToNewBottomLane(clip.id)
+                    }
+                    effectClipManager.compactLanes()
+                    selectedEffectClipId = clip.id
+                    effectDragUndoSaved = false
+                    refreshEffectTracks()
+                    saveCurrentProject()
+                    updateToolMenu()
+                },
                 onTimelineScrolled = { position ->
                     pendingScrubPositionMs = position
                     if (!isTimelineScrubbing) {
