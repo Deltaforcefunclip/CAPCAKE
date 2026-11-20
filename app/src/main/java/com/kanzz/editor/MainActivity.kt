@@ -5516,6 +5516,8 @@ class TimelineView(
     private data class ThumbnailSet(val frames: List<Bitmap>, val durationMs: Long)
     private val thumbnailSets = mutableMapOf<String, ThumbnailSet>()
     private val transitionHitBoxes = mutableListOf<Pair<RectF, VideoTransition>>()
+    // Kotak tombol transisi dipakai ulang setiap onDraw agar tidak membuat RectF baru.
+    private val transitionRectPool = mutableListOf<RectF>()
 
     private val green = Color.rgb(24, 213, 138)
 
@@ -5748,6 +5750,7 @@ class TimelineView(
         }
         thumbnailSets.clear()
         transitionHitBoxes.clear()
+        transitionRectPool.clear()
         super.onDetachedFromWindow()
     }
 
@@ -6088,7 +6091,13 @@ class TimelineView(
                 if (x + halfSize < 0f || x - halfSize > width.toFloat()) {
                     return@forEachIndexed
                 }
-                val box = RectF(
+                val boxIndex = transitionHitBoxes.size
+                val box = if (boxIndex < transitionRectPool.size) {
+                    transitionRectPool[boxIndex]
+                } else {
+                    RectF().also { transitionRectPool.add(it) }
+                }
+                box.set(
                     x - halfSize,
                     (trackTop + trackBottom) / 2f - halfSize,
                     x + halfSize,
