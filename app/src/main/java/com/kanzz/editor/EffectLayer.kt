@@ -17,7 +17,10 @@ data class EffectClip(
     var startTimeMs: Long,
     var durationMs: Long = 2000L,
     var trackIndex: Int = 0,
-    var opacity: Float = 1f
+    var opacity: Float = 1f,
+    var intensity: Float = 0.45f,
+    var glowSpread: Float = 0.35f,
+    var warmth: Float = 0.5f
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
