@@ -44,10 +44,7 @@ import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.EditedMediaItemSequence
-import androidx.media3.transformer.VideoFrameAggregationParameters
-import android.util.Rational
 import androidx.media3.transformer.ProgressHolder
-import androidx.media3.effect.DefaultGlFrameProcessor
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.Crop
 import androidx.media3.effect.FrameDropEffect
@@ -4734,8 +4731,11 @@ class MainActivity : AppCompatActivity() {
                         override fun getNextSpeedChangeTimeUs(timeUs: Long): Long =
                             C.TIME_UNSET
                     })
-                // FPS manual tidak lagi dibatasi per klip.
-                // Target global diterapkan pada agregasi seluruh sequence di bawah.
+                // API frame-rate cap ini mengikuti timestamp setelah speed diterapkan.
+                // Jika pengguna tidak memilih FPS, sumber dibiarkan otomatis.
+                if (outputFps != null) {
+                    editedBuilder.setFrameRate(outputFps.toInt().coerceAtLeast(1))
+                }
                 editedBuilder.setEffects(
                         Effects(
                             audioProcessors,
@@ -5088,26 +5088,8 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            val compositionBuilder = Composition.Builder(sequences)
-            if (outputFps != null) {
-                // Satu clock frame untuk seluruh timeline: frame berlebih dibuang,
-                // frame yang kurang diulang dengan retiming agar FPS konstan.
-                compositionBuilder.setVideoFrameAggregationParameters(
-                    VideoFrameAggregationParameters.Builder()
-                        .setFrameRate(Rational(outputFps.toInt().coerceAtLeast(1), 1))
-                        .build()
-                )
-            }
-            val composition = compositionBuilder.build()
-
-            val transformerBuilder = Transformer.Builder(this).addListener(listener)
-            if (outputFps != null) {
-                // FrameProcessor diperlukan agar konfigurasi agregasi FPS komposisi aktif.
-                transformerBuilder.setFrameProcessorFactory(
-                    DefaultGlFrameProcessor.Factory.Builder(this).build()
-                )
-            }
-            val transformer = transformerBuilder.build()
+            val composition = Composition.Builder(sequences).build()
+            val transformer = Transformer.Builder(this).addListener(listener).build()
             exportTransformer = transformer
             transformer.start(composition, output.absolutePath)
             handler.post(exportProgressRunnable)
