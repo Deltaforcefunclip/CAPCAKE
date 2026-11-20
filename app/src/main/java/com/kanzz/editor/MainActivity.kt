@@ -3193,7 +3193,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateDreamyPreviewOverlay() {
         val overlay = dreamyPreviewOverlay ?: return
-        val strength = dreamyIntensity.coerceIn(0f, 1f)
+        val selectedDreamy = effectClipManager.find(selectedEffectClipId)?.takeIf { it.effectName == "Dreamy" }
+        val strength = (selectedDreamy?.intensity ?: dreamyIntensity).coerceIn(0f, 1f)
         overlay.visibility = if (strength <= 0.001f) View.GONE else View.VISIBLE
         overlay.setBackgroundColor(Color.rgb(255, 246, 232))
         overlay.alpha = 0.14f * strength
@@ -3272,6 +3273,11 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Simpan") { _, _ -> saveCurrentProject(); refreshEffectTracks() }.show()
     }
     private fun showEffectPanel() {
+        val clip = effectClipManager.find(selectedEffectClipId)
+        if (clip == null || clip.effectName != "Dreamy") {
+            showMessage("Pilih klip Dreamy terlebih dahulu.")
+            return
+        }
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(18), dp(20), dp(12))
@@ -3281,41 +3287,42 @@ class MainActivity : AppCompatActivity() {
             text = "DREAMY"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE)
         })
         panel.addView(TextView(this).apply {
-            text = "Soft glow look • warna lembut • kontras lebih halus"
+            text = "Atur kekuatan glow dan karakter warna klip ini."
             textSize = 11f; setTextColor(Color.LTGRAY); setPadding(0, dp(5), 0, dp(12))
         })
-        val valueLabel = TextView(this).apply {
-            text = "${(dreamyIntensity * 100).toInt()}%"; textSize = 13f
-            gravity = Gravity.CENTER; setTextColor(green)
-        }
-        panel.addView(valueLabel)
-        val slider = SeekBar(this).apply {
-            max = 100; progress = (dreamyIntensity * 100).toInt()
-            progressTintList = android.content.res.ColorStateList.valueOf(green)
-            thumbTintList = android.content.res.ColorStateList.valueOf(green)
-        }
-        panel.addView(slider)
-        val presets = LinearLayout(this).apply { gravity = Gravity.CENTER }
-        listOf(0, 25, 50, 75, 100).forEach { value ->
-            presets.addView(TextView(this).apply {
-                text = if (value == 0) "OFF" else "$value%"
-                textSize = 11f; gravity = Gravity.CENTER; setTextColor(Color.WHITE)
-                setPadding(dp(9), dp(9), dp(9), dp(9))
-                setOnClickListener { slider.progress = value }
-            }, LinearLayout.LayoutParams(0, dp(40), 1f))
-        }
-        panel.addView(presets)
-        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                valueLabel.text = "$progress%"
-                dreamyIntensity = progress / 100f
-                updateDreamyPreviewOverlay()
+        fun addSlider(title: String, initial: Float, onValue: (Float) -> Unit) {
+            val row = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(0, dp(5), 0, dp(7)) }
+            val value = TextView(this).apply {
+                text = "${title}  ${(initial * 100).toInt()}%"
+                textSize = 12f; setTextColor(Color.WHITE)
             }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
+            val seek = SeekBar(this).apply {
+                max = 100
+                progress = (initial.coerceIn(0f, 1f) * 100).toInt()
+                progressTintList = android.content.res.ColorStateList.valueOf(green)
+                thumbTintList = android.content.res.ColorStateList.valueOf(green)
+            }
+            seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val amount = progress / 100f
+                    value.text = "${title}  ${progress}%"
+                    onValue(amount)
+                    updateDreamyPreviewOverlay()
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+            row.addView(value); row.addView(seek); panel.addView(row)
+        }
+        val oldIntensity = clip.intensity
+        val oldSpread = clip.glowSpread
+        val oldWarmth = clip.warmth
+        addSlider("Intensity", clip.intensity) { clip.intensity = it }
+        addSlider("Glow Spread", clip.glowSpread) { clip.glowSpread = it }
+        addSlider("Tone / Warmth", clip.warmth) { clip.warmth = it }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setView(panel).setNegativeButton("RESET", null).setPositiveButton("SELESAI", null).create()
+            .setView(panel).setNegativeButton("BATAL", null)
+            .setPositiveButton("SELESAI", null).create()
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawable(android.graphics.drawable.GradientDrawable().apply {
                 setColor(Color.rgb(19, 19, 19)); setStroke(dp(1), Color.rgb(58, 58, 58)); cornerRadius = dp(14).toFloat()
@@ -3323,13 +3330,25 @@ class MainActivity : AppCompatActivity() {
             dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.88f).toInt(),
                 android.view.WindowManager.LayoutParams.WRAP_CONTENT)
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.apply {
-                setTextColor(Color.LTGRAY); setOnClickListener { slider.progress = 0 }
+                setTextColor(Color.LTGRAY)
+                setOnClickListener {
+                    clip.intensity = oldIntensity
+                    clip.glowSpread = oldSpread
+                    clip.warmth = oldWarmth
+                    updateDreamyPreviewOverlay()
+                    dialog.dismiss()
+                }
             }
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setTextColor(green)
-        }
-        dialog.setOnDismissListener {
-            prefs.edit().putFloat("dreamy_intensity_${currentProject?.id ?: "default"}", dreamyIntensity).apply()
-            saveCurrentProject()
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
+                setTextColor(green)
+                setOnClickListener {
+                    pushUndoSnapshot()
+                    saveCurrentProject()
+                    refreshEffectTracks()
+                    updateDreamyPreviewOverlay()
+                    dialog.dismiss()
+                }
+            }
         }
         dialog.show()
     }
@@ -4442,6 +4461,8 @@ class MainActivity : AppCompatActivity() {
                 put("id", clip.id); put("effectName", clip.effectName)
                 put("startTimeMs", clip.startTimeMs); put("durationMs", clip.durationMs)
                 put("trackIndex", clip.trackIndex); put("opacity", clip.opacity.toDouble())
+                put("intensity", clip.intensity.toDouble()); put("glowSpread", clip.glowSpread.toDouble())
+                put("warmth", clip.warmth.toDouble())
             })
         }
         return array.toString()
@@ -4457,7 +4478,10 @@ class MainActivity : AppCompatActivity() {
                 effectClipManager.clips.add(EffectClip(
                     id = item.optString("id"), effectName = item.optString("effectName", "Dreamy"),
                     startTimeMs = item.optLong("startTimeMs"), durationMs = item.optLong("durationMs", 2000L),
-                    trackIndex = item.optInt("trackIndex", 0), opacity = item.optDouble("opacity", 1.0).toFloat()
+                    trackIndex = item.optInt("trackIndex", 0), opacity = item.optDouble("opacity", 1.0).toFloat(),
+                    intensity = item.optDouble("intensity", 0.45).toFloat(),
+                    glowSpread = item.optDouble("glowSpread", 0.35).toFloat(),
+                    warmth = item.optDouble("warmth", 0.5).toFloat()
                 ))
             }
             effectClipManager.compactLanes()
@@ -5628,6 +5652,28 @@ class MainActivity : AppCompatActivity() {
                                 }
 
                                 if (dreamyIntensity > 0.001f) add(buildDreamyColorMatrix(dreamyIntensity))
+
+                                // Efek Dreamy mengikuti rentang klip pada timeline utama.
+                                effectClipManager.clips
+                                    .filter { it.effectName == "Dreamy" && it.intensity > 0.001f }
+                                    .forEach { effectClip ->
+                                        val overlapStart = maxOf(effectClip.startTimeMs, clip.timelineStartMs)
+                                        val overlapEnd = minOf(effectClip.endTimeMs, clip.timelineEndMs)
+                                        if (overlapEnd > overlapStart) {
+                                            val speed = clip.speed.coerceIn(0.25f, 4f)
+                                            val localStartUs = (((overlapStart - clip.timelineStartMs) / speed) * 1000.0).toLong()
+                                            val localEndUs = (((overlapEnd - clip.timelineStartMs) / speed) * 1000.0).toLong()
+                                            add(
+                                                DreamyGlEffect(
+                                                    intensity = effectClip.intensity * effectClip.opacity,
+                                                    glowSpread = effectClip.glowSpread,
+                                                    warmth = effectClip.warmth,
+                                                    startTimeUs = localStartUs,
+                                                    endTimeUs = localEndUs
+                                                )
+                                            )
+                                        }
+                                    }
 
                                 // Rotasi tetap dipertahankan sebagai efek terpisah.
                                 if (previewRotation % 360f != 0f) {
