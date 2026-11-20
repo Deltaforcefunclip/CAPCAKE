@@ -4466,6 +4466,10 @@ class MainActivity : AppCompatActivity() {
                 return@forEach
             }
 
+            val desiredPosition = (
+                (timelinePosition - clip.startTimeMs).coerceAtLeast(0L) * clip.speed
+            ).toLong().coerceAtLeast(0L)
+
             val instance = audioPlayer ?: ExoPlayer.Builder(this).build().also { created ->
                 created.setAudioAttributes(
                     androidx.media3.common.AudioAttributes.Builder()
@@ -4485,28 +4489,17 @@ class MainActivity : AppCompatActivity() {
                     )
                     .build()
                 created.setMediaItem(audioItem)
-                created.addListener(object : Player.Listener {
-                    override fun onPlaybackStateChanged(playbackState: Int) {
-                        if (playbackState != Player.STATE_READY || !player.isPlaying) return
-                        val positionNow = currentTimelinePosition()
-                        if (positionNow >= clip.startTimeMs && positionNow < clip.endTimeMs) {
-                            val offset = ((positionNow - clip.startTimeMs).coerceAtLeast(0L) * clip.speed)
-                                .toLong().coerceAtLeast(0L)
-                            created.seekTo(offset)
-                            created.playWhenReady = true
-                        }
-                    }
-                })
+                // Tentukan posisi dan aktifkan playback sebelum prepare.
+                // ExoPlayer akan mulai otomatis segera setelah STATE_READY,
+                // tanpa menunggu callback atau siklus sync berikutnya.
+                created.seekTo(desiredPosition)
+                created.playWhenReady = true
                 audioPlayers[clip.id] = created
                 created.prepare()
             }
 
             instance.volume = clip.volume
             instance.playbackParameters = PlaybackParameters(clip.speed.coerceIn(0.25f, 3.25f))
-
-            val desiredPosition = (
-                (timelinePosition - clip.startTimeMs).coerceAtLeast(0L) * clip.speed
-            ).toLong().coerceAtLeast(0L)
 
             // Setelah satu klip audio selesai, ExoPlayer masuk STATE_ENDED.
             // Tanpa seek ulang, player lama tidak pernah kembali ke STATE_READY
