@@ -2183,6 +2183,11 @@ class MainActivity : AppCompatActivity() {
 
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
+                if (state == Player.STATE_BUFFERING) {
+                    recordPlaybackDiagnostic(
+                        "BUFFERING item=${player.currentMediaItemIndex} position=${player.currentPosition}ms"
+                    )
+                }
                 if (state != Player.STATE_READY) return
 
                 // First prepare the source once so its real duration is known.
@@ -2234,14 +2239,6 @@ class MainActivity : AppCompatActivity() {
                 // timelineFrameUpdater sudah menyegarkannya setiap 33 ms.
                 // Menghindari pekerjaan UI tambahan tepat pada pergantian decoder.
                 syncVideoClipProperties()
-            }
-
-            override fun onPlaybackStateChanged(state: Int) {
-                if (state == Player.STATE_BUFFERING) {
-                    recordPlaybackDiagnostic(
-                        "BUFFERING item=${player.currentMediaItemIndex} position=${player.currentPosition}ms"
-                    )
-                }
             }
 
             override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
