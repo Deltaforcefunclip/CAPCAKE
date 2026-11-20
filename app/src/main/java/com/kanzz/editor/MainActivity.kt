@@ -2728,13 +2728,12 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Text" -> {
-                        if (activeLayerGroup != "TEXT") {
-                            activeLayerGroup = "TEXT"
-                            selectedAudioClipId = null
-                            selectedTextClipId = null
-                            updateLayerGroupVisibility()
-                            updateToolMenu()
-                        } else showTextEditor()
+                        activeLayerGroup = "TEXT"
+                        selectedAudioClipId = null
+                        selectedTextClipId = null
+                        updateLayerGroupVisibility()
+                        updateToolMenu()
+                        showTextEditor()
                     }
 
                     "Overlay", "Sticker" -> {
@@ -5040,25 +5039,40 @@ class MainActivity : AppCompatActivity() {
                 handler.removeCallbacks(exportProgressRunnable)
                 exportProgressBar?.progress = 100
                 exportProgressText?.text = "Menyimpan video…"
+                var completedInfo: Triple<String, Long, Pair<Pair<Int, Int>?, Float?>>? = null
                 try {
                     val outputName = saveVideo(output)
                     val outputSize = output.length()
                     val actualFps = readExportedVideoFps(output)
                     val actualResolution = readExportedVideoResolution(output)
-                    showExportCompletedDialog(
+                    completedInfo = Triple(
                         outputName,
                         outputSize,
-                        actualResolution,
-                        actualFps
+                        actualResolution to actualFps
                     )
                 } catch (error: Exception) {
                     showMessage("Gagal menyimpan video: ${error.message}")
                 } finally {
                     output.delete()
+                    // Tutup dialog progres lebih dahulu agar dialog hasil tidak
+                    // dianimasikan bersamaan dengan jendela yang masih terbuka.
                     exportDialog?.dismiss()
                     exportDialog = null
                     exportProgressBar = null
                     exportProgressText = null
+                }
+                completedInfo?.let { info ->
+                    // Tampilkan setelah frame UI berikutnya agar transisi dialog bersih.
+                    handler.post {
+                        if (!isFinishing && !isDestroyed) {
+                            showExportCompletedDialog(
+                                info.first,
+                                info.second,
+                                info.third.first,
+                                info.third.second
+                            )
+                        }
+                    }
                 }
             }
 
