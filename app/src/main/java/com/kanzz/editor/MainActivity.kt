@@ -3067,6 +3067,10 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Opasitas" -> {
+                        if (selectedEffectClipId != null) {
+                            effectClipManager.find(selectedEffectClipId)?.let { showEffectOpacityDialog(it) }
+                            return@setOnClickListener
+                        }
                         val clip = videoClipManager.find(selectedVideoClipId)
                         if (clip != null) showVideoClipOpacity(clip)
                     }
