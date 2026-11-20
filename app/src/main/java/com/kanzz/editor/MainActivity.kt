@@ -272,7 +272,7 @@ class MainActivity : AppCompatActivity() {
                 if (!player.isPlaying) updateTime()
                 syncVideoClipProperties()
                 syncAudioPlayback()
-                updateTextPreview()
+                updateTextPreview(force = false)
             }
             handler.postDelayed(this, 100L)
         }
@@ -3710,7 +3710,9 @@ class MainActivity : AppCompatActivity() {
         refreshTextTracks(); updateTextPreview(); saveCurrentProject(); updateToolMenu()
     }
 
-    private fun updateTextPreview() {
+    private var lastPreviewTextStateKey: Long = Long.MIN_VALUE
+
+    private fun updateTextPreview(force: Boolean = true) {
         if (!::previewTextOverlay.isInitialized) return
 
         val position = currentTimelinePosition()
@@ -3718,6 +3720,10 @@ class MainActivity : AppCompatActivity() {
         val activeClips = textClipManager.clips.filter {
             position >= it.startTimeMs && position < it.endTimeMs
         }
+        var stateKey = selected?.id?.hashCode()?.toLong() ?: 0L
+        activeClips.forEach { stateKey = stateKey * 31L + it.id.hashCode() }
+        if (!force && stateKey == lastPreviewTextStateKey) return
+        lastPreviewTextStateKey = stateKey
         // Clip terpilih tetap menjadi target transformasi. Clip aktif lain tetap
         // dirender sebagai TextView terpisah agar dua layer dapat tampil bersamaan.
         val primary = selected ?: activeClips.lastOrNull()
@@ -4455,7 +4461,7 @@ class MainActivity : AppCompatActivity() {
         // agar klip tetap melekat pada waktunya saat playhead bergerak.
         audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
         invalidateTextTrackViews()
-        updateTextPreview()
+        updateTextPreview(force = false)
 
         currentProject?.position = position
     }
