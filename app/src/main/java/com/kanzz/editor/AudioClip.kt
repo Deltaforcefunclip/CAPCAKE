@@ -10,7 +10,8 @@ data class AudioClip(
     var sourceStartMs: Long = 0L,
     var name: String = "Audio",
     var volume: Float = 1f,
-    var speed: Float = 1f
+    var speed: Float = 1f,
+    var sourceDurationMs: Long = durationMs
 ) {
     val endTimeMs: Long
         get() = startTimeMs + durationMs
@@ -96,7 +97,8 @@ class AudioClipManager {
             sourceStartMs = clip.sourceStartMs + firstDuration,
             name = clip.name,
             volume = clip.volume,
-            speed = clip.speed
+            speed = clip.speed,
+            sourceDurationMs = clip.sourceDurationMs
         )
 
         clip.durationMs = firstDuration
