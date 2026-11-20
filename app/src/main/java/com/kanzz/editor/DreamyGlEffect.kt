@@ -83,10 +83,6 @@ class DreamyShaderProgram(
         try {
             glProgram.use()
             glProgram.setSamplerTexIdUniform("sTexture", inputTexId, 0)
-            glProgram.setFloatsUniform(
-                "uTexelSize",
-                floatArrayOf(1f / frameWidth.toFloat(), 1f / frameHeight.toFloat())
-            )
             val active = presentationTimeUs >= startTimeUs && presentationTimeUs < endTimeUs
             glProgram.setFloatUniform("uIntensity", if (active) effectIntensity else 0f)
             glProgram.bindAttributesAndUniforms()
