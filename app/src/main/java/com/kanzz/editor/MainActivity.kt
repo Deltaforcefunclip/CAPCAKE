@@ -23,6 +23,8 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.media3.common.MediaItem
 import androidx.media3.common.audio.ChannelMixingAudioProcessor
+import androidx.media3.common.audio.AudioProcessor
+import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.C
 import androidx.media3.common.Player
@@ -4450,19 +4452,24 @@ class MainActivity : AppCompatActivity() {
                             .build()
                     )
                     .build()
-                val audioProcessors = if (clip.volume < 0.999f) {
-                    val mixer = ChannelMixingAudioProcessor()
-                    for (channelCount in 1..6) {
-                        mixer.putChannelMixingMatrix(
-                            ChannelMixingMatrix.createForConstantPower(
-                                channelCount,
-                                channelCount
-                            ).scaleBy(clip.volume.coerceIn(0f, 1f))
-                        )
+                // Audio asli memakai faktor speed yang sama dengan frame video.
+                // SpeedChangeEffect hanya mengubah video; Sonic mengubah durasi audio.
+                val audioProcessors = buildList<AudioProcessor> {
+                    add(SonicAudioProcessor().apply {
+                        setSpeed(clip.speed.coerceIn(0.25f, 4f))
+                    })
+                    if (clip.volume < 0.999f) {
+                        val mixer = ChannelMixingAudioProcessor()
+                        for (channelCount in 1..6) {
+                            mixer.putChannelMixingMatrix(
+                                ChannelMixingMatrix.createForConstantPower(
+                                    channelCount,
+                                    channelCount
+                                ).scaleBy(clip.volume.coerceIn(0f, 1f))
+                            )
+                        }
+                        add(mixer)
                     }
-                    listOf(mixer)
-                } else {
-                    emptyList()
                 }
                 EditedMediaItem.Builder(mediaItem)
                     .setRemoveAudio(muteAudio)
@@ -4769,29 +4776,27 @@ class MainActivity : AppCompatActivity() {
                             )
                             .build()
 
-                        val audioProcessors = if (clip.volume < 0.999f) {
-                            val mixer = ChannelMixingAudioProcessor()
-                            for (channelCount in 1..6) {
-                                mixer.putChannelMixingMatrix(
-                                    ChannelMixingMatrix.createForConstantPower(
-                                        channelCount,
-                                        channelCount
-                                    ).scaleBy(clip.volume.coerceIn(0f, 1f))
-                                )
+                        val audioProcessors = buildList<AudioProcessor> {
+                            add(SonicAudioProcessor().apply {
+                                setSpeed(clip.speed.coerceIn(0.25f, 4f))
+                            })
+                            if (clip.volume < 0.999f) {
+                                val mixer = ChannelMixingAudioProcessor()
+                                for (channelCount in 1..6) {
+                                    mixer.putChannelMixingMatrix(
+                                        ChannelMixingMatrix.createForConstantPower(
+                                            channelCount,
+                                            channelCount
+                                        ).scaleBy(clip.volume.coerceIn(0f, 1f))
+                                    )
+                                }
+                                add(mixer)
                             }
-                            listOf(mixer)
-                        } else {
-                            emptyList()
                         }
 
                         val audioEditedItem = EditedMediaItem.Builder(audioMediaItem)
                             .setRemoveVideo(true)
-                            .setEffects(
-                                Effects(
-                                    audioProcessors,
-                                    listOf(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3.25f)))
-                                )
-                            )
+                            .setEffects(Effects(audioProcessors, emptyList()))
                             .build()
 
                         audioSequence.addItem(audioEditedItem)
