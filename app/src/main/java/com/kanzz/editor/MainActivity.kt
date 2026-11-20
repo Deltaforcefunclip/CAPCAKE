@@ -4704,8 +4704,7 @@ class MainActivity : AppCompatActivity() {
                             .build()
                     )
                     .build()
-                // Audio asli memakai faktor speed yang sama dengan frame video.
-                // SpeedChangeEffect hanya mengubah video; Sonic mengubah durasi audio.
+                // Kecepatan video dan audio asli disinkronkan dengan nilai speed clip.
                 val audioProcessors = buildList<AudioProcessor> {
                     add(SonicAudioProcessor().apply {
                         setSpeed(clip.speed.coerceIn(0.25f, 4f))
@@ -4741,9 +4740,6 @@ class MainActivity : AppCompatActivity() {
                         Effects(
                             audioProcessors,
                             buildList {
-                                add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 4f)))
-                                // Batasi frame rate setelah perubahan speed agar 2x tidak menggandakan FPS.
-
                                 // Bentuk kanvas output terlebih dahulu. Setelah kanvas terbentuk,
                                 // zoom/crop diterapkan pada kanvas tersebut, bukan pada sumber 16:9.
                                 // Dengan urutan ini, rasio kanvas tetap (misalnya 3:4) sementara
