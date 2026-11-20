@@ -597,6 +597,19 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Hapus") { _, _ ->
 
                 projects.remove(project)
+
+                // Hapus cache proxy milik project ini saja. Folder dipisah
+                // berdasarkan ID project agar duplikat/project lain aman.
+                File(cacheDir, "preview_proxies/${project.id}").deleteRecursively()
+
+                // Hapus data timeline tersimpan agar project yang dihapus
+                // tidak meninggalkan data yatim di SharedPreferences.
+                prefs.edit()
+                    .remove("video_timeline_${project.id}")
+                    .remove("audio_timeline_${project.id}")
+                    .remove("text_timeline_${project.id}")
+                    .apply()
+
                 saveProjects()
                 showHome()
             }
@@ -2155,8 +2168,10 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
-    private fun previewProxyDirectory(): File =
-        File(cacheDir, "preview_proxies").apply { mkdirs() }
+    private fun previewProxyDirectory(): File {
+        val projectId = currentProject?.id ?: "unassigned"
+        return File(cacheDir, "preview_proxies/$projectId").apply { mkdirs() }
+    }
 
     private fun previewProxyFile(clip: VideoClip, quality: Int, fps: Int): File {
         val identity = "${clip.id}| ${clip.sourceUri}|${clip.sourceStartMs}|${clip.durationMs}|$quality|$fps"
