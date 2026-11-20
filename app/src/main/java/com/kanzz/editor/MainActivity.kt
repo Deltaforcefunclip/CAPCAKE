@@ -2915,7 +2915,12 @@ class MainActivity : AppCompatActivity() {
                     "Animasi" -> Toast.makeText(this, "Pengaturan animasi teks akan ditambahkan berikutnya.", Toast.LENGTH_SHORT).show()
                     "Opasitas" -> showTextOpacityDialog()
                     "Hapus" -> {
-                        if (selectedTextClipId != null) {
+                        if (selectedEffectClipId != null) {
+                            pushUndoSnapshot()
+                            effectClipManager.remove(selectedEffectClipId)
+                            selectedEffectClipId = null
+                            refreshEffectTracks(); saveCurrentProject(); updateToolMenu()
+                        } else if (selectedTextClipId != null) {
                             pushUndoSnapshot()
                             textClipManager.remove(selectedTextClipId)
                             selectedTextClipId = null
