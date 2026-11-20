@@ -5513,6 +5513,10 @@ class TimelineView(
     private val green = Color.rgb(24, 213, 138)
 
     private val executor = Executors.newSingleThreadExecutor()
+    // TimelineView dibuat ulang saat berpindah project/editor. Tandai saat
+    // dilepas agar hasil ekstraksi thumbnail yang terlambat tidak mengisi cache lagi.
+    @Volatile
+    private var thumbnailsDisposed = false
 
     // =====================================
     // PINCH ZOOM
@@ -5649,8 +5653,10 @@ class TimelineView(
         uri: Uri,
         videoDuration: Long
     ) {
+        if (thumbnailsDisposed) return
 
         executor.execute {
+            if (thumbnailsDisposed) return@execute
 
             val retriever = MediaMetadataRetriever()
 
@@ -5703,6 +5709,14 @@ class TimelineView(
             }
 
             post {
+                // Jika editor sudah ditutup ketika ekstraksi berlangsung,
+                // lepaskan bitmap hasilnya dan jangan hidupkan cache lama lagi.
+                if (thumbnailsDisposed) {
+                    newFrames.forEach { frame ->
+                        if (!frame.isRecycled) frame.recycle()
+                    }
+                    return@post
+                }
 
                 val key = uri.toString()
                 thumbnailSets.put(
@@ -5715,6 +5729,19 @@ class TimelineView(
                 invalidate()
             }
         }
+    }
+
+    override fun onDetachedFromWindow() {
+        thumbnailsDisposed = true
+        executor.shutdownNow()
+        thumbnailSets.values.forEach { thumbnailSet ->
+            thumbnailSet.frames.forEach { frame ->
+                if (!frame.isRecycled) frame.recycle()
+            }
+        }
+        thumbnailSets.clear()
+        transitionHitBoxes.clear()
+        super.onDetachedFromWindow()
     }
 
     private fun dp(value: Int): Int {
