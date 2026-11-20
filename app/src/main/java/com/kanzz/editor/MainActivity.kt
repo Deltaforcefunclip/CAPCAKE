@@ -3118,7 +3118,7 @@ class MainActivity : AppCompatActivity() {
         val toggle = TextView(this).apply {
 
             text = when {
-                selectedAudioClipId != null || selectedTextClipId != null || videoSelected -> "KEMBALI KE MENU UTAMA"
+                selectedAudioClipId != null || selectedTextClipId != null || selectedEffectClipId != null || videoSelected -> "KEMBALI KE MENU UTAMA"
                 else -> "MENU VIDEO"
             }
 
@@ -3128,7 +3128,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         toggle.setOnClickListener {
-            if (selectedAudioClipId != null) {
+            if (selectedEffectClipId != null) {
+                selectedEffectClipId = null
+                refreshEffectTracks()
+            } else if (selectedAudioClipId != null) {
                 selectedAudioClipId = null
                 clearAudioTrackSelection()
             } else if (selectedTextClipId != null) {
@@ -3656,6 +3659,7 @@ class MainActivity : AppCompatActivity() {
                         updatePlayButton()
                     }
                     selectedAudioClipId = null
+                    selectedEffectClipId = null
                     clearAudioTrackSelection()
                     selectedVideoClipId = null
                     videoSelected = false
