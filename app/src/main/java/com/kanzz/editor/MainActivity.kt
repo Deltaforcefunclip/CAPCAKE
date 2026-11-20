@@ -2114,10 +2114,11 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                // Terapkan properti klip tepat saat item berganti, bukan menunggu
-                // siklus updater 100 ms. Ini menghindari jeda perubahan speed/volume.
+                // Terapkan volume, opacity, dan speed tepat saat item berganti.
+                // Pembaruan timeline tidak dipanggil di callback transisi karena
+                // timelineFrameUpdater sudah menyegarkannya setiap 33 ms.
+                // Menghindari pekerjaan UI tambahan tepat pada pergantian decoder.
                 syncVideoClipProperties()
-                updateTime()
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
