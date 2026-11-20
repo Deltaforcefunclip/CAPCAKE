@@ -2960,6 +2960,15 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Duplikat" -> {
+                        if (selectedEffectClipId != null) {
+                            val originalEffect = effectClipManager.find(selectedEffectClipId) ?: return@setOnClickListener
+                            pushUndoSnapshot()
+                            val copiedEffect = originalEffect.copy(id = java.util.UUID.randomUUID().toString(), startTimeMs = originalEffect.endTimeMs)
+                            effectClipManager.add(copiedEffect)
+                            selectedEffectClipId = copiedEffect.id
+                            refreshEffectTracks(); saveCurrentProject(); updateToolMenu()
+                            return@setOnClickListener
+                        }
                         if (selectedTextClipId != null) {
                             duplicateSelectedText()
                             return@setOnClickListener
