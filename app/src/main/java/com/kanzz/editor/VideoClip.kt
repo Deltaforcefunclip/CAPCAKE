@@ -11,6 +11,8 @@ data class VideoClip(
     val sourceUri: String,
     var sourceStartMs: Long,
     var durationMs: Long,
+    // Batas akhir media sumber; tetap dipertahankan setelah split agar tepi klip bisa dipulihkan.
+    var sourceDurationMs: Long = durationMs,
     var timelineStartMs: Long = 0L,
     var volume: Float = 1f,
     var speed: Float = 1f,
@@ -54,7 +56,7 @@ class VideoClipManager {
         clips.clear()
         transitions.clear()
         if (durationMs > 0L) {
-            clips.add(VideoClip(sourceUri = uri, sourceStartMs = 0L, durationMs = durationMs))
+            clips.add(VideoClip(sourceUri = uri, sourceStartMs = 0L, durationMs = durationMs, sourceDurationMs = durationMs))
         }
         recalculateTimeline()
     }
@@ -126,7 +128,9 @@ class VideoClipManager {
 
         val left = requestedLeft.coerceIn(0L, (clip.durationMs - 1L).coerceAtLeast(0L))
         val remainingAfterLeft = (clip.durationMs - left).coerceAtLeast(1L)
-        val right = requestedRight.coerceIn(-(remainingAfterLeft - 1L), 0L)
+        val maxRightExtension = (clip.sourceDurationMs - clip.sourceStartMs -
+            remainingAfterLeft).coerceAtLeast(0L)
+        val right = requestedRight.coerceIn(-(remainingAfterLeft - 1L), maxRightExtension)
         if (left == 0L && right == 0L) return false
 
         clip.sourceStartMs += left
