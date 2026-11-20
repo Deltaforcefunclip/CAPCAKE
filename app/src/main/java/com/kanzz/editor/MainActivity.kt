@@ -3207,6 +3207,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showEffectOpacityDialog(clip: EffectClip) {
+        pushUndoSnapshot()
+        val originalOpacity = clip.opacity
         val seek = SeekBar(this).apply { max = 100; progress = (clip.opacity * 100).toInt().coerceIn(0, 100) }
         val label = TextView(this).apply { text = "Opasitas " + seek.progress + "%"; setTextColor(Color.WHITE); gravity = Gravity.CENTER }
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
@@ -3216,8 +3218,8 @@ class MainActivity : AppCompatActivity() {
         })
         val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(8)); addView(label); addView(seek) }
         androidx.appcompat.app.AlertDialog.Builder(this).setTitle("Opasitas Effect").setView(box)
-            .setNegativeButton("Batal") { _, _ -> refreshEffectTracks() }
-            .setPositiveButton("Simpan") { _, _ -> pushUndoSnapshot(); saveCurrentProject(); refreshEffectTracks() }.show()
+            .setNegativeButton("Batal") { _, _ -> clip.opacity = originalOpacity; refreshEffectTracks() }
+            .setPositiveButton("Simpan") { _, _ -> saveCurrentProject(); refreshEffectTracks() }.show()
     }
     private fun showEffectPanel() {
         val panel = LinearLayout(this).apply {
@@ -3602,6 +3604,7 @@ class MainActivity : AppCompatActivity() {
                     updateLayerGroupVisibility()
                     updateToolMenu()
                 },
+                onEditStarted = { pushUndoSnapshot() },
                 onChanged = { saveCurrentProject(); invalidateEffectTrackViews() },
                 onTimelineScrolled = { position ->
                     pendingScrubPositionMs = position
