@@ -4529,6 +4529,8 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
+        // Siapkan data pilihan terlebih dahulu; pembuatan komponen UI dilakukan
+        // bertahap setelah dialog tampil agar tombol EXPORT tidak terasa macet.
         val sourceFps = profiles.map { it.frameRate }.filter { it > 0f }.sorted()
         val fpsOptions = mutableListOf<Float>()
         listOf(30f, 60f).forEach { fpsOptions.add(it) }
@@ -4538,7 +4540,6 @@ class MainActivity : AppCompatActivity() {
 
         data class ResolutionChoice(val width: Int, val height: Int, val label: String)
 
-        // Rasio kanvas proyek; jika belum dipilih, gunakan rasio sumber utama.
         val ratio = selectedPreviewRatio.split(":").let { parts ->
             if (parts.size == 2) {
                 (parts[0].toFloatOrNull() ?: 0f) /
@@ -4563,7 +4564,6 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
-        // Sumber Video: pertahankan dimensi asli dari masing-masing resolusi sumber unik.
         profiles.distinctBy { it.width to it.height }
             .sortedWith(compareBy<ExportSourceProfile> { it.width * it.height }
                 .thenBy { it.width })
@@ -4577,8 +4577,6 @@ class MainActivity : AppCompatActivity() {
                 )
             }
 
-        // Sumber Rasio: gunakan rasio kanvas proyek dan ukuran terbesar yang masih
-        // muat di dalam dimensi salah satu video sumber, tanpa memperbesar sumber.
         val sourceRatioDimensions = profiles.mapNotNull { profile ->
             val sourceAspect = profile.width.toFloat() /
                 profile.height.toFloat().coerceAtLeast(1f)
@@ -4608,6 +4606,78 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(16), dp(8), dp(16), dp(8))
             setBackgroundColor(Color.BLACK)
         }
+        val loading = TextView(this).apply {
+            text = "Menyiapkan pilihan export…"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(Color.LTGRAY)
+            setPadding(0, dp(28), 0, dp(28))
+        }
+        content.addView(loading, LinearLayout.LayoutParams(-1, -2))
+
+        val scroll = ScrollView(this).apply {
+            isFillViewport = false
+            addView(content, android.view.ViewGroup.LayoutParams(-1, -2))
+        }
+        val titleView = TextView(this).apply {
+            text = "PENGATURAN EXPORT"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            setPadding(dp(20), dp(16), dp(20), dp(8))
+        }
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setCustomTitle(titleView)
+            .setView(scroll)
+            .setNegativeButton("BATAL", null)
+            .setPositiveButton("EXPORT", null)
+            .create()
+
+        val fpsGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        val resolutionGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        var selectedFpsId = -1
+        var selectedResolutionId = -1
+        var optionsReady = false
+
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(
+                android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(15, 15, 15))
+                    setStroke(dp(1), Color.rgb(55, 55, 55))
+                    cornerRadius = dp(12).toFloat()
+                }
+            )
+            dialog.window?.setLayout(
+                (resources.displayMetrics.widthPixels * 0.90f).toInt(),
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            )
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
+                setTextColor(green)
+                isEnabled = false
+                setOnClickListener {
+                    if (!optionsReady) return@setOnClickListener
+                    val fpsIndex = if (selectedFpsId == -1) -1 else
+                        fpsGroup.indexOfChild(fpsGroup.findViewById<View>(selectedFpsId))
+                    val resolutionIndex = if (selectedResolutionId == -1) -1 else
+                        resolutionGroup.indexOfChild(
+                            resolutionGroup.findViewById<View>(selectedResolutionId)
+                        )
+                    val selectedFps = fpsOptions.getOrNull(fpsIndex)
+                    val selectedResolution = resolutionOptions.getOrNull(resolutionIndex)
+                    dialog.dismiss()
+                    startExportVideo(
+                        selectedFps,
+                        selectedResolution?.width,
+                        selectedResolution?.height
+                    )
+                }
+            }
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)
+                ?.setTextColor(Color.LTGRAY)
+        }
+
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.show()
 
         fun addSectionTitle(label: String) {
             content.addView(TextView(this).apply {
@@ -4644,92 +4714,65 @@ class MainActivity : AppCompatActivity() {
             radio.setOnClickListener { onSelectionChanged(radio.id) }
         }
 
+        // Maksimal empat baris dibuat per frame. Ini mencegah satu proses
+        // inflate/layout panjang menghambat animasi saat panel pertama dibuka.
+        loading.visibility = View.GONE
         addSectionTitle("FPS VIDEO")
-        val fpsGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
-        var selectedFpsId = -1
+        content.addView(fpsGroup)
+        addSectionTitle("RESOLUSI VIDEO")
+        content.addView(resolutionGroup)
+
+        val tasks = mutableListOf<() -> Unit>()
         fpsOptions.forEach { fps ->
             val label = if (kotlin.math.abs(fps - fps.toInt()) < 0.05f) {
                 "${fps.toInt()} FPS"
             } else {
                 String.format(Locale.US, "%.2f FPS", fps)
             }
-            addOption(fpsGroup, label) { tappedId ->
-                if (selectedFpsId == tappedId) {
-                    fpsGroup.clearCheck()
-                    selectedFpsId = -1
-                } else {
-                    fpsGroup.check(tappedId)
-                    selectedFpsId = tappedId
+            tasks.add {
+                addOption(fpsGroup, label) { tappedId ->
+                    if (selectedFpsId == tappedId) {
+                        fpsGroup.clearCheck()
+                        selectedFpsId = -1
+                    } else {
+                        fpsGroup.check(tappedId)
+                        selectedFpsId = tappedId
+                    }
                 }
             }
         }
-        content.addView(fpsGroup)
-
-        addSectionTitle("RESOLUSI VIDEO")
-        val resolutionGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
-        var selectedResolutionId = -1
         resolutionOptions.forEach { option ->
-            addOption(resolutionGroup, option.label) { tappedId ->
-                if (selectedResolutionId == tappedId) {
-                    resolutionGroup.clearCheck()
-                    selectedResolutionId = -1
-                } else {
-                    resolutionGroup.check(tappedId)
-                    selectedResolutionId = tappedId
+            tasks.add {
+                addOption(resolutionGroup, option.label) { tappedId ->
+                    if (selectedResolutionId == tappedId) {
+                        resolutionGroup.clearCheck()
+                        selectedResolutionId = -1
+                    } else {
+                        resolutionGroup.check(tappedId)
+                        selectedResolutionId = tappedId
+                    }
                 }
             }
         }
-        content.addView(resolutionGroup)
 
-        val scroll = ScrollView(this).apply {
-            isFillViewport = false
-            addView(content, android.view.ViewGroup.LayoutParams(-1, -2))
-        }
-        val titleView = TextView(this).apply {
-            text = "PENGATURAN EXPORT"
-            textSize = 18f
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            setPadding(dp(20), dp(16), dp(20), dp(8))
-        }
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setCustomTitle(titleView)
-            .setView(scroll)
-            .setNegativeButton("BATAL", null)
-            .setPositiveButton("EXPORT", null)
-            .create()
-
-        dialog.setOnShowListener {
-            dialog.window?.setBackgroundDrawable(
-                android.graphics.drawable.GradientDrawable().apply {
-                    setColor(Color.rgb(15, 15, 15))
-                    setStroke(dp(1), Color.rgb(55, 55, 55))
-                    cornerRadius = dp(12).toFloat()
-                }
-            )
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.apply {
-                setTextColor(green)
-                setOnClickListener {
-                    val fpsIndex = fpsGroup.indexOfChild(
-                        fpsGroup.findViewById<View>(selectedFpsId)
-                    )
-                    val resolutionIndex = resolutionGroup.indexOfChild(
-                        resolutionGroup.findViewById<View>(selectedResolutionId)
-                    )
-                    val selectedFps = fpsOptions.getOrNull(fpsIndex)
-                    val selectedResolution = resolutionOptions.getOrNull(resolutionIndex)
-                    dialog.dismiss()
-                    startExportVideo(
-                        selectedFps,
-                        selectedResolution?.width,
-                        selectedResolution?.height
-                    )
-                }
+        var taskIndex = 0
+        lateinit var addNextBatch: Runnable
+        addNextBatch = Runnable {
+            if (!dialog.isShowing) return@Runnable
+            val endIndex = (taskIndex + 4).coerceAtMost(tasks.size)
+            while (taskIndex < endIndex) {
+                tasks[taskIndex++]()
             }
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)
-                ?.setTextColor(Color.LTGRAY)
+            if (taskIndex < tasks.size) {
+                handler.postDelayed(addNextBatch, 16L)
+            } else {
+                optionsReady = true
+                dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+                    ?.isEnabled = true
+                scroll.post { scroll.scrollTo(0, 0) }
+            }
         }
-        dialog.show()
+        handler.post(addNextBatch)
     }
 
     private fun exportVideo() {
