@@ -5444,6 +5444,13 @@ class TimelineView(
     private val density = resources.displayMetrics.density
     private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 
+    // RectF dipakai ulang agar onDraw tidak membuat banyak objek sementara.
+    private val clipFillRect = RectF()
+    private val thumbnailDestinationRect = RectF()
+    private val clipBorderRect = RectF()
+    private val leftHandleRect = RectF()
+    private val rightHandleRect = RectF()
+
     private var duration: Long
         get() = controller.durationMs
         set(value) {
@@ -5854,8 +5861,9 @@ class TimelineView(
         paint.style = Paint.Style.FILL
         paint.alpha = alpha
         paint.color = Color.rgb(43, 105, 85)
+        clipFillRect.set(clipLeft, trackTop, clipRight, trackBottom)
         canvas.drawRoundRect(
-            RectF(clipLeft, trackTop, clipRight, trackBottom),
+            clipFillRect,
             5f * density, 5f * density, paint
         )
 
@@ -5887,14 +5895,14 @@ class TimelineView(
                     ).toInt().coerceIn(0, frames.lastIndex)
                 val bitmap = frames[frameIndex]
                 val tileEnd = minOf(clipEndMs, tileTime + tileDurationMs)
-                val destination = RectF(
+                thumbnailDestinationRect.set(
                     timeToX(tileTime),
                     trackTop,
                     timeToX(tileEnd),
                     trackBottom
                 )
                 paint.alpha = alpha
-                canvas.drawBitmap(bitmap, null, destination, paint)
+                canvas.drawBitmap(bitmap, null, thumbnailDestinationRect, paint)
                 tileTime += tileDurationMs
             }
         }
@@ -6041,8 +6049,9 @@ class TimelineView(
             } else {
                 1f * density
             }
+            clipBorderRect.set(clipLeft, trackTop, clipRight, trackBottom)
             canvas.drawRoundRect(
-                RectF(clipLeft, trackTop, clipRight, trackBottom),
+                clipBorderRect,
                 4f * density, 4f * density, paint
             )
             paint.alpha = 255
@@ -6052,14 +6061,16 @@ class TimelineView(
             if (videoClip.id == selectedClipId && !isDraggingClip) {
                 val handleWidth = 9f * density
                 paint.color = Color.WHITE
-                canvas.drawRoundRect(
-                    RectF(clipLeft, trackTop + 3f * density, clipLeft + handleWidth, trackBottom - 3f * density),
-                    2f * density, 2f * density, paint
+                leftHandleRect.set(
+                    clipLeft, trackTop + 3f * density,
+                    clipLeft + handleWidth, trackBottom - 3f * density
                 )
-                canvas.drawRoundRect(
-                    RectF(clipRight - handleWidth, trackTop + 3f * density, clipRight, trackBottom - 3f * density),
-                    2f * density, 2f * density, paint
+                rightHandleRect.set(
+                    clipRight - handleWidth, trackTop + 3f * density,
+                    clipRight, trackBottom - 3f * density
                 )
+                canvas.drawRoundRect(leftHandleRect, 2f * density, 2f * density, paint)
+                canvas.drawRoundRect(rightHandleRect, 2f * density, 2f * density, paint)
             }
 
         }
