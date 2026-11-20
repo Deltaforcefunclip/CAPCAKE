@@ -2913,7 +2913,10 @@ class MainActivity : AppCompatActivity() {
                     "Warna" -> showTextColorPicker()
                     "Gaya" -> toggleSelectedTextStyle()
                     "Animasi" -> Toast.makeText(this, "Pengaturan animasi teks akan ditambahkan berikutnya.", Toast.LENGTH_SHORT).show()
-                    "Opasitas" -> showTextOpacityDialog()
+                    "Opasitas" -> {
+                        if (selectedEffectClipId != null) effectClipManager.find(selectedEffectClipId)?.let { showEffectOpacityDialog(it) }
+                        else showTextOpacityDialog()
+                    }
                     "Hapus" -> {
                         if (selectedEffectClipId != null) {
                             pushUndoSnapshot()
