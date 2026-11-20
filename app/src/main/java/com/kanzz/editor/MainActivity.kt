@@ -5768,24 +5768,40 @@ class TimelineView(
                             0L
                         }
 
-                    val bitmap = retriever.getFrameAtTime(
-                        timeMs * 1000,
-                        MediaMetadataRetriever.OPTION_CLOSEST_SYNC
-                    )
+                    // Ambil frame langsung pada ukuran thumbnail agar tidak
+                    // menyimpan bitmap resolusi penuh sebelum diperkecil.
+                    val thumbnailWidth = dp(80).coerceAtLeast(1)
+                    val thumbnailHeight = dp(48).coerceAtLeast(1)
+                    val bitmap = if (android.os.Build.VERSION.SDK_INT >= 27) {
+                        retriever.getScaledFrameAtTime(
+                            timeMs * 1000,
+                            MediaMetadataRetriever.OPTION_CLOSEST_SYNC,
+                            thumbnailWidth,
+                            thumbnailHeight
+                        )
+                    } else {
+                        retriever.getFrameAtTime(
+                            timeMs * 1000,
+                            MediaMetadataRetriever.OPTION_CLOSEST_SYNC
+                        )
+                    }
 
                     if (bitmap != null) {
-
-                        val thumbnail = Bitmap.createScaledBitmap(
-                            bitmap,
-                            dp(110),
-                            dp(65),
-                            true
-                        )
-
-                        if (thumbnail !== bitmap) {
-                            bitmap.recycle()
+                        val thumbnail = if (
+                            bitmap.width != thumbnailWidth ||
+                            bitmap.height != thumbnailHeight
+                        ) {
+                            Bitmap.createScaledBitmap(
+                                bitmap,
+                                thumbnailWidth,
+                                thumbnailHeight,
+                                true
+                            ).also {
+                                if (it !== bitmap && !bitmap.isRecycled) bitmap.recycle()
+                            }
+                        } else {
+                            bitmap
                         }
-
                         newFrames.add(thumbnail)
                     }
                 }
