@@ -2363,7 +2363,7 @@ class MainActivity : AppCompatActivity() {
         val before = videoClipManager.clips.take(index).sumOf { it.timelineDurationMs }
         val clip = videoClipManager.clips[index]
         val localTimelinePosition = (player.currentPosition.coerceAtLeast(0L) /
-            clip.speed.coerceIn(0.25f, 3f)).toLong()
+            clip.speed.coerceIn(0.25f, 4f)).toLong()
         return (before + localTimelinePosition)
             .coerceIn(0L, videoClipManager.durationMs)
     }
@@ -2386,7 +2386,7 @@ class MainActivity : AppCompatActivity() {
             if (target < end || index == videoClipManager.clips.lastIndex) {
                 targetIndex = index
                 val localTimelineMs = (target - accumulated).coerceIn(0L, clip.timelineDurationMs)
-                localPosition = (localTimelineMs * clip.speed.coerceIn(0.25f, 3f))
+                localPosition = (localTimelineMs * clip.speed.coerceIn(0.25f, 4f))
                     .toLong().coerceIn(0L, clip.durationMs)
                 break
             }
@@ -3994,7 +3994,7 @@ class MainActivity : AppCompatActivity() {
         if (::playerView.isInitialized) {
             playerView.alpha = clip.opacity.coerceIn(0f, 1f)
         }
-        val speed = clip.speed.coerceIn(0.25f, 3f)
+        val speed = clip.speed.coerceIn(0.25f, 4f)
         if (kotlin.math.abs(player.playbackParameters.speed - speed) > 0.01f) {
             player.playbackParameters = PlaybackParameters(speed)
         }
@@ -4022,42 +4022,93 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showVideoClipSpeed(clip: VideoClip) {
-        val seek = SeekBar(this).apply {
-            max = 275
-            progress = ((clip.speed - 0.25f) * 100f).toInt().coerceIn(0, max)
+        val accent = 0xFFE5674E.toInt()
+        val panelBackground = android.graphics.drawable.GradientDrawable().apply {
+            setColor(Color.rgb(15, 15, 15))
+            setStroke(dp(1), Color.rgb(55, 55, 55))
+            cornerRadius = dp(12).toFloat()
         }
         val label = TextView(this).apply {
             text = String.format(Locale.US, "%.2fx", clip.speed)
             setTextColor(Color.WHITE)
             gravity = Gravity.CENTER
-            textSize = 18f
+            textSize = 22f
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        val seek = SeekBar(this).apply {
+            max = 375 // 0.25x hingga 4.00x, dengan ketelitian 0.01x
+            progress = ((clip.speed.coerceIn(0.25f, 4f) - 0.25f) * 100f).toInt().coerceIn(0, max)
+            progressTintList = android.content.res.ColorStateList.valueOf(accent)
+            thumbTintList = android.content.res.ColorStateList.valueOf(accent)
+        }
+        fun updateSpeedLabel() {
+            label.text = String.format(Locale.US, "%.2fx", 0.25f + seek.progress / 100f)
+        }
+        val presets = listOf(0.25f, 0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f, 3f, 4f)
+        val presetRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        presets.forEach { speed ->
+            val button = TextView(this).apply {
+                text = if (speed == 1f) "1x" else String.format(Locale.US, "%.2gx", speed)
+                textSize = 11f
+                gravity = Gravity.CENTER
+                setTextColor(if (kotlin.math.abs(clip.speed - speed) < 0.01f) accent else Color.LTGRAY)
+                setPadding(dp(5), dp(8), dp(5), dp(8))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(29, 29, 29))
+                    setStroke(dp(1), if (kotlin.math.abs(clip.speed - speed) < 0.01f) accent else Color.rgb(65, 65, 65))
+                    cornerRadius = dp(5).toFloat()
+                }
+                setOnClickListener {
+                    seek.progress = ((speed - 0.25f) * 100f).toInt().coerceIn(0, seek.max)
+                    updateSpeedLabel()
+                }
+            }
+            presetRow.addView(button, LinearLayout.LayoutParams(0, dp(34), 1f).apply {
+                marginStart = dp(2)
+                marginEnd = dp(2)
+            })
         }
         seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
-                label.text = String.format(Locale.US, "%.2fx", 0.25f + value / 100f)
+                updateSpeedLabel()
             }
             override fun onStartTrackingTouch(bar: SeekBar?) {}
             override fun onStopTrackingTouch(bar: SeekBar?) {}
         })
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(4))
+            setPadding(dp(14), dp(12), dp(14), dp(10))
+            setBackground(panelBackground)
             addView(label, LinearLayout.LayoutParams(-1, dp(42)))
             addView(seek, LinearLayout.LayoutParams(-1, dp(48)))
+            addView(presetRow, LinearLayout.LayoutParams(-1, dp(42)))
         }
-        androidx.appcompat.app.AlertDialog.Builder(this)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Kecepatan klip")
             .setView(content)
-            .setNegativeButton("Batal", null)
-            .setPositiveButton("Terapkan") { _, _ ->
-                val oldSpeed = clip.speed.coerceIn(0.25f, 3f)
+            .setNegativeButton("Reset", null)
+            .setPositiveButton("Terapkan", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawable(
+                android.graphics.drawable.ColorDrawable(Color.TRANSPARENT)
+            )
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.setOnClickListener {
+                seek.progress = 75 // 1.00x
+                updateSpeedLabel()
+            }
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)?.setOnClickListener {
+                val oldSpeed = clip.speed.coerceIn(0.25f, 4f)
                 val oldDuration = clip.timelineDurationMs
                 val oldStart = clip.timelineStartMs
                 val oldPosition = currentTimelinePosition()
                 val sourceOffset = ((oldPosition - oldStart).coerceAtLeast(0L) * oldSpeed)
                     .toLong().coerceAtMost(clip.durationMs)
                 pushUndoSnapshot()
-                clip.speed = (0.25f + seek.progress / 100f).coerceIn(0.25f, 3f)
+                clip.speed = (0.25f + seek.progress / 100f).coerceIn(0.25f, 4f)
                 videoClipManager.recalculateTimeline()
                 val newPosition = when {
                     oldPosition < oldStart -> oldPosition
@@ -4069,8 +4120,10 @@ class MainActivity : AppCompatActivity() {
                 refreshEditedPreview(newPosition)
                 syncVideoClipProperties()
                 saveCurrentProject()
+                dialog.dismiss()
             }
-            .show()
+        }
+        dialog.show()
     }
 
     private fun showVideoClipOpacity(clip: VideoClip) {
@@ -4417,7 +4470,7 @@ class MainActivity : AppCompatActivity() {
                         Effects(
                             audioProcessors,
                             buildList {
-                                add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 3f)))
+                                add(SpeedChangeEffect(clip.speed.coerceIn(0.25f, 4f)))
 
                                 // Bentuk kanvas output terlebih dahulu. Setelah kanvas terbentuk,
                                 // zoom/crop diterapkan pada kanvas tersebut, bukan pada sumber 16:9.
@@ -5272,7 +5325,7 @@ class TimelineView(
                 )
                 val sourceTime = clip.sourceStartMs +
                     ((sampleTime - clipStartMs).coerceAtLeast(0L) *
-                        clip.speed.coerceIn(0.25f, 3f)).toLong()
+                        clip.speed.coerceIn(0.25f, 4f)).toLong()
                 val frameIndex = (
                     sourceTime.coerceAtLeast(0L) * frames.size /
                         framesSourceDurationMs
@@ -5384,7 +5437,7 @@ class TimelineView(
         val displayedClips = displayedClipPositions()
         displayedClips.forEachIndexed { index, (videoClip, clipStartMs) ->
             val isLiveTrimming = trimClipId == videoClip.id
-            val speed = videoClip.speed.coerceIn(0.25f, 3f)
+            val speed = videoClip.speed.coerceIn(0.25f, 4f)
             val previewSourceDelta = if (isLiveTrimming) (trimDeltaMs * speed).toLong() else 0L
             val previewClip = if (isLiveTrimming && trimEdge < 0) {
                 val left = previewSourceDelta.coerceIn(0L, (videoClip.durationMs - 1L).coerceAtLeast(0L))
