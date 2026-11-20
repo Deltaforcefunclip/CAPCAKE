@@ -47,6 +47,7 @@ import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.effect.Presentation
 import androidx.media3.effect.Crop
+import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.CanvasOverlay
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.transformer.Effects
@@ -4526,7 +4527,7 @@ class MainActivity : AppCompatActivity() {
                     (parts[1].toFloatOrNull() ?: 1f)
             } else 0f
         }.takeIf { it > 0f } ?: profiles.first().width.toFloat() /
-            profiles.first().height.toFloat().coerceAtLeast(1)
+            profiles.first().height.toFloat().coerceAtLeast(1f)
         fun widthForHeight(height: Int): Int =
             (((height * ratio).toInt() / 2) * 2).coerceAtLeast(2)
 
