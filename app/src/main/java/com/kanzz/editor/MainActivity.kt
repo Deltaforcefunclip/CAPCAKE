@@ -5088,6 +5088,8 @@ class MainActivity : AppCompatActivity() {
         // agar klip tetap melekat pada waktunya saat playhead bergerak.
         audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
         invalidateTextTrackViews()
+        // Effect clips juga harus mengikuti playhead pada setiap frame playback.
+        invalidateEffectTrackViews()
         updateTextPreview(force = false)
 
         currentProject?.position = position
