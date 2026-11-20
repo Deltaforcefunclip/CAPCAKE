@@ -336,6 +336,7 @@ class MainActivity : AppCompatActivity() {
     private var proxyTargetFps = 30
     private var previewProxyFps = 30
     private var dreamyIntensity = 0f
+    private var dreamyPreviewOverlay: View? = null
     private var proxyCompletedCount = 0
     private var proxyFailedCount = 0
     private var proxyGenerationId = 0
@@ -503,12 +504,10 @@ class MainActivity : AppCompatActivity() {
             // Tetap preload awal item berikutnya; renderer prewarming menyiapkan decoder video.
             preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
             addAnalyticsListener(playbackAnalyticsListener)
-            setVideoEffects(buildDreamyVideoEffects(dreamyIntensity))
         }
 
         previewQualityShortSide = prefs.getInt("preview_quality_short_side", 720)
         previewProxyFps = prefs.getInt("preview_proxy_fps", 30)
-        dreamyIntensity = prefs.getFloat("dreamy_intensity_${currentProject?.id ?: "default"}", 0f)
         selectedPreviewRatio = prefs.getString("preview_ratio_${currentProject?.id ?: "default"}", "") ?: ""
 
         handler.post(playbackUpdater)
@@ -1304,6 +1303,7 @@ class MainActivity : AppCompatActivity() {
     private fun openEditor() {
         editorOpen = true
         val ratioProjectKey = currentProject?.id ?: "default"
+        dreamyIntensity = prefs.getFloat("dreamy_intensity_$ratioProjectKey", 0f)
         selectedPreviewRatio = prefs.getString("preview_ratio_$ratioProjectKey", "") ?: ""
 
         val root = LinearLayout(this).apply {
@@ -1378,6 +1378,14 @@ class MainActivity : AppCompatActivity() {
             playerView,
             FrameLayout.LayoutParams(-1, -1)
         )
+
+        dreamyPreviewOverlay = View(this).apply {
+            isClickable = false
+            isFocusable = false
+            visibility = View.GONE
+        }
+        previewFrame.addView(dreamyPreviewOverlay, FrameLayout.LayoutParams(-1, -1))
+        updateDreamyPreviewOverlay()
 
         playerView.player = player
         // Rasio menjadi batas kanvas, bukan mengubah ukuran PlayerView.
@@ -2242,7 +2250,6 @@ class MainActivity : AppCompatActivity() {
                     timeline.loadThumbnails(uri, sourceDuration)
 
                     // Replace the original full-length source with the edited clip sequence.
-                    player.setVideoEffects(buildDreamyVideoEffects(dreamyIntensity))
                     player.setMediaItems(buildEditedVideoItems())
                     player.prepare()
                     return
@@ -3085,6 +3092,14 @@ class MainActivity : AppCompatActivity() {
         )
     }
 
+    private fun updateDreamyPreviewOverlay() {
+        val overlay = dreamyPreviewOverlay ?: return
+        val strength = dreamyIntensity.coerceIn(0f, 1f)
+        overlay.visibility = if (strength <= 0.001f) View.GONE else View.VISIBLE
+        overlay.setBackgroundColor(Color.rgb(255, 246, 232))
+        overlay.alpha = 0.14f * strength
+        overlay.invalidate()
+    }
     private fun buildDreamyColorMatrix(amount: Float): RgbMatrix {
         val strength = amount.coerceIn(0f, 1f)
         val scale = 1f - 0.12f * strength
@@ -3139,7 +3154,7 @@ class MainActivity : AppCompatActivity() {
             override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
                 valueLabel.text = "$progress%"
                 dreamyIntensity = progress / 100f
-                player.setVideoEffects(buildDreamyVideoEffects(dreamyIntensity))
+                updateDreamyPreviewOverlay()
             }
             override fun onStartTrackingTouch(seekBar: SeekBar?) {}
             override fun onStopTrackingTouch(seekBar: SeekBar?) {}
