@@ -3162,6 +3162,60 @@ class MainActivity : AppCompatActivity() {
     private fun buildDreamyVideoEffects(amount: Float): List<androidx.media3.common.Effect> =
         if (amount > 0.001f) listOf(buildDreamyColorMatrix(amount)) else emptyList()
 
+    private fun showEffectPicker() {
+        val options = listOf("Dreamy", "Vintage", "Black & White", "Warm", "Cool")
+        var chosen = options.first()
+        val dialog = android.app.Dialog(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(14))
+            background = android.graphics.drawable.GradientDrawable().apply { setColor(Color.rgb(20, 20, 20)); cornerRadius = dp(18).toFloat() }
+        }
+        root.addView(TextView(this).apply { text = "PILIH EFFECT"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE) })
+        root.addView(TextView(this).apply { text = "Pilih efek untuk ditambahkan ke timeline"; textSize = 11f; setTextColor(Color.LTGRAY); setPadding(0, dp(5), 0, dp(12)) })
+        val group = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        options.forEachIndexed { index, name ->
+            val radio = RadioButton(this).apply { text = name; setTextColor(Color.WHITE); buttonTintList = android.content.res.ColorStateList.valueOf(green); id = View.generateViewId(); textSize = 14f; isChecked = index == 0 }
+            radio.setOnCheckedChangeListener { _, checked -> if (checked) chosen = name }
+            group.addView(radio, RadioGroup.LayoutParams(-1, dp(44)))
+        }
+        root.addView(group)
+        val actions = LinearLayout(this).apply { gravity = Gravity.END }
+        val cancel = TextView(this).apply { text = "BATAL"; setTextColor(Color.LTGRAY); gravity = Gravity.CENTER; setPadding(dp(16), dp(12), dp(16), dp(8)) }
+        val confirm = TextView(this).apply { text = "KONFIRMASI"; setTextColor(green); typeface = Typeface.DEFAULT_BOLD; gravity = Gravity.CENTER; setPadding(dp(16), dp(12), dp(8), dp(8)) }
+        actions.addView(cancel); actions.addView(confirm); root.addView(actions)
+        dialog.setContentView(root)
+        cancel.setOnClickListener { dialog.dismiss() }
+        confirm.setOnClickListener {
+            pushUndoSnapshot()
+            val clip = EffectClip(effectName = chosen, startTimeMs = currentTimelinePosition(), durationMs = 2000L)
+            effectClipManager.add(clip)
+            selectedEffectClipId = clip.id
+            selectedTextClipId = null; selectedAudioClipId = null; selectedVideoClipId = null; videoSelected = false
+            activeLayerGroup = "EFFECT"
+            dialog.dismiss(); refreshEffectTracks(); saveCurrentProject(); updateToolMenu()
+        }
+        dialog.show()
+        dialog.window?.apply { setLayout(-1, -2); setGravity(Gravity.BOTTOM); setBackgroundDrawableResource(android.R.color.transparent) }
+        root.post {
+            root.translationY = root.height.toFloat().coerceAtLeast(dp(220).toFloat())
+            root.animate().translationY(0f).setDuration(260L).setInterpolator(DecelerateInterpolator()).start()
+        }
+    }
+
+    private fun showEffectOpacityDialog(clip: EffectClip) {
+        val seek = SeekBar(this).apply { max = 100; progress = (clip.opacity * 100).toInt().coerceIn(0, 100) }
+        val label = TextView(this).apply { text = "Opasitas " + seek.progress + "%"; setTextColor(Color.WHITE); gravity = Gravity.CENTER }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) { label.text = "Opasitas " + value + "%"; clip.opacity = value / 100f }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        val box = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(20), dp(12), dp(20), dp(8)); addView(label); addView(seek) }
+        androidx.appcompat.app.AlertDialog.Builder(this).setTitle("Opasitas Effect").setView(box)
+            .setNegativeButton("Batal") { _, _ -> refreshEffectTracks() }
+            .setPositiveButton("Simpan") { _, _ -> pushUndoSnapshot(); saveCurrentProject(); refreshEffectTracks() }.show()
+    }
     private fun showEffectPanel() {
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
