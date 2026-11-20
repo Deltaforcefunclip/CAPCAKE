@@ -3320,7 +3320,7 @@ class MainActivity : AppCompatActivity() {
         val activeIds = additional.map { it.id }.toSet()
         val staleIds = additionalTextPreviewViews.keys.filter { it !in activeIds }
         staleIds.forEach { id ->
-            additionalTextPreviewViews.remove(id)?.let { previewFrame.removeView(it) }
+            additionalTextPreviewViews.remove(id)?.let { fontPickerAnchorView.removeView(it) }
         }
 
         additional.forEach { clip ->
@@ -3335,11 +3335,11 @@ class MainActivity : AppCompatActivity() {
                     isFocusable = false
                 }.also { created ->
                     val selectionIndex = if (::textSelectionOverlay.isInitialized) {
-                        previewFrame.indexOfChild(textSelectionOverlay).coerceAtLeast(0)
+                        fontPickerAnchorView.indexOfChild(textSelectionOverlay).coerceAtLeast(0)
                     } else {
-                        previewFrame.childCount
+                        fontPickerAnchorView.childCount
                     }
-                    previewFrame.addView(
+                    fontPickerAnchorView.addView(
                         created,
                         selectionIndex,
                         FrameLayout.LayoutParams(-2, -2, Gravity.CENTER)
