@@ -32,6 +32,10 @@ class AudioTrackView(
     private val selectedPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density
     }
+    private val handlePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFFFFF.toInt()
+        style = Paint.Style.FILL
+    }
     private val textStrokePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt()
         textSize = 10f * density
@@ -167,11 +171,11 @@ class AudioTrackView(
                 val handleBottom = rect.bottom - 4f * density
                 canvas.drawRoundRect(
                     RectF(rect.left + 2f * density, handleTop, rect.left + handleWidth, handleBottom),
-                    2f * density, 2f * density, selectedPaint
+                    2f * density, 2f * density, handlePaint
                 )
                 canvas.drawRoundRect(
                     RectF(rect.right - handleWidth, handleTop, rect.right - 2f * density, handleBottom),
-                    2f * density, 2f * density, selectedPaint
+                    2f * density, 2f * density, handlePaint
                 )
             }
             canvas.save()
