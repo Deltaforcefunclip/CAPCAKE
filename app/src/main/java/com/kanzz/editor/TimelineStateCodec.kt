@@ -98,6 +98,7 @@ object TimelineStateCodec {
                 put("durationMs", clip.durationMs)
                 put("filePath", clip.filePath)
                 put("sourceStartMs", clip.sourceStartMs)
+                put("sourceDurationMs", clip.sourceDurationMs)
                 put("name", clip.name)
                 put("volume", clip.volume.toDouble())
                 put("speed", clip.speed.toDouble())
@@ -121,6 +122,7 @@ object TimelineStateCodec {
                     filePath = item.getString("filePath"),
                     sourceStartMs = item.optLong("sourceStartMs"),
                     name = item.optString("name", "Audio"),
+                    sourceDurationMs = item.optLong("sourceDurationMs", item.optLong("durationMs")),
                     volume = item.optDouble("volume", 1.0).toFloat(),
                     speed = item.optDouble("speed", 1.0).toFloat()
                 )
