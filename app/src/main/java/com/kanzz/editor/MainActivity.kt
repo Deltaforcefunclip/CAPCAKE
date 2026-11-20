@@ -1672,11 +1672,22 @@ class MainActivity : AppCompatActivity() {
 
         redoButton.setOnClickListener { redoTimelineEdit() }
 
-        controls.addView(undoButton)
-        controls.addView(backButton)
-        controls.addView(playButton)
-        controls.addView(forwardButton)
-        controls.addView(redoButton)
+        // Lebar setiap tombol dibuat tetap. Simbol Play/Pause memiliki lebar glyph
+        // berbeda, tetapi tidak boleh menggeser tombol lain saat status berubah.
+        fun addFixedControl(view: View, widthDp: Int) {
+            controls.addView(
+                view,
+                LinearLayout.LayoutParams(dp(widthDp), dp(52)).apply {
+                    marginStart = dp(2)
+                    marginEnd = dp(2)
+                }
+            )
+        }
+        addFixedControl(undoButton, 48)
+        addFixedControl(backButton, 58)
+        addFixedControl(playButton, 64)
+        addFixedControl(forwardButton, 58)
+        addFixedControl(redoButton, 48)
 
         root.addView(
             controls,
@@ -3073,7 +3084,8 @@ class MainActivity : AppCompatActivity() {
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(dp(8), dp(18), dp(8), dp(18))
+            setPadding(dp(10), dp(14), dp(10), dp(14))
+            setBackgroundColor(Color.BLACK)
         }
 
         lateinit var ratioDialog: androidx.appcompat.app.AlertDialog
@@ -3092,72 +3104,120 @@ class MainActivity : AppCompatActivity() {
                 boxWidth = (maxSide * widthRatio / heightRatio).toInt().coerceAtLeast(dp(18))
             }
 
+            val selected = selectedPreviewRatio == ratio
             val item = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 gravity = Gravity.CENTER
                 isClickable = true
                 isFocusable = true
-                setPadding(dp(3), dp(4), dp(3), dp(4))
+                setPadding(dp(3), dp(8), dp(3), dp(8))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(if (selected) Color.rgb(35, 48, 38) else Color.rgb(27, 27, 27))
+                    setStroke(dp(1), if (selected) green else Color.rgb(58, 58, 58))
+                    cornerRadius = dp(9).toFloat()
+                }
             }
             val shape = TextView(this).apply {
-                text = ratio
-                textSize = 10f
+                text = " "
                 gravity = Gravity.CENTER
-                setTextColor(if (selectedPreviewRatio == ratio) green else Color.WHITE)
                 background = android.graphics.drawable.GradientDrawable().apply {
                     setColor(Color.rgb(38, 38, 38))
-                    setStroke(dp(2), if (selectedPreviewRatio == ratio) green else Color.LTGRAY)
+                    setStroke(dp(2), if (selected) green else Color.LTGRAY)
                     cornerRadius = dp(3).toFloat()
                 }
             }
             item.addView(shape, LinearLayout.LayoutParams(boxWidth, boxHeight))
             val label = TextView(this).apply {
                 text = ratio
-                textSize = 10f
+                textSize = 11f
                 gravity = Gravity.CENTER
-                setTextColor(Color.LTGRAY)
-                setPadding(0, dp(6), 0, 0)
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(if (selected) green else Color.WHITE)
+                setPadding(0, dp(8), 0, 0)
             }
-            item.addView(label, LinearLayout.LayoutParams(-1, dp(22)))
+            item.addView(label, LinearLayout.LayoutParams(-1, dp(24)))
             item.setOnClickListener {
                 applyPreviewAspectRatio(ratio)
                 ratioDialog.dismiss()
             }
-            content.addView(item, LinearLayout.LayoutParams(0, dp(92), 1f))
+            content.addView(
+                item,
+                LinearLayout.LayoutParams(0, dp(94), 1f).apply {
+                    marginStart = dp(3)
+                    marginEnd = dp(3)
+                }
+            )
         }
 
+        val titleView = TextView(this).apply {
+            text = "RASIO KANVAS"
+            textSize = 18f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            setPadding(dp(20), dp(16), dp(20), dp(8))
+        }
         ratioDialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Pilih Rasio")
+            .setCustomTitle(titleView)
             .setView(content)
-            .setNegativeButton("Tutup", null)
+            .setNegativeButton("RESET", null)
+            .setPositiveButton("TUTUP", null)
             .create()
+        ratioDialog.setCanceledOnTouchOutside(true)
+        ratioDialog.setOnShowListener {
+            ratioDialog.window?.setBackgroundDrawable(
+                android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(15, 15, 15))
+                    setStroke(dp(1), Color.rgb(55, 55, 55))
+                    cornerRadius = dp(12).toFloat()
+                }
+            )
+            ratioDialog.window?.setLayout(
+                (resources.displayMetrics.widthPixels * 0.94f).toInt(),
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT
+            )
+            ratioDialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)?.apply {
+                setTextColor(green)
+                setOnClickListener {
+                    applyPreviewAspectRatio("")
+                    ratioDialog.dismiss()
+                }
+            }
+            ratioDialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+                ?.setTextColor(Color.LTGRAY)
+        }
         ratioDialog.show()
     }
 
     private fun applyPreviewAspectRatio(ratio: String) {
         selectedPreviewRatio = ratio
-        val parts = ratio.split(":")
-        val aspect = parts[0].toFloat() / parts[1].toFloat()
         val projectKey = currentProject?.id ?: "default"
         if (ratio.isBlank()) {
-            // Tanpa kanvas rasio, preview kembali ke tampilan asli dan transform tidak aktif.
+            // Reset mengembalikan rasio, zoom, rotasi, dan posisi ke tampilan sumber.
             previewScale = 1f
             previewRotation = 0f
             previewTranslateX = 0f
             previewTranslateY = 0f
+            previewMagnetVertical = false
+            previewMagnetHorizontal = false
             prefs.edit()
                 .putFloat("preview_scale_$projectKey", 1f)
                 .putFloat("preview_rotation_$projectKey", 0f)
                 .putFloat("preview_tx_$projectKey", 0f)
                 .putFloat("preview_ty_$projectKey", 0f)
+                .putString("preview_ratio_$projectKey", "")
                 .apply()
+        } else {
+            prefs.edit().putString("preview_ratio_$projectKey", ratio).apply()
         }
         previewRatioOverlay?.isEnabled = ratio.isNotBlank()
         previewRatioOverlay?.invalidate()
         if (::playerView.isInitialized) playerView.invalidate()
-        prefs.edit().putString("preview_ratio_$projectKey", ratio).apply()
         applyPreviewTransform()
-        Toast.makeText(this, "Rasio preview: " + (if (ratio.isBlank()) "Asli" else ratio), Toast.LENGTH_SHORT).show()
+        Toast.makeText(
+            this,
+            "Rasio preview: " + if (ratio.isBlank()) "Asli" else ratio,
+            Toast.LENGTH_SHORT
+        ).show()
     }
 
     private fun setupPreviewTransformGesture(overlay: View) {
