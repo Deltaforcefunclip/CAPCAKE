@@ -101,6 +101,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var thisTextTracksContainer: LinearLayout
     private lateinit var genericLayerPlaceholder: TextView
     private lateinit var fontPickerPanel: LinearLayout
+    private lateinit var presetTextPanel: LinearLayout
     private lateinit var fontPickerAnchorView: View
     private lateinit var previewFrameContainer: FrameLayout
     private lateinit var editorOverlayRoot: FrameLayout
@@ -1935,8 +1936,20 @@ class MainActivity : AppCompatActivity() {
             fontPickerPanel,
             FrameLayout.LayoutParams(-1, dp(420), Gravity.TOP)
         )
+        presetTextPanel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(6), dp(8), dp(6))
+            setBackgroundColor(Color.rgb(15, 15, 15))
+            visibility = View.GONE
+            elevation = dp(14).toFloat()
+        }
+        editorOverlayRoot.addView(
+            presetTextPanel,
+            FrameLayout.LayoutParams(dp(180), dp(250), Gravity.TOP or Gravity.END)
+        )
         root.addOnLayoutChangeListener { _, _, _, _, _, _, _, _, _ ->
             positionFontPickerPanel()
+            if (::presetTextPanel.isInitialized && presetTextPanel.visibility == View.VISIBLE) positionPresetTextPanel()
         }
         setContentView(editorOverlayRoot)
 
@@ -2435,7 +2448,8 @@ class MainActivity : AppCompatActivity() {
             listOf(
                 "✎" to "Edit Text", "Aa" to "Font", "▣" to "Salin",
                 "●" to "Warna", "▤" to "Gaya", "✂" to "Potong",
-                "✧" to "Animasi", "◐" to "Opasitas", "⌫" to "Hapus"
+                "✧" to "Animasi", "◐" to "Opasitas", "⌫" to "Hapus",
+                "P̲T̲" to "Preset Text"
             )
         } else if (selectedAudioClipId != null) {
 
@@ -2543,6 +2557,7 @@ class MainActivity : AppCompatActivity() {
 
                     "Edit Text" -> editSelectedText()
                     "Font" -> showTextFontPicker()
+                    "Preset Text" -> showPresetTextPanel()
                     "Salin" -> duplicateSelectedText()
                     "Warna" -> showTextColorPicker()
                     "Gaya" -> toggleSelectedTextStyle()
@@ -3317,6 +3332,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             fontPickerPanel.visibility = View.GONE
+        if (::presetTextPanel.isInitialized) presetTextPanel.visibility = View.GONE
             fontPickerClipId = null
             fontPickerOriginalFont = null
         }
@@ -3414,6 +3430,52 @@ class MainActivity : AppCompatActivity() {
         fontPickerPanel.visibility = View.VISIBLE
         positionFontPickerPanel()
         fontPickerPanel.bringToFront()
+    }
+
+    private fun showPresetTextPanel() {
+        if (selectedTextClip() == null || !::presetTextPanel.isInitialized) return
+        presetTextPanel.removeAllViews()
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        val title = TextView(this).apply {
+            text = "PT  Preset Text"
+            textSize = 14f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        }
+        header.addView(title, LinearLayout.LayoutParams(0, dp(32), 1f))
+        val close = TextView(this).apply {
+            text = "✕"
+            textSize = 18f
+            gravity = Gravity.CENTER
+            setTextColor(Color.LTGRAY)
+            setPadding(dp(8), 0, dp(4), 0)
+            setOnClickListener { presetTextPanel.visibility = View.GONE }
+        }
+        header.addView(close, LinearLayout.LayoutParams(dp(32), dp(32)))
+        presetTextPanel.addView(header, LinearLayout.LayoutParams(-1, dp(34)))
+        val placeholder = TextView(this).apply {
+            text = "Preset Text"
+            textSize = 12f
+            gravity = Gravity.CENTER
+            setTextColor(Color.GRAY)
+        }
+        presetTextPanel.addView(placeholder, LinearLayout.LayoutParams(-1, 0, 1f))
+        presetTextPanel.visibility = View.VISIBLE
+        positionPresetTextPanel()
+        presetTextPanel.bringToFront()
+    }
+
+    private fun positionPresetTextPanel() {
+        if (!::presetTextPanel.isInitialized || !::toolsContainer.isInitialized) return
+        val params = presetTextPanel.layoutParams as? FrameLayout.LayoutParams ?: return
+        params.width = (resources.displayMetrics.widthPixels / 2).coerceAtLeast(dp(150))
+        params.height = dp(250)
+        params.gravity = Gravity.TOP or Gravity.END
+        params.topMargin = (toolsContainer.top - params.height).coerceAtLeast(fontPickerAnchorView.bottom)
+        presetTextPanel.layoutParams = params
     }
 
     private fun positionFontPickerPanel() {
