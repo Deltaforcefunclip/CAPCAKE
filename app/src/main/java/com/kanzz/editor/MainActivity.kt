@@ -1575,12 +1575,20 @@ class MainActivity : AppCompatActivity() {
             onTap = { tappedClip ->
                 selectedAudioClipId = null
                 clearAudioTrackSelection()
+                selectedTextClipId = null
+                if (::thisTextTracksContainer.isInitialized) {
+                    for (i in 0 until thisTextTracksContainer.childCount) {
+                        (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
+                    }
+                }
                 selectedVideoClipId = tappedClip?.id
                 videoSelected = tappedClip != null
                 timeline.selectClip(selectedVideoClipId)
                 timeline.updateSelection(false)
                 playerView.foreground = null
-                updateToolMenu()            },
+                updateTextPreview()
+                updateToolMenu()
+            },
             onViewportChanged = {
                 audioTrackViews.values.forEach { it.invalidate() }
                 invalidateTextTrackViews()
@@ -1593,8 +1601,16 @@ class MainActivity : AppCompatActivity() {
                 if (current != null) {
                     selectedVideoClipId = clipId
                     selectedAudioClipId = null
+                    clearAudioTrackSelection()
+                    selectedTextClipId = null
+                    if (::thisTextTracksContainer.isInitialized) {
+                        for (i in 0 until thisTextTracksContainer.childCount) {
+                            (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
+                        }
+                    }
                     videoSelected = true
                     timeline.selectClip(clipId)
+                    updateTextPreview()
                     timeline.updateSelection(false)
                     if (current.timelineStartMs != targetStartMs) {
                         // Selama drag, player hanya dipakai untuk preview klip di bawah
@@ -1667,8 +1683,71 @@ class MainActivity : AppCompatActivity() {
             LinearLayout.LayoutParams(-1, dp(100))
         )
 
-        // Overlay playhead meneruskan garis dari timeline video ke area audio.
-        audioTimelineFrame = FrameLayout(this)
+        // Area kosong di bawah layer tetap bisa dipakai menggeser seluruh timeline.
+        audioTimelineFrame = object : FrameLayout(this) {
+            private var emptyPanActive = false
+            private var emptyPanLastX = 0f
+
+            private fun isBelowVisibleLanes(y: Float): Boolean {
+                val visibleHeight = when (activeLayerGroup) {
+                    "AUDIO" -> (audioTracksContainer.height - audioTracksScroll.scrollY).coerceAtLeast(0)
+                    "TEXT" -> (thisTextTracksContainer.height - textTracksScroll.scrollY).coerceAtLeast(0)
+                    else -> 0
+                }
+                return y > visibleHeight + dp(2)
+            }
+
+            override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) {
+                    emptyPanActive = isBelowVisibleLanes(event.y)
+                    emptyPanLastX = event.x
+                    return emptyPanActive
+                }
+                return emptyPanActive
+            }
+
+            override fun onTouchEvent(event: MotionEvent): Boolean {
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        emptyPanActive = true
+                        emptyPanLastX = event.x
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                        return true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (emptyPanActive) {
+                            val dx = event.x - emptyPanLastX
+                            timelineController.offsetPx -= dx
+                            timelineController.clampOffset()
+                            val position = timelineController.xToTime(width / 2f)
+                            timelineController.positionMs = position
+                            emptyPanLastX = event.x
+                            pendingScrubPositionMs = position
+                            if (!isTimelineScrubbing) {
+                                isTimelineScrubbing = true
+                                if (player.isPlaying) player.pause()
+                                player.setScrubbingModeEnabled(true)
+                                updatePlayButton()
+                            }
+                            seekTimelinePosition(position)
+                            handler.removeCallbacks(scrubFinishRunnable)
+                            handler.postDelayed(scrubFinishRunnable, 140L)
+                            updateTime()
+                            timeline.postInvalidateOnAnimation()
+                            audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
+                            invalidateTextTrackViews()
+                        }
+                        return true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        emptyPanActive = false
+                        parent?.requestDisallowInterceptTouchEvent(false)
+                        return true
+                    }
+                }
+                return emptyPanActive
+            }
+        }
         audioTimelineFrame.addView(audioTracksScroll, FrameLayout.LayoutParams(-1, -1))
         audioTimelineFrame.addView(
             textTracksScroll,
@@ -2331,7 +2410,7 @@ class MainActivity : AppCompatActivity() {
                             refreshEditedPreview(editPosition)
                             saveCurrentProject()
                             updateToolMenu()
-                            showMessage("Klip dipotong. Preview sekarang mengikuti hasil potongan.")
+                            // Pemotongan berhasil tanpa dialog/notifikasi pop-up.
                         } else {
                             showMessage("Geser playhead ke bagian dalam klip video yang dipilih.")
                         }
@@ -2792,6 +2871,7 @@ class MainActivity : AppCompatActivity() {
                 onSelected = { clip ->
                     selectedTextClipId = clip?.id
                     selectedAudioClipId = null
+                    clearAudioTrackSelection()
                     selectedVideoClipId = null
                     videoSelected = false
                     timeline.selectClip(null)
@@ -3412,13 +3492,20 @@ class MainActivity : AppCompatActivity() {
                 lane,
                 onClipSelected = { clip ->
                     selectedAudioClipId = clip?.id
-                    // Memilih lane audio selalu melepas outline klip video.
+                    // Satu pilihan aktif untuk seluruh jenis layer.
                     selectedVideoClipId = null
-                    timeline.selectClip(null)
+                    selectedTextClipId = null
                     videoSelected = false
+                    timeline.selectClip(null)
                     timeline.updateSelection(false)
                     playerView.foreground = null
+                    if (::thisTextTracksContainer.isInitialized) {
+                        for (i in 0 until thisTextTracksContainer.childCount) {
+                            (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
+                        }
+                    }
                     audioTrackViews.values.forEach { it.selectClip(clip?.id) }
+                    updateTextPreview()
                     updateToolMenu()
                 },
                 onClipMoved = {
