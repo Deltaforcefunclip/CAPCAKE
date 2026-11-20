@@ -1794,6 +1794,11 @@ class MainActivity : AppCompatActivity() {
                 clearAudioTrackSelection()
                 selectedTextClipId = null
                 selectedEffectClipId = null
+                if (::thisEffectTracksContainer.isInitialized) {
+                    for (i in 0 until thisEffectTracksContainer.childCount) {
+                        (thisEffectTracksContainer.getChildAt(i) as? EffectTrackView)?.select(null)
+                    }
+                }
                 if (::thisTextTracksContainer.isInitialized) {
                     for (i in 0 until thisTextTracksContainer.childCount) {
                         (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
@@ -1829,6 +1834,11 @@ class MainActivity : AppCompatActivity() {
                     if (::thisTextTracksContainer.isInitialized) {
                         for (i in 0 until thisTextTracksContainer.childCount) {
                             (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
+                        }
+                    }
+                    if (::thisEffectTracksContainer.isInitialized) {
+                        for (i in 0 until thisEffectTracksContainer.childCount) {
+                            (thisEffectTracksContainer.getChildAt(i) as? EffectTrackView)?.select(null)
                         }
                     }
                     videoSelected = true
