@@ -23,12 +23,36 @@ data class ColorGrading(
     val vignette: Float = 0f,
     val grain: Float = 0f,
     val sharpening: Float = 0f,
-    val noiseReduction: Float = 0f
+    val noiseReduction: Float = 0f,
+    val redHue: Float = 0f,
+    val redSaturation: Float = 0f,
+    val redLuminance: Float = 0f,
+    val orangeHue: Float = 0f,
+    val orangeSaturation: Float = 0f,
+    val orangeLuminance: Float = 0f,
+    val yellowHue: Float = 0f,
+    val yellowSaturation: Float = 0f,
+    val yellowLuminance: Float = 0f,
+    val greenHue: Float = 0f,
+    val greenSaturation: Float = 0f,
+    val greenLuminance: Float = 0f,
+    val aquaHue: Float = 0f,
+    val aquaSaturation: Float = 0f,
+    val aquaLuminance: Float = 0f,
+    val blueHue: Float = 0f,
+    val blueSaturation: Float = 0f,
+    val blueLuminance: Float = 0f,
+    val purpleHue: Float = 0f,
+    val purpleSaturation: Float = 0f,
+    val purpleLuminance: Float = 0f,
+    val magentaHue: Float = 0f,
+    val magentaSaturation: Float = 0f,
+    val magentaLuminance: Float = 0f
 ) {
     val isDefault: Boolean
         get() = listOf(exposure, contrast, highlights, shadows, whites, blacks,
             temperature, tint, vibrance, saturation, texture, clarity, dehaze,
-            vignette, grain, sharpening, noiseReduction).all { kotlin.math.abs(it) < 0.0001f }
+            vignette, grain, sharpening, noiseReduction, redHue, redSaturation, redLuminance, orangeHue, orangeSaturation, orangeLuminance, yellowHue, yellowSaturation, yellowLuminance, greenHue, greenSaturation, greenLuminance, aquaHue, aquaSaturation, aquaLuminance, blueHue, blueSaturation, blueLuminance, purpleHue, purpleSaturation, purpleLuminance, magentaHue, magentaSaturation, magentaLuminance).all { kotlin.math.abs(it) < 0.0001f }
 }
 
 /**
