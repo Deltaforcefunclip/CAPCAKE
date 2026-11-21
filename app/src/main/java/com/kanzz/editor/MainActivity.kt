@@ -1525,7 +1525,7 @@ class MainActivity : AppCompatActivity() {
                     viewH / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
                 )
                 if (selectedPreviewRatio.isNotBlank()) {
-                    canvas.rotate(previewRotation)
+                    canvas.rotate(previewRotation + selected.rotationDegrees)
                     canvas.scale(previewScale, previewScale)
                 }
                 canvas.drawRect(-halfW, -halfH, halfW, halfH, outline)
@@ -1543,8 +1543,64 @@ class MainActivity : AppCompatActivity() {
                 canvas.restore()
             }
         }.apply {
-            isClickable = false
+            isClickable = true
             isFocusable = false
+            var rotatingClipId: String? = null
+            var rotationStart = 0f
+            var rotationStartAngle = 0f
+            setOnTouchListener { _, event ->
+                val clip = videoClipManager.find(selectedVideoClipId)
+                if (!videoSelected || clip == null) return@setOnTouchListener false
+                val cx = width / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f
+                val cy = height / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
+                val parts = selectedPreviewRatio.split(":")
+                val ratio = if (parts.size == 2) {
+                    (parts[0].toFloatOrNull() ?: 0f) /
+                        (parts[1].toFloatOrNull() ?: 1f).coerceAtLeast(0.001f)
+                } else width.toFloat() / height.coerceAtLeast(1)
+                val viewRatio = width.toFloat() / height.coerceAtLeast(1)
+                val boxW = if (ratio >= viewRatio) width.toFloat() else height.toFloat() * ratio
+                val boxH = if (ratio >= viewRatio) boxW / ratio else height.toFloat()
+                val factor = if (selectedPreviewRatio.isNotBlank()) previewScale else 1f
+                val handleX = cx
+                val handleY = cy - boxH / 2f * factor - dp(24).toFloat() * factor
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_DOWN -> {
+                        val dx = event.x - handleX
+                        val dy = event.y - handleY
+                        if (kotlin.math.sqrt(dx * dx + dy * dy) > dp(24)) return@setOnTouchListener false
+                        rotatingClipId = clip.id
+                        rotationStart = clip.rotationDegrees
+                        rotationStartAngle = Math.toDegrees(
+                            kotlin.math.atan2((event.y - cy).toDouble(), (event.x - cx).toDouble())
+                        ).toFloat()
+                        pushUndoSnapshot()
+                        parent?.requestDisallowInterceptTouchEvent(true)
+                        true
+                    }
+                    MotionEvent.ACTION_MOVE -> {
+                        if (rotatingClipId != clip.id) return@setOnTouchListener false
+                        val angle = Math.toDegrees(
+                            kotlin.math.atan2((event.y - cy).toDouble(), (event.x - cx).toDouble())
+                        ).toFloat()
+                        var value = rotationStart + angle - rotationStartAngle
+                        val nearest = kotlin.math.round(value / 90f) * 90f
+                        if (abs(value - nearest) < 2.5f) value = nearest
+                        clip.rotationDegrees = value
+                        applyPreviewTransform()
+                        invalidate()
+                        true
+                    }
+                    MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                        if (rotatingClipId != clip.id) return@setOnTouchListener false
+                        rotatingClipId = null
+                        parent?.requestDisallowInterceptTouchEvent(false)
+                        saveCurrentProject()
+                        true
+                    }
+                    else -> rotatingClipId == clip.id
+                }
+            }
         }
         previewFrame.addView(videoSelectionOverlay, FrameLayout.LayoutParams(-1, -1))
         previewTextOverlay = TextView(this).apply {
@@ -4172,7 +4228,8 @@ class MainActivity : AppCompatActivity() {
         val transformEnabled = selectedPreviewRatio.isNotBlank()
         content.scaleX = if (transformEnabled) previewScale else 1f
         content.scaleY = if (transformEnabled) previewScale else 1f
-        content.rotation = if (transformEnabled) previewRotation else 0f
+        val selectedClipRotation = videoClipManager.find(selectedVideoClipId)?.rotationDegrees ?: 0f
+        content.rotation = (if (transformEnabled) previewRotation else 0f) + selectedClipRotation
         content.translationX = if (transformEnabled) previewTranslateX else 0f
         content.translationY = if (transformEnabled) previewTranslateY else 0f
         previewRatioOverlay?.invalidate()
@@ -6185,7 +6242,7 @@ class MainActivity : AppCompatActivity() {
                                     // dikonversi dari koordinat layar (Y ke bawah) ke koordinat NDC
                                     // (Y ke atas) DAN dikoreksi dengan aspect ratio bidang.
                                     val scale = previewScale.coerceIn(0.35f, 5f)
-                                    val radians = Math.toRadians(previewRotation.toDouble())
+                                    val radians = Math.toRadians((previewRotation + clip.rotationDegrees).toDouble())
                                     val cosA = kotlin.math.cos(radians).toFloat()
                                     val sinA = kotlin.math.sin(radians).toFloat()
                                     val aspect = frameAspect.coerceAtLeast(0.0001f)
