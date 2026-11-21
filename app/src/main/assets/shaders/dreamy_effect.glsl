@@ -205,27 +205,31 @@ void main() {
         return;
     }
 
-    // Mode 0: Dreamy — seluruh diffusion berasal dari piksel clip yang sama.
-    // Tidak ada frame duplikat, ghosting, atau elemen cahaya yang ditempel.
-    vec3 softBase = mix(original.rgb, blurred, focus * 0.38);
+    // Mode 0: Dreamy berbasis pengurangan detail.
+    // Blur dihitung dari sampel frame yang sama; tidak ada frame/objek tambahan.
+    // Radius diperbesar agar perubahan detail benar-benar terlihat di preview dan export.
+    vec2 dreamyStep = r * (2.2 + focus * 2.8);
+    vec3 dreamyBlur = original.rgb * 0.24;
+    dreamyBlur += texture2D(sTexture, clamp(sampleCoord + vec2(dreamyStep.x, 0.0), 0.0, 1.0)).rgb * 0.12;
+    dreamyBlur += texture2D(sTexture, clamp(sampleCoord - vec2(dreamyStep.x, 0.0), 0.0, 1.0)).rgb * 0.12;
+    dreamyBlur += texture2D(sTexture, clamp(sampleCoord + vec2(0.0, dreamyStep.y), 0.0, 1.0)).rgb * 0.12;
+    dreamyBlur += texture2D(sTexture, clamp(sampleCoord - vec2(0.0, dreamyStep.y), 0.0, 1.0)).rgb * 0.12;
+    dreamyBlur += texture2D(sTexture, clamp(sampleCoord + dreamyStep, 0.0, 1.0)).rgb * 0.07;
+    dreamyBlur += texture2D(sTexture, clamp(sampleCoord - dreamyStep, 0.0, 1.0)).rgb * 0.07;
+    dreamyBlur += texture2D(sTexture, clamp(sampleCoord + vec2(dreamyStep.x, -dreamyStep.y), 0.0, 1.0)).rgb * 0.07;
+    dreamyBlur += texture2D(sTexture, clamp(sampleCoord + vec2(-dreamyStep.x, dreamyStep.y), 0.0, 1.0)).rgb * 0.07;
 
-    // Glow hanya muncul dari area terang yang memang ada pada gambar asli.
-    float sourceLuma = luminanceOf(blurred);
-    float brightMask = smoothstep(0.48, 0.86, sourceLuma);
-    vec3 brightSource = max(blurred - vec3(0.40), vec3(0.0)) * brightMask;
-    float spread = clamp(uBlurRadius * 42.0, 0.08, 0.70);
-    vec3 sourceGlow = brightSource * (0.22 + strength * 0.72) * spread;
-    vec3 dreamy = screenBlend(softBase, sourceGlow);
+    // Intensity mengatur seberapa kuat detail asli dilembutkan.
+    // Soft Focus menambah tingkat pengurangan detail secara terpisah.
+    float detailReduction = clamp(strength * (0.28 + focus * 0.62), 0.0, 0.88);
+    vec3 dreamy = mix(original.rgb, dreamyBlur, detailReduction);
 
-    // Haze tipis dibentuk dari luminansi dan warna frame itu sendiri.
-    float imageLuma = luminanceOf(blurred);
-    vec3 imageAtmosphere = mix(vec3(imageLuma), blurred, 0.78);
-    float hazeAmount = strength * (0.025 + focus * 0.035);
-    dreamy = mix(dreamy, imageAtmosphere, hazeAmount);
+    // Sedikit angkat midtone dari frame yang sama untuk karakter dreamy,
+    // tanpa menambahkan sumber cahaya atau warna yang tidak ada di clip.
+    float midtone = smoothstep(0.12, 0.82, luminanceOf(dreamy));
+    dreamy = mix(dreamy, min(dreamy + vec3(0.035), vec3(1.0)), midtone * strength * 0.12);
+    dreamy.r += uWarmth * 0.012 * strength;
+    dreamy.b += (1.0 - uWarmth) * 0.008 * strength;
 
-    // Kehangatan warna sangat halus; tidak menambahkan sumber cahaya baru.
-    dreamy.r += uWarmth * 0.018 * strength;
-    dreamy.b += (1.0 - uWarmth) * 0.012 * strength;
-
-    gl_FragColor = vec4(clamp(mix(original.rgb, dreamy, strength), 0.0, 1.0), original.a);
+    gl_FragColor = vec4(clamp(dreamy, 0.0, 1.0), original.a);
 }
