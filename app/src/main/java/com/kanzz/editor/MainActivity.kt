@@ -1492,7 +1492,7 @@ class MainActivity : AppCompatActivity() {
             }
             private val rotationStem = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                 color = green
-                strokeWidth = dp(1.5f).toFloat()
+                strokeWidth = dp(2).toFloat()
             }
             override fun onDraw(canvas: Canvas) {
                 super.onDraw(canvas)
