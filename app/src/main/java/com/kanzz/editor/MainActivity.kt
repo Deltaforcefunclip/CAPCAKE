@@ -539,7 +539,7 @@ class MainActivity : AppCompatActivity() {
                         warmth = 0.5f,
                         previewState = dreamyPreviewState
                     ),
-                    MotionBlurGlEffect(intensity = 0f, previewState = motionBlurPreviewState)
+                    MotionBlurGlEffect(blur = 0f, previewState = motionBlurPreviewState)
                 )
             )
             // Preload awal sengaja tidak diaktifkan untuk pengujian frame drop.
