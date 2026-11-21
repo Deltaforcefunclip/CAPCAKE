@@ -3161,7 +3161,10 @@ class MainActivity : AppCompatActivity() {
                             return@setOnClickListener
                         }
                         val clip = videoClipManager.find(selectedVideoClipId)
-                        val editPosition = currentTimelinePosition()
+                        // Playhead pada controller adalah posisi yang benar-benar terlihat
+                        // setelah pengguna scrub. Posisi player bisa tertinggal saat seek cepat.
+                        val editPosition = timelineController.positionMs
+                            .coerceIn(0L, videoClipManager.durationMs)
                         pushUndoSnapshot()
                         val second = videoClipManager.split(clip?.id, editPosition)
                         if (second != null) {
@@ -7152,6 +7155,12 @@ class TimelineView(
     private var isPinchGesture = false
     private var isDraggingClip = false
     private var isScrubbingTimeline = false
+    // Tahan sinkronisasi dari player sebentar setelah jari dilepas.
+    // Seek lama dari Media3 tidak boleh mengembalikan viewport ke posisi sebelumnya.
+    private val scrubSettleRunnable = Runnable {
+        isScrubbingTimeline = false
+        invalidate()
+    }
     // Posisi awal jari dan klip dikunci saat sentuhan dimulai.
     // Target drag dihitung dari selisih gerakan jari, bukan xToTime(),
     // agar perubahan offset/playhead tidak menarik klip kembali.
@@ -7846,6 +7855,7 @@ class TimelineView(
         scaleDetector.onTouchEvent(event)
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                removeCallbacks(scrubSettleRunnable)
                 downX = event.x
                 lastX = event.x
                 dragDownX = event.x
@@ -7986,7 +7996,12 @@ class TimelineView(
 
             MotionEvent.ACTION_UP -> {
                 pointerDown = false
-                isScrubbingTimeline = false
+                // Jangan langsung melepas kunci scrub. Callback seek player dapat
+                // datang terlambat dan menggeser timeline kembali setelah jari lepas.
+                if (isScrubbingTimeline) {
+                    removeCallbacks(scrubSettleRunnable)
+                    postDelayed(scrubSettleRunnable, 450L)
+                }
                 removeCallbacks(dragLongPress)
 
                 // Pinch selesai hanya saat pointer terakhir terangkat. Abaikan ACTION_UP
@@ -8044,6 +8059,7 @@ class TimelineView(
 
             MotionEvent.ACTION_CANCEL -> {
                 pointerDown = false
+                removeCallbacks(scrubSettleRunnable)
                 isScrubbingTimeline = false
                 isPinchGesture = false
                 removeCallbacks(dragLongPress)
