@@ -129,8 +129,8 @@ class DreamyShaderProgram(
                 if (pullInEndUs > pullInStartUs && presentationTimeUs >= pullInStartUs && presentationTimeUs < pullInEndUs) {
                     val progress = ((presentationTimeUs - pullInStartUs).toFloat() / (pullInEndUs - pullInStartUs).toFloat()).coerceIn(0f, 1f)
                     val eased = 1f - (1f - progress) * (1f - progress) * (1f - progress)
-                    pullZoom = 1.45f - 0.45f * eased
-                    pullBlur = 1f - eased
+                    pullZoom = 1f + 0.45f * eased
+                    pullBlur = eased
                 } else {
                     pullZoom = 1f
                     pullBlur = 0f
