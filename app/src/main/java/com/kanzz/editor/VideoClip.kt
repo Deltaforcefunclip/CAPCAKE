@@ -208,23 +208,26 @@ class VideoClipManager {
         val moving = clips.removeAt(oldIndex)
         recalculateTimeline()
 
-        // Tentukan slot berdasarkan titik tengah klip lain. Dengan begitu,
-        // melepas di bagian tengah klip terasa natural: sebelum/ sesudah klip
-        // mengikuti sisi tempat klip dilepaskan, bukan sekadar awal klip.
-        val targetCenter = targetStartMs.coerceAtLeast(0L) + moving.timelineDurationMs / 2L
-        val insertIndex = clips.indexOfFirst { other ->
-            targetCenter <= other.timelineStartMs + other.timelineDurationMs / 2L
-        }.let { if (it < 0) clips.size else it }
-
-        if (insertIndex == oldIndex) {
-            clips.add(oldIndex, moving)
-            recalculateTimeline()
-            return false
+        // Setelah klip dikeluarkan, cari batas antarklip yang paling dekat
+        // dengan posisi magnet yang diminta. Timeline main track selalu rapat,
+        // jadi klip harus menempel pada batas yang valid, bukan disisipkan
+        // berdasarkan titik tengah klip lain.
+        val requestedStart = targetStartMs.coerceAtLeast(0L)
+        var cursor = 0L
+        var insertIndex = 0
+        var nearestDistance = Long.MAX_VALUE
+        for (index in 0..clips.size) {
+            val distance = kotlin.math.abs(cursor - requestedStart)
+            if (distance < nearestDistance) {
+                nearestDistance = distance
+                insertIndex = index
+            }
+            if (index < clips.size) cursor += clips[index].timelineDurationMs
         }
 
         clips.add(insertIndex, moving)
         recalculateTimeline()
-        return clips.getOrNull(insertIndex)?.id == clipId
+        return clips.getOrNull(insertIndex)?.id == clipId && insertIndex != oldIndex
     }
 
     fun transitionBetween(leftClipId: String, rightClipId: String): VideoTransition? =
