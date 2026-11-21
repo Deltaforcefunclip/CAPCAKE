@@ -8,6 +8,8 @@ uniform float uBlurRadius;
 uniform float uWarmth;
 uniform float uEffectMode;
 uniform float uSoftFocus;
+uniform float uPullInZoom;
+uniform float uPullInBlur;
 uniform float uExposure;
 uniform float uContrast;
 uniform float uHighlights;
@@ -119,10 +121,22 @@ vec3 applyColorGrading(vec3 color) {
 }
 
 void main() {
-    vec4 sampled = texture2D(sTexture, vTextureCoord);
+    vec2 sampleCoord = clamp((vTextureCoord - vec2(0.5)) / max(uPullInZoom, 1.0) + vec2(0.5), 0.0, 1.0);
+    vec4 sharpSample = texture2D(sTexture, sampleCoord);
+    vec2 pullStep = vec2(0.003 + uPullInBlur * 0.012);
+    vec3 pullBlurred = sharpSample.rgb * 0.20;
+    pullBlurred += texture2D(sTexture, clamp(sampleCoord + vec2(pullStep.x, 0.0), 0.0, 1.0)).rgb * 0.12;
+    pullBlurred += texture2D(sTexture, clamp(sampleCoord - vec2(pullStep.x, 0.0), 0.0, 1.0)).rgb * 0.12;
+    pullBlurred += texture2D(sTexture, clamp(sampleCoord + vec2(0.0, pullStep.y), 0.0, 1.0)).rgb * 0.12;
+    pullBlurred += texture2D(sTexture, clamp(sampleCoord - vec2(0.0, pullStep.y), 0.0, 1.0)).rgb * 0.12;
+    pullBlurred += texture2D(sTexture, clamp(sampleCoord + pullStep, 0.0, 1.0)).rgb * 0.08;
+    pullBlurred += texture2D(sTexture, clamp(sampleCoord - pullStep, 0.0, 1.0)).rgb * 0.08;
+    pullBlurred += texture2D(sTexture, clamp(sampleCoord + vec2(pullStep.x, -pullStep.y), 0.0, 1.0)).rgb * 0.08;
+    pullBlurred += texture2D(sTexture, clamp(sampleCoord + vec2(-pullStep.x, pullStep.y), 0.0, 1.0)).rgb * 0.08;
+    vec4 sampled = vec4(mix(sharpSample.rgb, pullBlurred, clamp(uPullInBlur, 0.0, 1.0)), sharpSample.a);
 
     // Jalur normal: lewati HSV, kernel detail, blur 8 arah, dan kalkulasi efek.
-    if (uIntensity <= 0.001 && uHasColorGrade < 0.5) {
+    if (uIntensity <= 0.001 && uHasColorGrade < 0.5 && uPullInBlur <= 0.001 && abs(uPullInZoom - 1.0) <= 0.001) {
         gl_FragColor = sampled;
         return;
     }
@@ -131,16 +145,16 @@ void main() {
     // Local contrast/detail controls use a compact neighborhood kernel.
     vec2 detailStep = vec2(0.0015);
     vec3 neighbor = (
-        texture2D(sTexture, clamp(vTextureCoord + vec2(detailStep.x, 0.0), 0.0, 1.0)).rgb +
-        texture2D(sTexture, clamp(vTextureCoord - vec2(detailStep.x, 0.0), 0.0, 1.0)).rgb +
-        texture2D(sTexture, clamp(vTextureCoord + vec2(0.0, detailStep.y), 0.0, 1.0)).rgb +
-        texture2D(sTexture, clamp(vTextureCoord - vec2(0.0, detailStep.y), 0.0, 1.0)).rgb
+        texture2D(sTexture, clamp(sampleCoord + vec2(detailStep.x, 0.0), 0.0, 1.0)).rgb +
+        texture2D(sTexture, clamp(sampleCoord - vec2(detailStep.x, 0.0), 0.0, 1.0)).rgb +
+        texture2D(sTexture, clamp(sampleCoord + vec2(0.0, detailStep.y), 0.0, 1.0)).rgb +
+        texture2D(sTexture, clamp(sampleCoord - vec2(0.0, detailStep.y), 0.0, 1.0)).rgb
     ) * 0.25;
     vec3 detail = sampled.rgb - neighbor;
     graded += detail * (uTexture * 0.012 + uClarity * 0.018 + uSharpening * 0.022);
     graded = mix(graded, neighbor, clamp(uNoiseReduction * 0.01, 0.0, 0.85));
 
-    vec2 gradeCenter = vTextureCoord - vec2(0.5);
+    vec2 gradeCenter = sampleCoord - vec2(0.5);
     float vignetteMask = clamp(dot(gradeCenter, gradeCenter) * 2.0, 0.0, 1.0);
     graded *= 1.0 - uVignette * 0.006 * vignetteMask;
 
@@ -158,14 +172,14 @@ void main() {
 
     vec2 r = vec2(max(uBlurRadius, 0.0005));
     vec3 blurred = original.rgb * 0.25;
-    blurred += texture2D(sTexture, clamp(vTextureCoord + vec2( r.x, 0.0), 0.0, 1.0)).rgb * 0.125;
-    blurred += texture2D(sTexture, clamp(vTextureCoord + vec2(-r.x, 0.0), 0.0, 1.0)).rgb * 0.125;
-    blurred += texture2D(sTexture, clamp(vTextureCoord + vec2(0.0,  r.y), 0.0, 1.0)).rgb * 0.125;
-    blurred += texture2D(sTexture, clamp(vTextureCoord + vec2(0.0, -r.y), 0.0, 1.0)).rgb * 0.125;
-    blurred += texture2D(sTexture, clamp(vTextureCoord + r, 0.0, 1.0)).rgb * 0.0625;
-    blurred += texture2D(sTexture, clamp(vTextureCoord - r, 0.0, 1.0)).rgb * 0.0625;
-    blurred += texture2D(sTexture, clamp(vTextureCoord + vec2(r.x, -r.y), 0.0, 1.0)).rgb * 0.0625;
-    blurred += texture2D(sTexture, clamp(vTextureCoord + vec2(-r.x, r.y), 0.0, 1.0)).rgb * 0.0625;
+    blurred += texture2D(sTexture, clamp(sampleCoord + vec2( r.x, 0.0), 0.0, 1.0)).rgb * 0.125;
+    blurred += texture2D(sTexture, clamp(sampleCoord + vec2(-r.x, 0.0), 0.0, 1.0)).rgb * 0.125;
+    blurred += texture2D(sTexture, clamp(sampleCoord + vec2(0.0,  r.y), 0.0, 1.0)).rgb * 0.125;
+    blurred += texture2D(sTexture, clamp(sampleCoord + vec2(0.0, -r.y), 0.0, 1.0)).rgb * 0.125;
+    blurred += texture2D(sTexture, clamp(sampleCoord + r, 0.0, 1.0)).rgb * 0.0625;
+    blurred += texture2D(sTexture, clamp(sampleCoord - r, 0.0, 1.0)).rgb * 0.0625;
+    blurred += texture2D(sTexture, clamp(sampleCoord + vec2(r.x, -r.y), 0.0, 1.0)).rgb * 0.0625;
+    blurred += texture2D(sTexture, clamp(sampleCoord + vec2(-r.x, r.y), 0.0, 1.0)).rgb * 0.0625;
 
     float strength = clamp(uIntensity, 0.0, 1.0);
     float focus = clamp(uSoftFocus, 0.0, 1.0);
@@ -200,7 +214,7 @@ void main() {
     dreamy.g += uWarmth * 0.045 * strength;
     dreamy.b += (1.0 - uWarmth) * 0.035 * strength;
     dreamy = mix(dreamy, vec3(0.52), 0.035 * strength);
-    vec2 centered = vTextureCoord - vec2(0.5);
+    vec2 centered = sampleCoord - vec2(0.5);
     float vignette = 1.0 - dot(centered, centered) * 0.16 * strength;
     dreamy *= clamp(vignette, 0.86, 1.0);
     gl_FragColor = vec4(clamp(mix(original.rgb, dreamy, strength), 0.0, 1.0), original.a);
