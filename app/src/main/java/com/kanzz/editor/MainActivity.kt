@@ -3983,7 +3983,7 @@ class MainActivity : AppCompatActivity() {
                     (resources.displayMetrics.heightPixels * 0.60f).toInt()
                 )
                 window.setGravity(Gravity.BOTTOM)
-                window.attributes = window.attributes.apply { dimAmount = 0.22f }
+                window.attributes = window.attributes.apply { dimAmount = 0f }
             }
         }
         dialog.setOnDismissListener {
@@ -5055,37 +5055,162 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showPresetTextPanel() {
-        if (selectedTextClip() == null || !::presetTextPanel.isInitialized) return
+        val clip = selectedTextClip() ?: return
+        if (!::presetTextPanel.isInitialized) return
+
+        fun panelButton(label: String, onClick: () -> Unit): TextView =
+            TextView(this).apply {
+                text = label
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                setPadding(dp(10), dp(7), dp(10), dp(7))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(42, 45, 48))
+                    cornerRadius = dp(8).toFloat()
+                    setStroke(dp(1), Color.rgb(70, 75, 80))
+                }
+                setOnClickListener { onClick() }
+            }
+
+        fun readPresets(): org.json.JSONArray {
+            val raw = getSharedPreferences("capcake_text_presets", MODE_PRIVATE)
+                .getString("items", "[]") ?: "[]"
+            return runCatching { org.json.JSONArray(raw) }.getOrDefault(org.json.JSONArray())
+        }
+
+        fun refreshList() {
+            val list = presetTextPanel.findViewWithTag<LinearLayout>("preset_list") ?: return
+            list.removeAllViews()
+            val presets = readPresets()
+            if (presets.length() == 0) {
+                list.addView(TextView(this).apply {
+                    text = "Belum ada preset tersimpan"
+                    textSize = 11f
+                    gravity = Gravity.CENTER
+                    setTextColor(Color.GRAY)
+                }, LinearLayout.LayoutParams(-1, dp(72)))
+                return
+            }
+            for (index in 0 until presets.length()) {
+                val item = presets.optJSONObject(index) ?: continue
+                val sample = TextView(this).apply {
+                    text = item.optString("text", "Text")
+                    textSize = 16f
+                    maxLines = 2
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(10), dp(8), dp(10), dp(8))
+                    setTextColor(item.optInt("color", Color.WHITE))
+                    typeface = runCatching {
+                        when (item.optString("font", "Default")) {
+                            "Serif" -> Typeface.SERIF
+                            "Monospace" -> Typeface.MONOSPACE
+                            "Sans" -> Typeface.SANS_SERIF
+                            else -> Typeface.create(item.optString("font", "Default"), Typeface.NORMAL)
+                        }
+                    }.getOrDefault(Typeface.DEFAULT)
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(Color.rgb(28, 30, 33))
+                        cornerRadius = dp(8).toFloat()
+                        setStroke(dp(1), Color.rgb(52, 56, 60))
+                    }
+                    setOnClickListener {
+                        val target = selectedTextClip() ?: return@setOnClickListener
+                        pushUndoSnapshot()
+                        target.text = item.optString("text", target.text)
+                        target.color = item.optInt("color", target.color)
+                        target.fontName = item.optString("font", target.fontName)
+                        target.scale = item.optDouble("scale", target.scale.toDouble()).toFloat().coerceIn(0.2f, 6f)
+                        target.positionX = item.optDouble("positionXNorm", 0.0).toFloat() *
+                            previewFrameContainer.width.coerceAtLeast(1)
+                        target.positionY = item.optDouble("positionYNorm", 0.0).toFloat() *
+                            previewFrameContainer.height.coerceAtLeast(1)
+                        target.rotation = item.optDouble("rotation", target.rotation.toDouble()).toFloat()
+                        target.bold = item.optBoolean("bold", target.bold)
+                        updateTextPreview()
+                        saveCurrentProject()
+                        presetTextPanel.visibility = View.GONE
+                    }
+                    setOnLongClickListener {
+                        val updated = readPresets()
+                        if (index in 0 until updated.length()) {
+                            updated.remove(index)
+                            getSharedPreferences("capcake_text_presets", MODE_PRIVATE)
+                                .edit().putString("items", updated.toString()).apply()
+                            refreshList()
+                            Toast.makeText(this@MainActivity, "Preset dihapus", Toast.LENGTH_SHORT).show()
+                        }
+                        true
+                    }
+                }
+                val params = LinearLayout.LayoutParams(-1, dp(54))
+                params.bottomMargin = dp(6)
+                list.addView(sample, params)
+            }
+        }
+
         presetTextPanel.removeAllViews()
+        presetTextPanel.setPadding(dp(10), dp(9), dp(10), dp(9))
+        presetTextPanel.background = android.graphics.drawable.GradientDrawable().apply {
+            setColor(Color.rgb(17, 19, 21))
+            cornerRadius = dp(14).toFloat()
+            setStroke(dp(1), Color.rgb(58, 62, 66))
+        }
         val header = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
         }
-        val title = TextView(this).apply {
-            text = "PT  Preset Text"
-            textSize = 14f
+        header.addView(TextView(this).apply {
+            text = "PRESET TEKS"
+            textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
-        }
-        header.addView(title, LinearLayout.LayoutParams(0, dp(32), 1f))
+            gravity = Gravity.CENTER_VERTICAL
+        }, LinearLayout.LayoutParams(0, dp(34), 1f))
+        header.addView(panelButton("＋ Simpan") {
+            val current = selectedTextClip() ?: return@panelButton
+            val presets = readPresets()
+            val width = previewFrameContainer.width.coerceAtLeast(1).toFloat()
+            val height = previewFrameContainer.height.coerceAtLeast(1).toFloat()
+            presets.put(org.json.JSONObject().apply {
+                put("text", current.text)
+                put("color", current.color)
+                put("font", current.fontName)
+                put("scale", current.scale.toDouble())
+                put("positionXNorm", (current.positionX / width).toDouble())
+                put("positionYNorm", (current.positionY / height).toDouble())
+                put("rotation", current.rotation.toDouble())
+                put("bold", current.bold)
+            })
+            getSharedPreferences("capcake_text_presets", MODE_PRIVATE)
+                .edit().putString("items", presets.toString()).apply()
+            refreshList()
+            Toast.makeText(this, "Preset teks tersimpan", Toast.LENGTH_SHORT).show()
+        })
         val close = TextView(this).apply {
             text = "✕"
-            textSize = 18f
+            textSize = 17f
             gravity = Gravity.CENTER
             setTextColor(Color.LTGRAY)
-            setPadding(dp(8), 0, dp(4), 0)
+            setPadding(dp(8), 0, dp(2), 0)
             setOnClickListener { presetTextPanel.visibility = View.GONE }
         }
-        header.addView(close, LinearLayout.LayoutParams(dp(32), dp(32)))
-        presetTextPanel.addView(header, LinearLayout.LayoutParams(-1, dp(34)))
-        val placeholder = TextView(this).apply {
-            text = "Preset Text"
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTextColor(Color.GRAY)
+        header.addView(close, LinearLayout.LayoutParams(dp(28), dp(34)))
+        presetTextPanel.addView(header, LinearLayout.LayoutParams(-1, dp(36)))
+
+        val scroll = ScrollView(this).apply {
+            isFillViewport = true
+            overScrollMode = View.OVER_SCROLL_IF_CONTENT_SCROLLS
         }
-        presetTextPanel.addView(placeholder, LinearLayout.LayoutParams(-1, 0, 1f))
+        val list = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            tag = "preset_list"
+        }
+        scroll.addView(list, ScrollView.LayoutParams(-1, -2))
+        presetTextPanel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         presetTextPanel.visibility = View.VISIBLE
+        refreshList()
         positionPresetTextPanel()
         presetTextPanel.bringToFront()
     }
@@ -5265,6 +5390,7 @@ class MainActivity : AppCompatActivity() {
                 android.view.WindowManager.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
             setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+            attributes = attributes.apply { dimAmount = 0f }
         }
         // Warna pada kedua gradient mengikuti pilihan wheel tanpa membuat ulang popup.
         wheelColorChanged = { color ->
