@@ -5,6 +5,7 @@ uniform sampler2D sTexture;
 uniform float uIntensity;
 uniform float uBlurRadius;
 uniform float uWarmth;
+uniform float uEffectMode;
 
 vec3 screenBlend(vec3 baseColor, vec3 glowColor) {
     return 1.0 - ((1.0 - baseColor) * (1.0 - glowColor));
@@ -12,6 +13,16 @@ vec3 screenBlend(vec3 baseColor, vec3 glowColor) {
 
 void main() {
     vec4 original = texture2D(sTexture, vTextureCoord);
+
+    // Mode 1: clean monochrome with controlled contrast.
+    if (uEffectMode > 0.5) {
+        float luminance = dot(original.rgb, vec3(0.2126, 0.7152, 0.0722));
+        float monochrome = clamp((luminance - 0.5) * 1.12 + 0.5, 0.0, 1.0);
+        vec3 blackAndWhite = vec3(monochrome);
+        gl_FragColor = vec4(mix(original.rgb, blackAndWhite, clamp(uIntensity, 0.0, 1.0)), original.a);
+        return;
+    }
+
     // Radius is expressed in normalized texture coordinates, not texel units.
     // Multiplying by texel size here made the blur sub-pixel and practically invisible.
     vec2 stepSize = vec2(max(uBlurRadius, 0.0));
