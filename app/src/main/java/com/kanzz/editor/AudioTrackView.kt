@@ -159,7 +159,7 @@ class AudioTrackView(
                     val x = rect.left + index * step + step / 2f
                     if (x in rect.left..rect.right) {
                         val h = amplitude.coerceIn(0.04f, 1f) * halfHeight
-                        canvas.drawLine(x, centerY - h, x, centerY + h, wavePaint)
+                        canvas.drawLine(x, centerY, x, centerY - h, wavePaint)
                     }
                 }
             }
