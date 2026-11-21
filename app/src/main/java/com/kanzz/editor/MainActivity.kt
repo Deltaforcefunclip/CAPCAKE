@@ -2,6 +2,7 @@
 package com.kanzz.editor
 
 import android.content.ContentValues
+import android.content.Context
 import android.graphics.*
 import android.media.MediaMetadataRetriever
 import android.media.MediaExtractor
@@ -39,6 +40,8 @@ import androidx.media3.exoplayer.SeekParameters
 import androidx.media3.common.PlaybackParameters
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.DefaultRenderersFactory
+import androidx.media3.exoplayer.audio.AudioSink
+import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.PlayerView
 import androidx.media3.transformer.Composition
@@ -513,12 +516,8 @@ class MainActivity : AppCompatActivity() {
 
         // Uji playback tanpa decoder prewarming. Renderer dibuat dengan konfigurasi
         // standar agar kita bisa membandingkan kestabilan decoder saat play/resume.
-        val renderersFactory = DefaultRenderersFactory(this)
         videoGainProcessor = GainAudioProcessor()
-        val videoAudioSink = androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(this)
-            .setAudioProcessors(arrayOf(videoGainProcessor!!))
-            .build()
-        renderersFactory.setAudioSink(videoAudioSink)
+        val renderersFactory = createGainRenderersFactory(videoGainProcessor!!)
 
         player = ExoPlayer.Builder(this, renderersFactory).build().apply {
             // Kembalikan pipeline preview Dreamy yang sudah dioptimalkan.
@@ -6008,6 +6007,22 @@ class MainActivity : AppCompatActivity() {
         audioTrackViews.values.forEach { it.selectClip(clipId) }
     }
 
+    private fun createGainRenderersFactory(gainProcessor: GainAudioProcessor): DefaultRenderersFactory {
+        return object : DefaultRenderersFactory(this) {
+            override fun buildAudioSink(
+                context: Context,
+                enableFloatOutput: Boolean,
+                enableAudioOutputPlaybackParams: Boolean
+            ): AudioSink {
+                return DefaultAudioSink.Builder(context)
+                    .setEnableFloatOutput(enableFloatOutput)
+                    .setEnableAudioOutputPlaybackParameters(enableAudioOutputPlaybackParams)
+                    .setAudioProcessors(arrayOf(gainProcessor))
+                    .build()
+            }
+        }
+    }
+
     private fun showAudioClipVolume(clip: AudioClip) {
         volumePreviewPlayer?.release()
         volumePreviewPlayer = null
@@ -6074,11 +6089,7 @@ class MainActivity : AppCompatActivity() {
                 if (volumePreviewPlayer == null) {
                     val gain = GainAudioProcessor().also { it.gain = clip.volume }
                     volumePreviewGain = gain
-                    val factory = DefaultRenderersFactory(this)
-                    factory.setAudioSink(
-                        androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(this)
-                            .setAudioProcessors(arrayOf(gain)).build()
-                    )
+                    val factory = createGainRenderersFactory(gain)
                     volumePreviewPlayer = ExoPlayer.Builder(this, factory).build().apply {
                         setMediaItem(
                             MediaItem.Builder().setUri(Uri.parse(clip.filePath))
@@ -6382,11 +6393,7 @@ class MainActivity : AppCompatActivity() {
             val gainProcessor = audioGainProcessors[clip.id] ?: GainAudioProcessor().also { audioGainProcessors[clip.id] = it }
             gainProcessor.gain = clip.volume.coerceIn(0f, 2f)
             val instance = audioPlayer ?: run {
-                val factory = DefaultRenderersFactory(this)
-                factory.setAudioSink(
-                    androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(this)
-                        .setAudioProcessors(arrayOf(gainProcessor)).build()
-                )
+                val factory = createGainRenderersFactory(gainProcessor)
                 ExoPlayer.Builder(this, factory).build().also { created ->
                 created.setAudioAttributes(
                     androidx.media3.common.AudioAttributes.Builder()
