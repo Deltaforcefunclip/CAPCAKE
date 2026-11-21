@@ -35,6 +35,30 @@ object TimelineStateCodec {
                     put("dehaze", grade.dehaze.toDouble()); put("vignette", grade.vignette.toDouble())
                     put("grain", grade.grain.toDouble()); put("sharpening", grade.sharpening.toDouble())
                     put("noiseReduction", grade.noiseReduction.toDouble())
+                    put("redHue", grade.redHue.toDouble())
+                    put("redSaturation", grade.redSaturation.toDouble())
+                    put("redLuminance", grade.redLuminance.toDouble())
+                    put("orangeHue", grade.orangeHue.toDouble())
+                    put("orangeSaturation", grade.orangeSaturation.toDouble())
+                    put("orangeLuminance", grade.orangeLuminance.toDouble())
+                    put("yellowHue", grade.yellowHue.toDouble())
+                    put("yellowSaturation", grade.yellowSaturation.toDouble())
+                    put("yellowLuminance", grade.yellowLuminance.toDouble())
+                    put("greenHue", grade.greenHue.toDouble())
+                    put("greenSaturation", grade.greenSaturation.toDouble())
+                    put("greenLuminance", grade.greenLuminance.toDouble())
+                    put("aquaHue", grade.aquaHue.toDouble())
+                    put("aquaSaturation", grade.aquaSaturation.toDouble())
+                    put("aquaLuminance", grade.aquaLuminance.toDouble())
+                    put("blueHue", grade.blueHue.toDouble())
+                    put("blueSaturation", grade.blueSaturation.toDouble())
+                    put("blueLuminance", grade.blueLuminance.toDouble())
+                    put("purpleHue", grade.purpleHue.toDouble())
+                    put("purpleSaturation", grade.purpleSaturation.toDouble())
+                    put("purpleLuminance", grade.purpleLuminance.toDouble())
+                    put("magentaHue", grade.magentaHue.toDouble())
+                    put("magentaSaturation", grade.magentaSaturation.toDouble())
+                    put("magentaLuminance", grade.magentaLuminance.toDouble())
                 })
             })
         }
@@ -93,7 +117,31 @@ object TimelineStateCodec {
                             vignette = grade.optDouble("vignette", 0.0).toFloat(),
                             grain = grade.optDouble("grain", 0.0).toFloat(),
                             sharpening = grade.optDouble("sharpening", 0.0).toFloat(),
-                            noiseReduction = grade.optDouble("noiseReduction", 0.0).toFloat()
+                            noiseReduction = grade.optDouble("noiseReduction", 0.0).toFloat(),
+                            redHue = grade.optDouble("redHue", 0.0).toFloat(),
+                            redSaturation = grade.optDouble("redSaturation", 0.0).toFloat(),
+                            redLuminance = grade.optDouble("redLuminance", 0.0).toFloat(),
+                            orangeHue = grade.optDouble("orangeHue", 0.0).toFloat(),
+                            orangeSaturation = grade.optDouble("orangeSaturation", 0.0).toFloat(),
+                            orangeLuminance = grade.optDouble("orangeLuminance", 0.0).toFloat(),
+                            yellowHue = grade.optDouble("yellowHue", 0.0).toFloat(),
+                            yellowSaturation = grade.optDouble("yellowSaturation", 0.0).toFloat(),
+                            yellowLuminance = grade.optDouble("yellowLuminance", 0.0).toFloat(),
+                            greenHue = grade.optDouble("greenHue", 0.0).toFloat(),
+                            greenSaturation = grade.optDouble("greenSaturation", 0.0).toFloat(),
+                            greenLuminance = grade.optDouble("greenLuminance", 0.0).toFloat(),
+                            aquaHue = grade.optDouble("aquaHue", 0.0).toFloat(),
+                            aquaSaturation = grade.optDouble("aquaSaturation", 0.0).toFloat(),
+                            aquaLuminance = grade.optDouble("aquaLuminance", 0.0).toFloat(),
+                            blueHue = grade.optDouble("blueHue", 0.0).toFloat(),
+                            blueSaturation = grade.optDouble("blueSaturation", 0.0).toFloat(),
+                            blueLuminance = grade.optDouble("blueLuminance", 0.0).toFloat(),
+                            purpleHue = grade.optDouble("purpleHue", 0.0).toFloat(),
+                            purpleSaturation = grade.optDouble("purpleSaturation", 0.0).toFloat(),
+                            purpleLuminance = grade.optDouble("purpleLuminance", 0.0).toFloat(),
+                            magentaHue = grade.optDouble("magentaHue", 0.0).toFloat(),
+                            magentaSaturation = grade.optDouble("magentaSaturation", 0.0).toFloat(),
+                            magentaLuminance = grade.optDouble("magentaLuminance", 0.0).toFloat()
                         )
                     } ?: ColorGrading()
                 ))
