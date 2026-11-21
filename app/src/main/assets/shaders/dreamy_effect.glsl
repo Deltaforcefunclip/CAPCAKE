@@ -7,13 +7,82 @@ uniform float uBlurRadius;
 uniform float uWarmth;
 uniform float uEffectMode;
 uniform float uSoftFocus;
+uniform float uExposure;
+uniform float uContrast;
+uniform float uHighlights;
+uniform float uShadows;
+uniform float uWhites;
+uniform float uBlacks;
+uniform float uTemperature;
+uniform float uTint;
+uniform float uVibrance;
+uniform float uSaturation;
+uniform float uTexture;
+uniform float uClarity;
+uniform float uDehaze;
+uniform float uVignette;
+uniform float uGrain;
+uniform float uSharpening;
+uniform float uNoiseReduction;
 
 vec3 screenBlend(vec3 baseColor, vec3 glowColor) {
     return 1.0 - ((1.0 - baseColor) * (1.0 - glowColor));
 }
 
+float luminanceOf(vec3 color) {
+    return dot(color, vec3(0.2126, 0.7152, 0.0722));
+}
+
+vec3 applyColorGrading(vec3 color) {
+    vec3 c = color * exp2(uExposure);
+    c = (c - vec3(0.5)) * (1.0 + uContrast * 0.01) + vec3(0.5);
+
+    float luma = luminanceOf(c);
+    float shadowMask = 1.0 - smoothstep(0.02, 0.62, luma);
+    float highlightMask = smoothstep(0.38, 0.98, luma);
+    float whiteMask = smoothstep(0.68, 1.0, luma);
+    float blackMask = 1.0 - smoothstep(0.0, 0.30, luma);
+    c += vec3(uShadows * 0.0032 * shadowMask);
+    c += vec3(uHighlights * 0.0032 * highlightMask);
+    c += vec3(uWhites * 0.0022 * whiteMask);
+    c += vec3(uBlacks * 0.0022 * blackMask);
+
+    c.r *= 1.0 + uTemperature * 0.0015;
+    c.b *= 1.0 - uTemperature * 0.0015;
+    c.r += uTint * 0.00045;
+    c.b -= uTint * 0.00045;
+
+    float gray = luminanceOf(c);
+    float chroma = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
+    float vibranceBoost = uVibrance * 0.01 * (1.0 - clamp(chroma, 0.0, 1.0));
+    c = mix(vec3(gray), c, max(0.0, 1.0 + uSaturation * 0.01 + vibranceBoost));
+    c = (c - vec3(0.5)) * (1.0 + uDehaze * 0.005) + vec3(0.5);
+    return clamp(c, 0.0, 1.0);
+}
+
 void main() {
-    vec4 original = texture2D(sTexture, vTextureCoord);
+    vec4 sampled = texture2D(sTexture, vTextureCoord);
+    vec3 graded = applyColorGrading(sampled.rgb);
+
+    // Local contrast/detail controls use a compact neighborhood kernel.
+    vec2 detailStep = vec2(0.0015);
+    vec3 neighbor = (
+        texture2D(sTexture, clamp(vTextureCoord + vec2(detailStep.x, 0.0), 0.0, 1.0)).rgb +
+        texture2D(sTexture, clamp(vTextureCoord - vec2(detailStep.x, 0.0), 0.0, 1.0)).rgb +
+        texture2D(sTexture, clamp(vTextureCoord + vec2(0.0, detailStep.y), 0.0, 1.0)).rgb +
+        texture2D(sTexture, clamp(vTextureCoord - vec2(0.0, detailStep.y), 0.0, 1.0)).rgb
+    ) * 0.25;
+    vec3 detail = sampled.rgb - neighbor;
+    graded += detail * (uTexture * 0.012 + uClarity * 0.018 + uSharpening * 0.022);
+    graded = mix(graded, neighbor, clamp(uNoiseReduction * 0.01, 0.0, 0.85));
+
+    vec2 gradeCenter = vTextureCoord - vec2(0.5);
+    float vignetteMask = clamp(dot(gradeCenter, gradeCenter) * 2.0, 0.0, 1.0);
+    graded *= 1.0 - uVignette * 0.006 * vignetteMask;
+
+    float noise = fract(sin(dot(gl_FragCoord.xy, vec2(12.9898, 78.233))) * 43758.5453) - 0.5;
+    graded += noise * uGrain * 0.0015;
+    vec4 original = vec4(clamp(graded, 0.0, 1.0), sampled.a);
 
     // Mode 1: Black & White — dipertahankan seperti versi stabil.
     if (uEffectMode > 0.5 && uEffectMode < 1.5) {
