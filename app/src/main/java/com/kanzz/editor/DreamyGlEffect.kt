@@ -20,6 +20,7 @@ class DreamyPreviewState {
     @Volatile var warmth: Float = 0.5f
     @Volatile var softFocus: Float = 0.35f
     @Volatile var effectMode: Float = 0f
+    @Volatile var colorGrading: ColorGrading = ColorGrading()
 }
 
 /**
@@ -35,16 +36,17 @@ class DreamyGlEffect(
     private val endTimeUs: Long = Long.MAX_VALUE,
     private val previewState: DreamyPreviewState? = null,
     private val effectMode: Float = 0f,
-    private val softFocus: Float = 0.35f
+    private val softFocus: Float = 0.35f,
+    private val colorGrading: ColorGrading = ColorGrading()
 ) : GlEffect {
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
-        if (previewState != null) false else intensity <= 0.001f || endTimeUs <= startTimeUs
+        if (previewState != null) false else (intensity <= 0.001f && colorGrading.isDefault) || endTimeUs <= startTimeUs
 
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
         DreamyShaderProgram(
             context, useHdr, intensity, glowSpread, warmth,
-            startTimeUs, endTimeUs, previewState, effectMode, softFocus
+            startTimeUs, endTimeUs, previewState, effectMode, softFocus, colorGrading
         )
 }
 
@@ -59,7 +61,8 @@ class DreamyShaderProgram(
     private val endTimeUs: Long,
     private val previewState: DreamyPreviewState? = null,
     private val effectMode: Float = 0f,
-    private val softFocus: Float = 0.35f
+    private val softFocus: Float = 0.35f,
+    private val colorGrading: ColorGrading = ColorGrading()
 ) : BaseGlShaderProgram(useHdr, 1) {
 
     private val glProgram = GlProgram(
@@ -96,19 +99,22 @@ class DreamyShaderProgram(
             val liveMode: Float
             val liveSoftFocus: Float
             val active: Boolean
+            val grade: ColorGrading
             if (previewState != null) {
                 liveIntensity = previewState.intensity.coerceIn(0f, 1f)
                 liveSpread = previewState.glowSpread.coerceIn(0f, 1f)
                 liveWarmth = previewState.warmth.coerceIn(0f, 1f)
-                liveMode = previewState.effectMode.coerceIn(0f, 1f)
+                liveMode = previewState.effectMode.coerceIn(0f, 2f)
                 liveSoftFocus = previewState.softFocus.coerceIn(0f, 1f)
+                grade = previewState.colorGrading
                 active = liveIntensity > 0.001f
             } else {
                 liveIntensity = effectIntensity
                 liveSpread = effectSpread
                 liveWarmth = effectWarmth
-                liveMode = effectMode.coerceIn(0f, 1f)
+                liveMode = effectMode.coerceIn(0f, 0f + 2f)
                 liveSoftFocus = softFocus.coerceIn(0f, 1f)
+                grade = colorGrading
                 active = presentationTimeUs >= startTimeUs && presentationTimeUs < endTimeUs
             }
 
@@ -119,6 +125,23 @@ class DreamyShaderProgram(
             glProgram.setFloatUniform("uWarmth", liveWarmth)
             glProgram.setFloatUniform("uEffectMode", liveMode)
             glProgram.setFloatUniform("uSoftFocus", liveSoftFocus)
+            glProgram.setFloatUniform("uExposure", grade.exposure)
+            glProgram.setFloatUniform("uContrast", grade.contrast)
+            glProgram.setFloatUniform("uHighlights", grade.highlights)
+            glProgram.setFloatUniform("uShadows", grade.shadows)
+            glProgram.setFloatUniform("uWhites", grade.whites)
+            glProgram.setFloatUniform("uBlacks", grade.blacks)
+            glProgram.setFloatUniform("uTemperature", grade.temperature)
+            glProgram.setFloatUniform("uTint", grade.tint)
+            glProgram.setFloatUniform("uVibrance", grade.vibrance)
+            glProgram.setFloatUniform("uSaturation", grade.saturation)
+            glProgram.setFloatUniform("uTexture", grade.texture)
+            glProgram.setFloatUniform("uClarity", grade.clarity)
+            glProgram.setFloatUniform("uDehaze", grade.dehaze)
+            glProgram.setFloatUniform("uVignette", grade.vignette)
+            glProgram.setFloatUniform("uGrain", grade.grain)
+            glProgram.setFloatUniform("uSharpening", grade.sharpening)
+            glProgram.setFloatUniform("uNoiseReduction", grade.noiseReduction)
             glProgram.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
             val error = GLES20.glGetError()
