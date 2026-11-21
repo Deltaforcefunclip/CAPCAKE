@@ -75,6 +75,9 @@ data class VideoClip(
     var contrast: Float = 1f,
     var saturation: Float = 1f,
     var rotationDegrees: Float = 0f,
+    var transformScale: Float = 1f,
+    var transformX: Float = 0f,
+    var transformY: Float = 0f,
     var colorGrading: ColorGrading = ColorGrading()
 ) {
     // Durasi pada timeline mengikuti kecepatan: 0.5x membuat klip 2 kali lebih panjang.
