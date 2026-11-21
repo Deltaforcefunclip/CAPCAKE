@@ -6570,11 +6570,23 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(3), dp(3), dp(3), dp(3))
         }
 
-        val iconView = TextView(this).apply {
-            text = icon
-            textSize = 27f
-            gravity = Gravity.CENTER
-            setTextColor(Color.WHITE)
+        val iconView: View = if (label == "Volume" || (label == "Sesuaikan" && videoSelected)) {
+            ImageView(this).apply {
+                setImageResource(
+                    if (label == "Volume") R.drawable.ic_volume_speaker
+                    else R.drawable.ic_adjust_palette
+                )
+                imageTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+                scaleType = android.widget.ImageView.ScaleType.FIT_CENTER
+                setPadding(dp(5), dp(4), dp(5), dp(4))
+            }
+        } else {
+            TextView(this).apply {
+                text = icon
+                textSize = 27f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+            }
         }
 
         val labelView = TextView(this).apply {
