@@ -2030,9 +2030,12 @@ class MainActivity : AppCompatActivity() {
                 selectedVideoClipId = tappedClip?.id
                 videoSelected = tappedClip != null
 
-                // Mengetuk klip hanya memilihnya. Perubahan urutan timeline
-                // hanya boleh terjadi melalui gesture drag yang disengaja.
+                // Pemilihan klip menjalankan ripple navigation: viewport dan
+                // playhead bergerak ke frame pertama klip tanpa mengubah urutan klip.
                 timeline.selectClip(selectedVideoClipId)
+                if (tappedClip != null) {
+                    timeline.navigateToClipStart(tappedClip)
+                }
                 timeline.updateSelection(false)
                 playerView.foreground = null
                 if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
@@ -2089,6 +2092,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     updateToolMenu()
                 }
+            },
+            onNavigateToPosition = { targetPosition ->
+                seekTimelinePosition(targetPosition)
+                updateTime()
             },
             onTrimClip = { clipId, leftDeltaMs, rightDeltaMs ->
                 val oldPosition = currentTimelinePosition()
@@ -7024,6 +7031,7 @@ class TimelineView(
     private val onViewportChanged: () -> Unit,
     private val onPreviewMoveClip: (String, Long) -> Unit,
     private val onMoveClip: (String, Long) -> Unit,
+    private val onNavigateToPosition: (Long) -> Unit,
     private val onTrimClip: (String, Long, Long) -> Unit
 ) : View(context) {
 
@@ -7062,6 +7070,52 @@ class TimelineView(
         }
 
     private var initialized = false
+    private var navigationAnimator: android.animation.ValueAnimator? = null
+    private var isNavigatingToClip = false
+
+    /**
+     * Gerakkan timeline ke frame pertama klip terpilih.
+     * Urutan/durasi klip tidak disentuh; hanya playhead dan viewport yang dianimasikan.
+     */
+    fun navigateToClipStart(clip: VideoClip) {
+        if (videoClips.find(clip.id) == null || width <= 0) return
+        navigationAnimator?.cancel()
+        val startPosition = controller.positionMs.toFloat()
+        val endPosition = clip.timelineStartMs.toFloat()
+        val startOffset = controller.offsetPx
+        val endOffset = (clip.timelineStartMs * pixelsPerMs -
+            controller.viewportWidthPx / 2f)
+        isNavigatingToClip = true
+        navigationAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
+            duration = 320L
+            interpolator = android.view.animation.DecelerateInterpolator()
+            addUpdateListener { animator ->
+                val fraction = animator.animatedValue as Float
+                controller.positionMs = (startPosition +
+                    (endPosition - startPosition) * fraction).toLong()
+                controller.offsetPx = startOffset + (endOffset - startOffset) * fraction
+                controller.clampOffset()
+                postInvalidateOnAnimation()
+            }
+            addListener(object : android.animation.AnimatorListenerAdapter() {
+                override fun onAnimationEnd(animation: android.animation.Animator) {
+                    if (navigationAnimator !== this@apply) return
+                    controller.positionMs = clip.timelineStartMs
+                    controller.offsetPx = endOffset
+                    controller.clampOffset()
+                    isNavigatingToClip = false
+                    navigationAnimator = null
+                    invalidate()
+                    onNavigateToPosition(clip.timelineStartMs)
+                }
+
+                override fun onAnimationCancel(animation: android.animation.Animator) {
+                    isNavigatingToClip = false
+                }
+            })
+            start()
+        }
+    }
 
     private var lastX = 0f
     private var downX = 0f
@@ -7379,7 +7433,7 @@ class TimelineView(
         // jari (onChange). Callback player bisa datang terlambat dari seek
         // sebelumnya; jika diterapkan, controller.centerPlayhead() akan
         // mengembalikan offset ke waktu lama dan timeline tampak meloncat.
-        if (isDraggingClip || isScrubbingTimeline) return
+        if (isDraggingClip || isScrubbingTimeline || isNavigatingToClip) return
 
         controller.setPosition(value)
 
