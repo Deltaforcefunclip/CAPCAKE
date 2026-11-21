@@ -3321,11 +3321,11 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Simpan") { _, _ -> saveCurrentProject(); refreshEffectTracks() }.show()
     }
     private fun showVideoColorGrading(clip: VideoClip) {
-        val original = clip.colorGrading
-        var working = original
+        var working = clip.colorGrading
         var applyToAll = false
         var confirmed = false
         var activeCategory = "CAHAYA"
+        var selectedColor = "red"
 
         data class GradeControl(
             val title: String, val min: Float, val max: Float, val suffix: String = "",
@@ -3347,6 +3347,7 @@ class MainActivity : AppCompatActivity() {
                 GradeControl("Vibrance", -100f, 100f, "", { it.vibrance }, { g, v -> g.copy(vibrance = v) }),
                 GradeControl("Saturation", -100f, 100f, "", { it.saturation }, { g, v -> g.copy(saturation = v) })
             ),
+            "CC" to emptyList(),
             "EFEK" to listOf(
                 GradeControl("Texture", -100f, 100f, "", { it.texture }, { g, v -> g.copy(texture = v) }),
                 GradeControl("Clarity", -100f, 100f, "", { it.clarity }, { g, v -> g.copy(clarity = v) }),
@@ -3359,76 +3360,164 @@ class MainActivity : AppCompatActivity() {
                 GradeControl("Noise Reduction", 0f, 100f, "", { it.noiseReduction }, { g, v -> g.copy(noiseReduction = v) })
             )
         )
+        val colorNames = listOf(
+            "red" to "MERAH", "orange" to "ORANYE", "yellow" to "KUNING", "green" to "HIJAU",
+            "aqua" to "CYAN", "blue" to "BIRU", "purple" to "UNGU", "magenta" to "MAGENTA"
+        )
+        fun colorControls(color: String): List<GradeControl> {
+            val title = colorNames.first { it.first == color }.second
+            return listOf(
+                GradeControl("Hue • $title", -100f, 100f, "", { g -> when (color) {
+                    "red" -> g.redHue; "orange" -> g.orangeHue; "yellow" -> g.yellowHue; "green" -> g.greenHue
+                    "aqua" -> g.aquaHue; "blue" -> g.blueHue; "purple" -> g.purpleHue; else -> g.magentaHue
+                } }, { g, v -> when (color) {
+                    "red" -> g.copy(redHue = v); "orange" -> g.copy(orangeHue = v); "yellow" -> g.copy(yellowHue = v); "green" -> g.copy(greenHue = v)
+                    "aqua" -> g.copy(aquaHue = v); "blue" -> g.copy(blueHue = v); "purple" -> g.copy(purpleHue = v); else -> g.copy(magentaHue = v)
+                } }),
+                GradeControl("Saturation • $title", -100f, 100f, "", { g -> when (color) {
+                    "red" -> g.redSaturation; "orange" -> g.orangeSaturation; "yellow" -> g.yellowSaturation; "green" -> g.greenSaturation
+                    "aqua" -> g.aquaSaturation; "blue" -> g.blueSaturation; "purple" -> g.purpleSaturation; else -> g.magentaSaturation
+                } }, { g, v -> when (color) {
+                    "red" -> g.copy(redSaturation = v); "orange" -> g.copy(orangeSaturation = v); "yellow" -> g.copy(yellowSaturation = v); "green" -> g.copy(greenSaturation = v)
+                    "aqua" -> g.copy(aquaSaturation = v); "blue" -> g.copy(blueSaturation = v); "purple" -> g.copy(purpleSaturation = v); else -> g.copy(magentaSaturation = v)
+                } }),
+                GradeControl("Luminance • $title", -100f, 100f, "", { g -> when (color) {
+                    "red" -> g.redLuminance; "orange" -> g.orangeLuminance; "yellow" -> g.yellowLuminance; "green" -> g.greenLuminance
+                    "aqua" -> g.aquaLuminance; "blue" -> g.blueLuminance; "purple" -> g.purpleLuminance; else -> g.magentaLuminance
+                } }, { g, v -> when (color) {
+                    "red" -> g.copy(redLuminance = v); "orange" -> g.copy(orangeLuminance = v); "yellow" -> g.copy(yellowLuminance = v); "green" -> g.copy(greenLuminance = v)
+                    "aqua" -> g.copy(aquaLuminance = v); "blue" -> g.copy(blueLuminance = v); "purple" -> g.copy(purpleLuminance = v); else -> g.copy(magentaLuminance = v)
+                } })
+            )
+        }
 
         val dialog = android.app.Dialog(this)
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(18), dp(18), dp(18), dp(14))
+            setPadding(dp(18), dp(12), dp(18), dp(10))
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(Color.rgb(17, 17, 17))
                 setStroke(dp(1), Color.rgb(55, 55, 55))
                 cornerRadius = dp(18).toFloat()
             }
         }
-        root.addView(TextView(this).apply {
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        header.addView(TextView(this).apply {
             text = "SESUAIKAN"
             textSize = 17f
             typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
-        })
+        }, LinearLayout.LayoutParams(0, dp(38), 1f))
+        val resetButton = TextView(this).apply {
+            text = "↻"
+            textSize = 23f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(38, 38, 38))
+                setStroke(dp(1), Color.rgb(85, 85, 85))
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+            }
+            contentDescription = "Reset kategori"
+        }
+        header.addView(resetButton, LinearLayout.LayoutParams(dp(38), dp(38)))
+        root.addView(header)
         root.addView(TextView(this).apply {
             text = "COLOR GRADING  •  NON-DESTRUCTIVE"
             textSize = 10f
             setTextColor(Color.GRAY)
-            setPadding(0, dp(4), 0, dp(12))
+            setPadding(0, dp(2), 0, dp(7))
         })
 
         val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(3), dp(8), dp(3), dp(8))
+            setPadding(dp(3), dp(5), dp(3), dp(5))
         }
         val scroll = ScrollView(this).apply { isFillViewport = false; addView(content) }
-        val status = TextView(this).apply { textSize = 10f; setTextColor(green); setPadding(dp(2), dp(3), dp(2), dp(5)) }
+        val status = TextView(this).apply { textSize = 10f; setTextColor(green); setPadding(dp(2), dp(2), dp(2), dp(2)) }
 
         fun refreshPreview() {
             liveColorGradingPreview = working
             updateDreamyPreviewOverlay()
         }
+        fun addSlider(control: GradeControl) {
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(dp(2), dp(3), dp(2), dp(5))
+            }
+            val label = TextView(this).apply { textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD }
+            val seek = SeekBar(this).apply {
+                max = 1000
+                progressTintList = android.content.res.ColorStateList.valueOf(green)
+                thumbTintList = android.content.res.ColorStateList.valueOf(green)
+            }
+            fun showValue(value: Float) {
+                label.text = if (control.suffix == " EV") {
+                    "${control.title}    ${String.format(Locale.US, "%+.2f", value)} EV"
+                } else "${control.title}    ${value.toInt()}"
+            }
+            val initial = control.read(working).coerceIn(control.min, control.max)
+            seek.progress = (((initial - control.min) / (control.max - control.min)) * 1000f).toInt()
+            showValue(initial)
+            seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    val value = control.min + (control.max - control.min) * progress / 1000f
+                    showValue(value)
+                    working = control.write(working, value)
+                    refreshPreview()
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+            row.addView(label)
+            row.addView(seek)
+            content.addView(row)
+        }
         fun renderCategory() {
             content.removeAllViews()
-            categories[activeCategory].orEmpty().forEach { control ->
-                val row = LinearLayout(this).apply {
-                    orientation = LinearLayout.VERTICAL
-                    setPadding(dp(2), dp(5), dp(2), dp(8))
+            if (activeCategory == "CC") {
+                val palette = HorizontalScrollView(this).apply { isHorizontalScrollBarEnabled = false }
+                val colorRow = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
                 }
-                val label = TextView(this).apply { textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD }
-                val seek = SeekBar(this).apply {
-                    max = 1000
-                    progressTintList = android.content.res.ColorStateList.valueOf(green)
-                    thumbTintList = android.content.res.ColorStateList.valueOf(green)
-                }
-                fun showValue(value: Float) {
-                    label.text = if (control.suffix == " EV") {
-                        "${control.title}    ${String.format(Locale.US, "%+.2f", value)} EV"
-                    } else "${control.title}    ${value.toInt()}"
-                }
-                val initial = control.read(working).coerceIn(control.min, control.max)
-                seek.progress = (((initial - control.min) / (control.max - control.min)) * 1000f).toInt()
-                showValue(initial)
-                seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-                    override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                        val value = control.min + (control.max - control.min) * progress / 1000f
-                        showValue(value)
-                        working = control.write(working, value)
-                        refreshPreview()
+                val swatches = mapOf(
+                    "red" to Color.rgb(235,65,65), "orange" to Color.rgb(245,145,45),
+                    "yellow" to Color.rgb(245,220,55), "green" to Color.rgb(65,190,90),
+                    "aqua" to Color.rgb(45,205,195), "blue" to Color.rgb(55,120,235),
+                    "purple" to Color.rgb(150,85,210), "magenta" to Color.rgb(220,65,165)
+                )
+                colorNames.forEach { (key, label) ->
+                    val swatch = TextView(this).apply {
+                        text = "●"
+                        textSize = 23f
+                        gravity = Gravity.CENTER
+                        setTextColor(swatches[key] ?: Color.WHITE)
+                        alpha = if (selectedColor == key) 1f else 0.48f
+                        setPadding(dp(7), dp(4), dp(7), dp(4))
+                        setOnClickListener {
+                            selectedColor = key
+                            renderCategory()
+                        }
+                        contentDescription = label
                     }
-                    override fun onStartTrackingTouch(bar: SeekBar?) {}
-                    override fun onStopTrackingTouch(bar: SeekBar?) {}
+                    colorRow.addView(swatch, LinearLayout.LayoutParams(dp(42), dp(42)))
+                }
+                palette.addView(colorRow)
+                content.addView(palette)
+                content.addView(TextView(this).apply {
+                    text = colorNames.first { it.first == selectedColor }.second
+                    textSize = 10f
+                    setTextColor(Color.LTGRAY)
+                    setPadding(dp(3), 0, 0, dp(2))
                 })
-                row.addView(label)
-                row.addView(seek)
-                content.addView(row)
+                colorControls(selectedColor).forEach { addSlider(it) }
+            } else {
+                categories[activeCategory].orEmpty().forEach { addSlider(it) }
             }
         }
         fun updateTabs() {
@@ -3441,7 +3530,7 @@ class MainActivity : AppCompatActivity() {
                     typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
                     gravity = Gravity.CENTER
                     setTextColor(if (selected) green else Color.LTGRAY)
-                    setPadding(dp(9), dp(11), dp(9), dp(11))
+                    setPadding(dp(5), dp(10), dp(5), dp(10))
                     background = android.graphics.drawable.GradientDrawable().apply {
                         setColor(if (selected) Color.rgb(31, 48, 40) else Color.TRANSPARENT)
                         cornerRadius = dp(8).toFloat()
@@ -3452,57 +3541,67 @@ class MainActivity : AppCompatActivity() {
                         renderCategory()
                     }
                 }
-                tabs.addView(tab, LinearLayout.LayoutParams(0, dp(40), 1f))
+                tabs.addView(tab, LinearLayout.LayoutParams(0, dp(38), 1f))
             }
+        }
+        resetButton.setOnClickListener {
+            if (activeCategory == "CC") {
+                colorControls(selectedColor).forEach { control -> working = control.write(working, 0f) }
+                status.text = "CC ${colorNames.first { it.first == selectedColor }.second} direset."
+            } else {
+                categories[activeCategory].orEmpty().forEach { control -> working = control.write(working, 0f) }
+                status.text = "Slider ${activeCategory.lowercase(Locale.ROOT)} direset."
+            }
+            renderCategory()
+            refreshPreview()
         }
         updateTabs()
         renderCategory()
         root.addView(tabs)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
 
-        // Lightroom-style compare: tahan untuk melihat kondisi sebelum grading.
-        val compareButton = TextView(this).apply {
-            text = "CMPRN  •  TAHAN UNTUK MEMBANDINGKAN"
-            textSize = 11f
+        // Kontrol tambahan agar play dan replay tetap bisa dipakai saat panel menutupi tombol utama.
+        val playbackControls = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, dp(4), 0, dp(2))
+        }
+        fun playbackControl(label: String): TextView = TextView(this).apply {
+            text = label
+            textSize = 13f
             typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
-            setPadding(dp(10), dp(12), dp(10), dp(12))
             background = android.graphics.drawable.GradientDrawable().apply {
                 setColor(Color.rgb(37, 37, 37))
-                setStroke(dp(1), Color.rgb(80, 80, 80))
+                setStroke(dp(1), Color.rgb(75, 75, 75))
                 cornerRadius = dp(9).toFloat()
             }
-            isClickable = true
-            isFocusable = true
-            setOnTouchListener { view, event ->
-                when (event.action) {
-                    android.view.MotionEvent.ACTION_DOWN -> {
-                        liveColorGradingPreview = original
-                        updateDreamyPreviewOverlay()
-                        text = "MENAMPILKAN SEBELUM"
-                        true
-                    }
-                    android.view.MotionEvent.ACTION_UP,
-                    android.view.MotionEvent.ACTION_CANCEL -> {
-                        liveColorGradingPreview = working
-                        updateDreamyPreviewOverlay()
-                        text = "CMPRN  •  TAHAN UNTUK MEMBANDINGKAN"
-                        true
-                    }
-                    else -> true
-                }
-            }
         }
-        root.addView(compareButton, LinearLayout.LayoutParams(-1, dp(42)).apply {
-            topMargin = dp(5)
-        })
+        val replayButton = playbackControl("↶ 10s")
+        replayButton.setOnClickListener {
+            val wasPlaying = player.isPlaying
+            val target = (currentTimelinePosition() - 10_000L).coerceAtLeast(0L)
+            seekTimelinePosition(target)
+            updateTime()
+            if (wasPlaying && !player.isPlaying) player.play()
+            updatePlayButton()
+        }
+        val panelPlayButton = playbackControl(if (player.isPlaying) "Ⅱ  PAUSE" else "▶  PLAY")
+        panelPlayButton.setOnClickListener {
+            if (player.isPlaying) player.pause() else player.play()
+            panelPlayButton.text = if (player.isPlaying) "Ⅱ  PAUSE" else "▶  PLAY"
+            updatePlayButton()
+        }
+        playbackControls.addView(replayButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(5) })
+        playbackControls.addView(panelPlayButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(5) })
+        root.addView(playbackControls)
         root.addView(status)
 
         val actions = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER
-            setPadding(0, dp(8), 0, 0)
+            setPadding(0, dp(4), 0, 0)
         }
         fun actionButton(title: String, color: Int, weight: Float, onClick: () -> Unit) {
             val button = TextView(this).apply {
@@ -3511,20 +3610,12 @@ class MainActivity : AppCompatActivity() {
                 typeface = Typeface.DEFAULT_BOLD
                 gravity = Gravity.CENTER
                 setTextColor(color)
-                setPadding(dp(7), dp(13), dp(7), dp(13))
+                setPadding(dp(7), dp(11), dp(7), dp(11))
                 setOnClickListener { onClick() }
             }
-            actions.addView(button, LinearLayout.LayoutParams(0, dp(44), weight))
+            actions.addView(button, LinearLayout.LayoutParams(0, dp(40), weight))
         }
-        actionButton("RESET", Color.LTGRAY, 1f) {
-            working = ColorGrading()
-            applyToAll = false
-            status.text = "Nilai dikembalikan ke awal."
-            updateTabs()
-            renderCategory()
-            refreshPreview()
-        }
-        actionButton("FOR ALL", Color.LTGRAY, 1.15f) {
+        actionButton("FOR ALL", Color.LTGRAY, 1f) {
             applyToAll = !applyToAll
             status.text = if (applyToAll) "Akan diterapkan ke semua klip saat CONFIRM." else ""
         }
@@ -3548,9 +3639,7 @@ class MainActivity : AppCompatActivity() {
                     (resources.displayMetrics.heightPixels * 0.60f).toInt()
                 )
                 window.setGravity(Gravity.BOTTOM)
-                window.attributes = window.attributes.apply {
-                    dimAmount = 0.22f
-                }
+                window.attributes = window.attributes.apply { dimAmount = 0.22f }
             }
         }
         dialog.setOnDismissListener {
