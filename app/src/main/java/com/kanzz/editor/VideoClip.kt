@@ -133,7 +133,7 @@ data class VideoTransition(
     var durationMs: Long = 500L
 ) {
     enum class Type {
-        NONE, FADE, DISSOLVE, WIPE_LEFT, WIPE_RIGHT
+        NONE, FADE, DISSOLVE, WIPE_LEFT, WIPE_RIGHT, PULL_IN
     }
 }
 

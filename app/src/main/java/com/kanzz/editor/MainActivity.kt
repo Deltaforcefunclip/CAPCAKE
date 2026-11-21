@@ -4364,19 +4364,90 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showTransitionPicker(transition: VideoTransition) {
-        val options = arrayOf("Tanpa transisi", "Fade", "Dissolve", "Wipe ke kiri", "Wipe ke kanan")
-        val types = VideoTransition.Type.values()
-        val current = types.indexOf(transition.type).coerceAtLeast(0)
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Pilih Transisi")
-            .setSingleChoiceItems(options, current) { dialog, which ->
-                transition.type = types[which]
-                timeline.invalidate()
-                saveCurrentProject()
+        val types = arrayOf(
+            VideoTransition.Type.NONE,
+            VideoTransition.Type.FADE,
+            VideoTransition.Type.DISSOLVE,
+            VideoTransition.Type.WIPE_LEFT,
+            VideoTransition.Type.WIPE_RIGHT,
+            VideoTransition.Type.PULL_IN
+        )
+        val labels = arrayOf(
+            "Tanpa transisi", "Fade", "Dissolve",
+            "Wipe ke kiri", "Wipe ke kanan", "Tarik Masuk (Zoom + Blur)"
+        )
+        var selectedType = transition.type.takeIf { it in types }
+            ?: VideoTransition.Type.NONE
+        var durationMs = transition.durationMs.coerceIn(100L, 3000L)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(8), dp(20), dp(4))
+        }
+        val choices = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        types.forEachIndexed { index, type ->
+            val radio = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = labels[index]
+                textSize = 14f
+                setTextColor(Color.WHITE)
+                buttonTintList = android.content.res.ColorStateList.valueOf(green)
+                isChecked = type == selectedType
+                setPadding(dp(4), dp(5), dp(4), dp(5))
+            }
+            choices.addView(radio)
+            if (type == selectedType) choices.check(radio.id)
+            radio.setOnClickListener { selectedType = type }
+        }
+        content.addView(choices)
+        val durationTitle = TextView(this).apply {
+            textSize = 13f
+            setTextColor(Color.WHITE)
+            setPadding(0, dp(12), 0, dp(4))
+        }
+        content.addView(durationTitle)
+        val durationSeek = SeekBar(this).apply {
+            max = 29
+            progress = ((durationMs - 100L) / 100L).toInt().coerceIn(0, 29)
+            progressTintList = android.content.res.ColorStateList.valueOf(green)
+            thumbTintList = android.content.res.ColorStateList.valueOf(green)
+        }
+        fun updateDurationLabel(value: Int) {
+            durationMs = 100L + value * 100L
+            durationTitle.text = "Durasi: %.1f detik".format(Locale.US, durationMs / 1000f)
+        }
+        updateDurationLabel(durationSeek.progress)
+        durationSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                updateDurationLabel(progress)
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        content.addView(durationSeek)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Transisi")
+            .setView(content)
+            .setPositiveButton("Terapkan", null)
+            .setNegativeButton("Batal", null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+                .setTextColor(green)
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)
+                .setTextColor(Color.LTGRAY)
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val leftId = transition.leftClipId
+                val rightId = transition.rightClipId
+                if (videoClipManager.setTransition(leftId, rightId, selectedType, durationMs)) {
+                    timeline.invalidate()
+                    saveCurrentProject()
+                } else {
+                    showMessage("Pilih dua klip yang bersebelahan untuk memasang transisi.")
+                }
                 dialog.dismiss()
             }
-            .setNegativeButton("Batal", null)
-            .show()
+        }
+        dialog.show()
     }
 
     private fun updateLayerGroupVisibility() {
