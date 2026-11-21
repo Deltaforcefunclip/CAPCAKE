@@ -5870,6 +5870,8 @@ class MainActivity : AppCompatActivity() {
         invalidateTextTrackViews()
         // Effect clips juga harus mengikuti playhead pada setiap frame playback.
         invalidateEffectTrackViews()
+        // Sinkronkan transformasi gambar dengan klip yang tepat di bawah playhead.
+        applyPreviewTransform()
         updateDreamyPreviewOverlay()
         updateTextPreview(force = false)
 
