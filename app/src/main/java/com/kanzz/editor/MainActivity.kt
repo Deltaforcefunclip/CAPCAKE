@@ -2038,7 +2038,11 @@ class MainActivity : AppCompatActivity() {
                         player.pause()
                         updatePlayButton()
                     }
-                    timeline.navigateToClipStart(tappedClip)
+                    // Jika playhead sudah berada di dalam klip yang dipilih,
+                    // pertahankan posisi timeline agar pengguna bisa langsung memotong.
+                    if (!timeline.isPlayheadInsideClip(tappedClip)) {
+                        timeline.navigateToClipStart(tappedClip)
+                    }
                 }
                 timeline.updateSelection(false)
                 playerView.foreground = null
@@ -7076,6 +7080,16 @@ class TimelineView(
     private var initialized = false
     private var navigationAnimator: android.animation.ValueAnimator? = null
     private var isNavigatingToClip = false
+
+    /**
+     * True jika playhead saat ini berada di rentang klip yang dipilih.
+     * Pemilihan klip yang sedang diputar tidak boleh menggeser timeline.
+     */
+    fun isPlayheadInsideClip(clip: VideoClip): Boolean {
+        val currentPosition = controller.positionMs
+        return currentPosition >= clip.timelineStartMs &&
+            currentPosition < clip.timelineEndMs
+    }
 
     /**
      * Gerakkan timeline ke frame pertama klip terpilih.
