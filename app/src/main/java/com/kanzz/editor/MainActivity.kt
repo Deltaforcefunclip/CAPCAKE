@@ -7263,41 +7263,43 @@ class MainActivity : AppCompatActivity() {
                                         }
                                     }
 
-                                // Sisi keluar: zoom agresif (hingga 2x) + fade ke hitam.
+                                // Timestamp Transformer berada pada timeline sequence (global),
+                                // bukan selalu dimulai dari nol untuk setiap item.
+                                // Sisi keluar: zoom hingga 2x + fade ke hitam di ujung klip kiri.
                                 val pullInOutgoing = videoClipManager.transitions.firstOrNull {
                                     it.leftClipId == clip.id && it.type == VideoTransition.Type.PULL_IN
                                 }
                                 if (pullInOutgoing != null) {
-                                    val speed = clip.speed.coerceIn(0.25f, 4f)
-                                    val transitionSourceUs = (pullInOutgoing.durationMs * speed * 1000.0)
-                                        .toLong().coerceIn(1L, clip.durationMs * 1000L)
-                                    val clipSourceDurationUs = clip.durationMs * 1000L
+                                    val transitionUs = (pullInOutgoing.durationMs * 1000L)
+                                        .coerceIn(1L, clip.timelineDurationMs.coerceAtLeast(1L) * 1000L)
+                                    val clipEndUs = clip.timelineEndMs * 1000L
                                     add(
                                         DreamyGlEffect(
                                             intensity = 0f,
                                             glowSpread = 0.35f,
                                             warmth = 0.5f,
-                                            pullInStartUs = (clipSourceDurationUs - transitionSourceUs).coerceAtLeast(0L),
-                                            pullInEndUs = clipSourceDurationUs
+                                            pullInStartUs = (clipEndUs - transitionUs).coerceAtLeast(0L),
+                                            pullInEndUs = clipEndUs
                                         )
                                     )
                                 }
 
-                                // Sisi masuk: klip kanan dimulai dari hitam lalu kembali normal.
+                                // Sisi masuk: gunakan timestamp global awal klip kanan,
+                                // agar fade-in tetap aktif meski klip bukan item pertama sequence.
                                 val pullInIncoming = videoClipManager.transitions.firstOrNull {
                                     it.rightClipId == clip.id && it.type == VideoTransition.Type.PULL_IN
                                 }
                                 if (pullInIncoming != null) {
-                                    val speed = clip.speed.coerceIn(0.25f, 4f)
-                                    val transitionSourceUs = (pullInIncoming.durationMs * speed * 1000.0)
-                                        .toLong().coerceIn(1L, clip.durationMs * 1000L)
+                                    val transitionUs = (pullInIncoming.durationMs * 1000L)
+                                        .coerceIn(1L, clip.timelineDurationMs.coerceAtLeast(1L) * 1000L)
+                                    val clipStartUs = clip.timelineStartMs * 1000L
                                     add(
                                         DreamyGlEffect(
                                             intensity = 0f,
                                             glowSpread = 0.35f,
                                             warmth = 0.5f,
-                                            pullInStartUs = 0L,
-                                            pullInEndUs = transitionSourceUs,
+                                            pullInStartUs = clipStartUs,
+                                            pullInEndUs = clipStartUs + transitionUs,
                                             pullInFadeIn = true
                                         )
                                     )
