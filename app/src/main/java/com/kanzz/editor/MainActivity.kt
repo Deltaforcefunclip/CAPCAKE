@@ -512,10 +512,18 @@ class MainActivity : AppCompatActivity() {
         val renderersFactory = DefaultRenderersFactory(this)
 
         player = ExoPlayer.Builder(this, renderersFactory).build().apply {
-            // UJI ISOLASI: lewati seluruh pipeline GPU video effect pada preview.
-            // Dreamy dan Color Correction tetap tersimpan di project; efek preview
-            // diaktifkan kembali setelah sumber frame drop berhasil diisolasi.
-            setVideoEffects(emptyList())
+            // Kembalikan pipeline preview Dreamy yang sudah dioptimalkan.
+            // Pengujian tanpa GPU effect justru memperberat playback saat replay.
+            setVideoEffects(
+                listOf(
+                    DreamyGlEffect(
+                        intensity = 0f,
+                        glowSpread = 0.35f,
+                        warmth = 0.5f,
+                        previewState = dreamyPreviewState
+                    )
+                )
+            )
             // Preload awal sengaja tidak diaktifkan untuk pengujian frame drop.
             addAnalyticsListener(playbackAnalyticsListener)
         }
