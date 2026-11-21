@@ -3444,7 +3444,7 @@ class MainActivity : AppCompatActivity() {
             liveColorGradingPreview = working
             updateDreamyPreviewOverlay()
         }
-        fun addSlider(control: GradeControl) {
+        fun addSlider(control: GradeControl, ccColor: Int? = null) {
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.VERTICAL
                 setPadding(dp(2), dp(3), dp(2), dp(5))
@@ -3452,8 +3452,50 @@ class MainActivity : AppCompatActivity() {
             val label = TextView(this).apply { textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD }
             val seek = SeekBar(this).apply {
                 max = 1000
-                progressTintList = android.content.res.ColorStateList.valueOf(green)
-                thumbTintList = android.content.res.ColorStateList.valueOf(green)
+                thumbTintList = android.content.res.ColorStateList.valueOf(ccColor ?: green)
+                if (ccColor == null) {
+                    progressTintList = android.content.res.ColorStateList.valueOf(green)
+                } else {
+                    val gradientColors = when {
+                        control.title.startsWith("Hue") -> intArrayOf(
+                            Color.RED, Color.rgb(255, 145, 0), Color.YELLOW,
+                            Color.GREEN, Color.CYAN, Color.BLUE, Color.rgb(145, 45, 210),
+                            Color.MAGENTA, Color.RED
+                        )
+                        control.title.startsWith("Saturation") -> intArrayOf(
+                            Color.rgb(105, 105, 105), ccColor, Color.WHITE
+                        )
+                        else -> intArrayOf(Color.BLACK, ccColor, Color.WHITE)
+                    }
+                    val trackHeight = dp(8)
+                    val trackBackground = android.graphics.drawable.GradientDrawable().apply {
+                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                        cornerRadius = (trackHeight / 2f)
+                        setColor(Color.rgb(48, 48, 48))
+                    }
+                    val gradientTrack = android.graphics.drawable.GradientDrawable(
+                        android.graphics.drawable.GradientDrawable.Orientation.LEFT_RIGHT,
+                        gradientColors
+                    ).apply {
+                        shape = android.graphics.drawable.GradientDrawable.RECTANGLE
+                        cornerRadius = trackHeight / 2f
+                    }
+                    val progressTrack = android.graphics.drawable.ClipDrawable(
+                        gradientTrack, Gravity.LEFT, android.view.Gravity.HORIZONTAL_GRAVITY_MASK
+                    )
+                    val layers = android.graphics.drawable.LayerDrawable(
+                        arrayOf(trackBackground, progressTrack)
+                    ).apply {
+                        setId(0, android.R.id.background)
+                        setId(1, android.R.id.progress)
+                        setLayerHeight(0, trackHeight)
+                        setLayerHeight(1, trackHeight)
+                        setLayerGravity(0, Gravity.CENTER_VERTICAL)
+                        setLayerGravity(1, Gravity.CENTER_VERTICAL)
+                    }
+                    progressDrawable = layers
+                    minimumHeight = dp(30)
+                }
             }
             fun showValue(value: Float) {
                 label.text = if (control.suffix == " EV") {
@@ -3492,20 +3534,31 @@ class MainActivity : AppCompatActivity() {
                     "purple" to Color.rgb(150,85,210), "magenta" to Color.rgb(220,65,165)
                 )
                 colorNames.forEach { (key, label) ->
+                    val colorValue = swatches[key] ?: Color.WHITE
+                    val selected = selectedColor == key
                     val swatch = TextView(this).apply {
-                        text = "●"
-                        textSize = 23f
+                        text = if (selected) "✓" else ""
+                        textSize = 17f
+                        typeface = Typeface.DEFAULT_BOLD
                         gravity = Gravity.CENTER
-                        setTextColor(swatches[key] ?: Color.WHITE)
-                        alpha = if (selectedColor == key) 1f else 0.48f
-                        setPadding(dp(7), dp(4), dp(7), dp(4))
+                        setTextColor(Color.WHITE)
+                        background = android.graphics.drawable.GradientDrawable().apply {
+                            shape = android.graphics.drawable.GradientDrawable.OVAL
+                            setColor(colorValue)
+                            setStroke(dp(if (selected) 3 else 1), if (selected) Color.WHITE else Color.rgb(85, 85, 85))
+                        }
+                        alpha = if (selected) 1f else 0.82f
+                        elevation = dp(if (selected) 4 else 1).toFloat()
                         setOnClickListener {
                             selectedColor = key
                             renderCategory()
                         }
                         contentDescription = label
                     }
-                    colorRow.addView(swatch, LinearLayout.LayoutParams(dp(42), dp(42)))
+                    colorRow.addView(swatch, LinearLayout.LayoutParams(dp(52), dp(52)).apply {
+                        marginStart = dp(5)
+                        marginEnd = dp(5)
+                    })
                 }
                 palette.addView(colorRow)
                 content.addView(palette)
@@ -3515,7 +3568,7 @@ class MainActivity : AppCompatActivity() {
                     setTextColor(Color.LTGRAY)
                     setPadding(dp(3), 0, 0, dp(2))
                 })
-                colorControls(selectedColor).forEach { addSlider(it) }
+                colorControls(selectedColor).forEach { addSlider(it, swatches[selectedColor]) }
             } else {
                 categories[activeCategory].orEmpty().forEach { addSlider(it) }
             }
@@ -3615,7 +3668,14 @@ class MainActivity : AppCompatActivity() {
             }
             actions.addView(button, LinearLayout.LayoutParams(0, dp(40), weight))
         }
-        actionButton("FOR ALL", Color.LTGRAY, 1f) {
+        actionButton("RESET ALL", Color.LTGRAY, 0.9f) {
+            working = ColorGrading()
+            applyToAll = false
+            status.text = "Semua slider color grading dikembalikan ke nilai awal."
+            renderCategory()
+            refreshPreview()
+        }
+        actionButton("FOR ALL", Color.LTGRAY, 0.9f) {
             applyToAll = !applyToAll
             status.text = if (applyToAll) "Akan diterapkan ke semua klip saat CONFIRM." else ""
         }
