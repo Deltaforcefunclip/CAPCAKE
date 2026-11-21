@@ -7431,11 +7431,20 @@ class TimelineView(
             cursor += clip.timelineDurationMs
             item
         }
+        // Gunakan batas sisip terdekat yang sama dengan proses commit ripple.
+        // Dengan begitu posisi sementara tidak melompat ke urutan berbeda.
         val target = dragTargetStartMs.coerceAtLeast(0L)
-        val movingCenter = target + moving.timelineDurationMs / 2L
-        val insertIndex = compacted.indexOfFirst { (clip, start) ->
-            movingCenter <= start + clip.timelineDurationMs / 2L
-        }.let { if (it < 0) compacted.size else it }
+        var cursorAtBoundary = 0L
+        var insertIndex = 0
+        var nearestDistance = Long.MAX_VALUE
+        for (index in 0..compacted.size) {
+            val distance = kotlin.math.abs(cursorAtBoundary - target)
+            if (distance < nearestDistance) {
+                nearestDistance = distance
+                insertIndex = index
+            }
+            if (index < compacted.size) cursorAtBoundary += compacted[index].first.timelineDurationMs
+        }
 
         val ordered = compacted.map { it.first }.toMutableList()
         ordered.add(insertIndex, moving)
