@@ -6105,19 +6105,33 @@ class MainActivity : AppCompatActivity() {
                                         )
                                     )
 
-                                    // Android View memakai koordinat Y ke bawah. Matrix GL
-                                    // memakai koordinat normal dengan Y ke atas.
-                                    // Susun satu matriks agar gambar (bukan kotak crop) yang
-                                    // mengalami zoom, rotasi, dan pergeseran.
+                                    // PlayerView melakukan transformasi pada bidang persegi
+                                    // exo_content_frame yang ditampilkan dengan aspect ratio frame.
+                                    // Matrix Media3 bekerja pada NDC (-1..1), sehingga rotasi harus
+                                    // dikonversi dari koordinat layar (Y ke bawah) ke koordinat NDC
+                                    // (Y ke atas) DAN dikoreksi dengan aspect ratio bidang.
+                                    val scale = previewScale.coerceIn(0.35f, 5f)
+                                    val radians = Math.toRadians(previewRotation.toDouble())
+                                    val cosA = kotlin.math.cos(radians).toFloat()
+                                    val sinA = kotlin.math.sin(radians).toFloat()
+                                    val aspect = frameAspect.coerceAtLeast(0.0001f)
+                                    val tx = 2f * previewTranslateX / frameW
+                                    val ty = -2f * previewTranslateY / frameH
+
+                                    // Matriks affine langsung dalam NDC. Konjugasi aspect-ratio
+                                    // membuat rotasi tetap berputar mengelilingi pusat gambar,
+                                    // bukan seolah-olah gambar berada di dalam kotak 1:1.
                                     val transformMatrix = Matrix().apply {
-                                        setScale(
-                                            previewScale.coerceIn(0.35f, 5f),
-                                            previewScale.coerceIn(0.35f, 5f)
-                                        )
-                                        postRotate(previewRotation)
-                                        postTranslate(
-                                            2f * previewTranslateX / frameW,
-                                            -2f * previewTranslateY / frameH
+                                        setValues(
+                                            floatArrayOf(
+                                                scale * cosA,
+                                                scale * sinA / aspect,
+                                                tx,
+                                                -scale * sinA * aspect,
+                                                scale * cosA,
+                                                ty,
+                                                0f, 0f, 1f
+                                            )
                                         )
                                     }
                                     add(
@@ -6126,8 +6140,7 @@ class MainActivity : AppCompatActivity() {
                                         }
                                     )
 
-                                    // Crop adalah mask tetap yang mengikuti kotak rasio
-                                    // preview. Letakkan SETELAH transformasi gambar.
+                                    // Crop hanya membatasi kanvas output. Ia tidak ikut diputar.
                                     val halfX: Float
                                     val halfY: Float
                                     if (outputAspect < frameAspect) {
@@ -6185,14 +6198,9 @@ class MainActivity : AppCompatActivity() {
                                         }
                                     }
 
-                                // Rotasi tetap dipertahankan sebagai efek terpisah.
-                                if (previewRotation % 360f != 0f) {
-                                    add(
-                                        androidx.media3.effect.ScaleAndRotateTransformation.Builder()
-                                            .setRotationDegrees(previewRotation)
-                                            .build()
-                                    )
-                                }
+                                // Rotasi sudah diterapkan tepat satu kali pada matriks NDC di atas.
+                                // Jangan tambahkan ScaleAndRotateTransformation kedua karena akan
+                                // memutar ulang frame/canvas dan menyebabkan orientasi ganda.
 
                                 // Snapshot data teks dibuat sebelum Transformer berjalan.
                                 // CanvasOverlay dipanggil di thread pemrosesan frame; callback tidak
