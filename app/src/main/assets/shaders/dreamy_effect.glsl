@@ -3,6 +3,7 @@ precision highp float;
 varying vec2 vTextureCoord;
 uniform sampler2D sTexture;
 uniform float uIntensity;
+uniform float uHasColorGrade;
 uniform float uBlurRadius;
 uniform float uWarmth;
 uniform float uEffectMode;
@@ -119,6 +120,12 @@ vec3 applyColorGrading(vec3 color) {
 
 void main() {
     vec4 sampled = texture2D(sTexture, vTextureCoord);
+
+    // Jalur normal: lewati HSV, kernel detail, blur 8 arah, dan kalkulasi efek.
+    if (uIntensity <= 0.001 && uHasColorGrade < 0.5) {
+        gl_FragColor = sampled;
+        return;
+    }
     vec3 graded = applyColorCorrection(applyColorGrading(sampled.rgb));
 
     // Local contrast/detail controls use a compact neighborhood kernel.

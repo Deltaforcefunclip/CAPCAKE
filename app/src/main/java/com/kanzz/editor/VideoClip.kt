@@ -50,9 +50,47 @@ data class ColorGrading(
     val magentaLuminance: Float = 0f
 ) {
     val isDefault: Boolean
-        get() = listOf(exposure, contrast, highlights, shadows, whites, blacks,
-            temperature, tint, vibrance, saturation, texture, clarity, dehaze,
-            vignette, grain, sharpening, noiseReduction, redHue, redSaturation, redLuminance, orangeHue, orangeSaturation, orangeLuminance, yellowHue, yellowSaturation, yellowLuminance, greenHue, greenSaturation, greenLuminance, aquaHue, aquaSaturation, aquaLuminance, blueHue, blueSaturation, blueLuminance, purpleHue, purpleSaturation, purpleLuminance, magentaHue, magentaSaturation, magentaLuminance).all { kotlin.math.abs(it) < 0.0001f }
+        get() = kotlin.math.abs(exposure) < 0.0001f
+            && kotlin.math.abs(contrast) < 0.0001f
+            && kotlin.math.abs(highlights) < 0.0001f
+            && kotlin.math.abs(shadows) < 0.0001f
+            && kotlin.math.abs(whites) < 0.0001f
+            && kotlin.math.abs(blacks) < 0.0001f
+            && kotlin.math.abs(temperature) < 0.0001f
+            && kotlin.math.abs(tint) < 0.0001f
+            && kotlin.math.abs(vibrance) < 0.0001f
+            && kotlin.math.abs(saturation) < 0.0001f
+            && kotlin.math.abs(texture) < 0.0001f
+            && kotlin.math.abs(clarity) < 0.0001f
+            && kotlin.math.abs(dehaze) < 0.0001f
+            && kotlin.math.abs(vignette) < 0.0001f
+            && kotlin.math.abs(grain) < 0.0001f
+            && kotlin.math.abs(sharpening) < 0.0001f
+            && kotlin.math.abs(noiseReduction) < 0.0001f
+            && kotlin.math.abs(redHue) < 0.0001f
+            && kotlin.math.abs(redSaturation) < 0.0001f
+            && kotlin.math.abs(redLuminance) < 0.0001f
+            && kotlin.math.abs(orangeHue) < 0.0001f
+            && kotlin.math.abs(orangeSaturation) < 0.0001f
+            && kotlin.math.abs(orangeLuminance) < 0.0001f
+            && kotlin.math.abs(yellowHue) < 0.0001f
+            && kotlin.math.abs(yellowSaturation) < 0.0001f
+            && kotlin.math.abs(yellowLuminance) < 0.0001f
+            && kotlin.math.abs(greenHue) < 0.0001f
+            && kotlin.math.abs(greenSaturation) < 0.0001f
+            && kotlin.math.abs(greenLuminance) < 0.0001f
+            && kotlin.math.abs(aquaHue) < 0.0001f
+            && kotlin.math.abs(aquaSaturation) < 0.0001f
+            && kotlin.math.abs(aquaLuminance) < 0.0001f
+            && kotlin.math.abs(blueHue) < 0.0001f
+            && kotlin.math.abs(blueSaturation) < 0.0001f
+            && kotlin.math.abs(blueLuminance) < 0.0001f
+            && kotlin.math.abs(purpleHue) < 0.0001f
+            && kotlin.math.abs(purpleSaturation) < 0.0001f
+            && kotlin.math.abs(purpleLuminance) < 0.0001f
+            && kotlin.math.abs(magentaHue) < 0.0001f
+            && kotlin.math.abs(magentaSaturation) < 0.0001f
+            && kotlin.math.abs(magentaLuminance) < 0.0001f
 }
 
 /**

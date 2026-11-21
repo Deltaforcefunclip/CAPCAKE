@@ -121,6 +121,7 @@ class DreamyShaderProgram(
             glProgram.use()
             glProgram.setSamplerTexIdUniform("sTexture", inputTexId, 0)
             glProgram.setFloatUniform("uIntensity", if (active) liveIntensity else 0f)
+            glProgram.setFloatUniform("uHasColorGrade", if (grade.isDefault) 0f else 1f)
             glProgram.setFloatUniform("uBlurRadius", 0.001f + liveSpread * 0.014f)
             glProgram.setFloatUniform("uWarmth", liveWarmth)
             glProgram.setFloatUniform("uEffectMode", liveMode)
@@ -168,13 +169,7 @@ class DreamyShaderProgram(
             glProgram.setFloatUniform("uMagentaLuminance", grade.magentaLuminance)
             glProgram.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-            val error = GLES20.glGetError()
-            if (error != GLES20.GL_NO_ERROR) {
-                throw VideoFrameProcessingException(
-                    IllegalStateException("Dreamy shader GL error: $error"),
-                    presentationTimeUs
-                )
-            }
+            // Hindari glGetError pada setiap frame: pemeriksaan ini dapat memaksa sinkronisasi CPU-GPU.
         } catch (e: VideoFrameProcessingException) {
             throw e
         } catch (e: Exception) {
