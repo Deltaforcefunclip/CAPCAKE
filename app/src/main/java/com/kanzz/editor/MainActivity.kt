@@ -3490,20 +3490,22 @@ class MainActivity : AppCompatActivity() {
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
 
-        // Tarik Masuk berjalan pada klip kanan setelah batas transisi.
-        val incomingTransition = activeVideo?.let { incoming ->
+        // Tarik Masuk bekerja pada klip kiri: zoom dan blur meningkat menjelang cut.
+        val outgoingTransition = activeVideo?.let { outgoing ->
             videoClipManager.transitions.firstOrNull {
-                it.rightClipId == incoming.id && it.type == VideoTransition.Type.PULL_IN
+                it.leftClipId == outgoing.id && it.type == VideoTransition.Type.PULL_IN
             }
         }
-        if (activeVideo != null && incomingTransition != null) {
+        if (activeVideo != null && outgoingTransition != null) {
             val localMs = (position - activeVideo.timelineStartMs).coerceAtLeast(0L)
-            val durationMs = incomingTransition.durationMs.coerceIn(100L, 3000L)
-            if (localMs < durationMs) {
-                val progress = (localMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+            val durationMs = outgoingTransition.durationMs.coerceIn(100L, 3000L)
+            val transitionStartMs = (activeVideo.timelineDurationMs - durationMs).coerceAtLeast(0L)
+            if (localMs >= transitionStartMs && localMs < activeVideo.timelineDurationMs) {
+                val progress = ((localMs - transitionStartMs).toFloat() /
+                    (activeVideo.timelineDurationMs - transitionStartMs).coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
                 val eased = 1f - (1f - progress) * (1f - progress) * (1f - progress)
-                dreamyPreviewState.pullInZoom = 1.45f - 0.45f * eased
-                dreamyPreviewState.pullInBlur = 1f - eased
+                dreamyPreviewState.pullInZoom = 1f + 0.45f * eased
+                dreamyPreviewState.pullInBlur = eased
             } else {
                 dreamyPreviewState.pullInZoom = 1f
                 dreamyPreviewState.pullInBlur = 0f
@@ -7247,21 +7249,22 @@ class MainActivity : AppCompatActivity() {
                                         }
                                     }
 
-                                // Tarik Masuk: zoom-in + blur mereda pada awal klip penerima.
+                                // Tarik Masuk: klip kiri membesar dan makin blur sebelum berpindah.
                                 val pullInTransition = videoClipManager.transitions.firstOrNull {
-                                    it.rightClipId == clip.id && it.type == VideoTransition.Type.PULL_IN
+                                    it.leftClipId == clip.id && it.type == VideoTransition.Type.PULL_IN
                                 }
                                 if (pullInTransition != null) {
                                     val speed = clip.speed.coerceIn(0.25f, 4f)
-                                    val sourceDurationUs = (pullInTransition.durationMs * speed * 1000.0)
+                                    val transitionSourceUs = (pullInTransition.durationMs * speed * 1000.0)
                                         .toLong().coerceIn(1L, clip.durationMs * 1000L)
+                                    val clipSourceDurationUs = clip.durationMs * 1000L
                                     add(
                                         DreamyGlEffect(
                                             intensity = 0f,
                                             glowSpread = 0.35f,
                                             warmth = 0.5f,
-                                            pullInStartUs = 0L,
-                                            pullInEndUs = sourceDurationUs
+                                            pullInStartUs = (clipSourceDurationUs - transitionSourceUs).coerceAtLeast(0L),
+                                            pullInEndUs = clipSourceDurationUs
                                         )
                                     )
                                 }
