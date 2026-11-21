@@ -5207,7 +5207,7 @@ class MainActivity : AppCompatActivity() {
             orientation = LinearLayout.VERTICAL
             tag = "preset_list"
         }
-        scroll.addView(list, ScrollView.LayoutParams(-1, -2))
+        scroll.addView(list, android.widget.FrameLayout.LayoutParams(-1, -2))
         presetTextPanel.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         presetTextPanel.visibility = View.VISIBLE
         refreshList()
