@@ -3440,9 +3440,28 @@ class MainActivity : AppCompatActivity() {
         val scroll = ScrollView(this).apply { isFillViewport = false; addView(content) }
         val status = TextView(this).apply { textSize = 10f; setTextColor(green); setPadding(dp(2), dp(2), dp(2), dp(2)) }
 
+        var pendingPausedPreviewRefresh: Runnable? = null
         fun refreshPreview() {
             liveColorGradingPreview = working
             updateDreamyPreviewOverlay()
+
+            // Saat video berhenti, perubahan uniform shader tidak otomatis meminta
+            // frame baru. Seek ke posisi yang sama (dengan debounce) memaksa decoder
+            // merender ulang frame diam tanpa menjalankan playback.
+            if (!player.isPlaying && player.playbackState == Player.STATE_READY) {
+                pendingPausedPreviewRefresh?.let(handler::removeCallbacks)
+                val previewPosition = currentTimelinePosition()
+                val refreshFrame = Runnable {
+                    if (dialog.isShowing && !player.isPlaying &&
+                        player.playbackState == Player.STATE_READY
+                    ) {
+                        seekTimelinePosition(previewPosition)
+                        playerView.postInvalidate()
+                    }
+                }
+                pendingPausedPreviewRefresh = refreshFrame
+                handler.postDelayed(refreshFrame, 45L)
+            }
         }
         fun addSlider(control: GradeControl, ccColor: Int? = null) {
             val row = LinearLayout(this).apply {
@@ -3631,6 +3650,7 @@ class MainActivity : AppCompatActivity() {
                 cornerRadius = dp(9).toFloat()
             }
         }
+        var repeatSelectedClip = false
         val replayButton = playbackControl("↶ 10s")
         replayButton.setOnClickListener {
             val wasPlaying = player.isPlaying
@@ -3640,12 +3660,38 @@ class MainActivity : AppCompatActivity() {
             if (wasPlaying && !player.isPlaying) player.play()
             updatePlayButton()
         }
-        val panelPlayButton = playbackControl(if (player.isPlaying) "Ⅱ  PAUSE" else "▶  PLAY")
+        val panelPlayButton = playbackControl("▶  PLAY")
+        val selectedClipLoopRunnable = object : Runnable {
+            override fun run() {
+                if (!dialog.isShowing) return
+                if (repeatSelectedClip) {
+                    val position = currentTimelinePosition()
+                    val reachedSelectedClipEnd = position >= clip.timelineEndMs - 25L ||
+                        player.playbackState == Player.STATE_ENDED
+                    if (reachedSelectedClipEnd) {
+                        seekTimelinePosition(clip.timelineStartMs)
+                        player.play()
+                    }
+                }
+                handler.postDelayed(this, 35L)
+            }
+        }
         panelPlayButton.setOnClickListener {
-            if (player.isPlaying) player.pause() else player.play()
-            panelPlayButton.text = if (player.isPlaying) "Ⅱ  PAUSE" else "▶  PLAY"
+            if (player.isPlaying || repeatSelectedClip) {
+                repeatSelectedClip = false
+                player.pause()
+            } else {
+                val position = currentTimelinePosition()
+                if (position < clip.timelineStartMs || position >= clip.timelineEndMs) {
+                    seekTimelinePosition(clip.timelineStartMs)
+                }
+                repeatSelectedClip = true
+                player.play()
+            }
+            panelPlayButton.text = if (repeatSelectedClip) "Ⅱ  PAUSE" else "▶  PLAY"
             updatePlayButton()
         }
+        handler.post(selectedClipLoopRunnable)
         playbackControls.addView(replayButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginEnd = dp(5) })
         playbackControls.addView(panelPlayButton, LinearLayout.LayoutParams(0, dp(40), 1f).apply { marginStart = dp(5) })
         root.addView(playbackControls)
@@ -3703,6 +3749,9 @@ class MainActivity : AppCompatActivity() {
             }
         }
         dialog.setOnDismissListener {
+            handler.removeCallbacks(selectedClipLoopRunnable)
+            pendingPausedPreviewRefresh?.let(handler::removeCallbacks)
+            repeatSelectedClip = false
             if (!confirmed) {
                 liveColorGradingPreview = null
                 updateDreamyPreviewOverlay()
@@ -6441,7 +6490,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             val composition = Composition.Builder(sequences).build()
-            val transformer = Transformer.Builder(this).addListener(listener).build()
+            // Encode portrait frames in portrait dimensions instead of relying
+            // only on a 90-degree rotation flag in MP4 metadata.
+            val transformer = Transformer.Builder(this)
+                .setPortraitEncodingEnabled(true)
+                .addListener(listener)
+                .build()
             exportTransformer = transformer
             transformer.start(composition, output.absolutePath)
             handler.post(exportProgressRunnable)
