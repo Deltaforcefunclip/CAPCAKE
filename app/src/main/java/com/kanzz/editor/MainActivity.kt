@@ -3490,32 +3490,43 @@ class MainActivity : AppCompatActivity() {
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
 
-        // Zoom In + Fade bekerja pada klip kiri: zoom dan fade ke hitam menjelang cut.
+        // Transisi melewati satu frame hitam: klip kiri zoom + fade-out,
+        // klip kanan fade-in dari hitam. Zoom dibuat lebih tegas hingga 2x.
+        val incomingTransition = activeVideo?.let { incoming ->
+            videoClipManager.transitions.firstOrNull {
+                it.rightClipId == incoming.id && it.type == VideoTransition.Type.PULL_IN
+            }
+        }
         val outgoingTransition = activeVideo?.let { outgoing ->
             videoClipManager.transitions.firstOrNull {
                 it.leftClipId == outgoing.id && it.type == VideoTransition.Type.PULL_IN
             }
         }
-        if (activeVideo != null && outgoingTransition != null) {
+        dreamyPreviewState.pullInZoom = 1f
+        dreamyPreviewState.pullInBlur = 0f
+        dreamyPreviewState.pullInFade = 0f
+
+        if (activeVideo != null && incomingTransition != null) {
+            val durationMs = incomingTransition.durationMs.coerceIn(100L, 3000L)
+                .coerceAtMost(activeVideo.timelineDurationMs.coerceAtLeast(1L))
             val localMs = (position - activeVideo.timelineStartMs).coerceAtLeast(0L)
+            if (localMs < durationMs) {
+                val progress = (localMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
+                val eased = progress * progress * (3f - 2f * progress)
+                dreamyPreviewState.pullInFade = 1f - eased
+            }
+        } else if (activeVideo != null && outgoingTransition != null) {
             val durationMs = outgoingTransition.durationMs.coerceIn(100L, 3000L)
+                .coerceAtMost(activeVideo.timelineDurationMs.coerceAtLeast(1L))
+            val localMs = (position - activeVideo.timelineStartMs).coerceAtLeast(0L)
             val transitionStartMs = (activeVideo.timelineDurationMs - durationMs).coerceAtLeast(0L)
             if (localMs >= transitionStartMs && localMs < activeVideo.timelineDurationMs) {
                 val progress = ((localMs - transitionStartMs).toFloat() /
-                    (activeVideo.timelineDurationMs - transitionStartMs).coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
-                val eased = 1f - (1f - progress) * (1f - progress) * (1f - progress)
-                dreamyPreviewState.pullInZoom = 1f + 0.35f * eased
-                dreamyPreviewState.pullInBlur = 0f
+                    durationMs.toFloat()).coerceIn(0f, 1f)
+                val eased = progress * progress * (3f - 2f * progress)
+                dreamyPreviewState.pullInZoom = 1f + eased
                 dreamyPreviewState.pullInFade = eased
-            } else {
-                dreamyPreviewState.pullInZoom = 1f
-                dreamyPreviewState.pullInBlur = 0f
-                dreamyPreviewState.pullInFade = 0f
             }
-        } else {
-            dreamyPreviewState.pullInZoom = 1f
-            dreamyPreviewState.pullInBlur = 0f
-            dreamyPreviewState.pullInFade = 0f
         }
 
         // Tidak memakai tint overlay; frame preview diproses oleh shader GPU.
@@ -7252,13 +7263,13 @@ class MainActivity : AppCompatActivity() {
                                         }
                                     }
 
-                                // Zoom In + Fade: klip kiri membesar lalu memudar ke hitam sebelum cut.
-                                val pullInTransition = videoClipManager.transitions.firstOrNull {
+                                // Sisi keluar: zoom agresif (hingga 2x) + fade ke hitam.
+                                val pullInOutgoing = videoClipManager.transitions.firstOrNull {
                                     it.leftClipId == clip.id && it.type == VideoTransition.Type.PULL_IN
                                 }
-                                if (pullInTransition != null) {
+                                if (pullInOutgoing != null) {
                                     val speed = clip.speed.coerceIn(0.25f, 4f)
-                                    val transitionSourceUs = (pullInTransition.durationMs * speed * 1000.0)
+                                    val transitionSourceUs = (pullInOutgoing.durationMs * speed * 1000.0)
                                         .toLong().coerceIn(1L, clip.durationMs * 1000L)
                                     val clipSourceDurationUs = clip.durationMs * 1000L
                                     add(
@@ -7268,6 +7279,26 @@ class MainActivity : AppCompatActivity() {
                                             warmth = 0.5f,
                                             pullInStartUs = (clipSourceDurationUs - transitionSourceUs).coerceAtLeast(0L),
                                             pullInEndUs = clipSourceDurationUs
+                                        )
+                                    )
+                                }
+
+                                // Sisi masuk: klip kanan dimulai dari hitam lalu kembali normal.
+                                val pullInIncoming = videoClipManager.transitions.firstOrNull {
+                                    it.rightClipId == clip.id && it.type == VideoTransition.Type.PULL_IN
+                                }
+                                if (pullInIncoming != null) {
+                                    val speed = clip.speed.coerceIn(0.25f, 4f)
+                                    val transitionSourceUs = (pullInIncoming.durationMs * speed * 1000.0)
+                                        .toLong().coerceIn(1L, clip.durationMs * 1000L)
+                                    add(
+                                        DreamyGlEffect(
+                                            intensity = 0f,
+                                            glowSpread = 0.35f,
+                                            warmth = 0.5f,
+                                            pullInStartUs = 0L,
+                                            pullInEndUs = transitionSourceUs,
+                                            pullInFadeIn = true
                                         )
                                     )
                                 }

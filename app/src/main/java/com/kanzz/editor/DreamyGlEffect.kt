@@ -42,7 +42,8 @@ class DreamyGlEffect(
     private val softFocus: Float = 0.35f,
     private val colorGrading: ColorGrading = ColorGrading(),
     private val pullInStartUs: Long = -1L,
-    private val pullInEndUs: Long = -1L
+    private val pullInEndUs: Long = -1L,
+    private val pullInFadeIn: Boolean = false
 ) : GlEffect {
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
@@ -52,7 +53,7 @@ class DreamyGlEffect(
         DreamyShaderProgram(
             context, useHdr, intensity, glowSpread, warmth,
             startTimeUs, endTimeUs, previewState, effectMode, softFocus, colorGrading,
-            pullInStartUs, pullInEndUs
+            pullInStartUs, pullInEndUs, pullInFadeIn
         )
 }
 
@@ -70,7 +71,8 @@ class DreamyShaderProgram(
     private val softFocus: Float = 0.35f,
     private val colorGrading: ColorGrading = ColorGrading(),
     private val pullInStartUs: Long = -1L,
-    private val pullInEndUs: Long = -1L
+    private val pullInEndUs: Long = -1L,
+    private val pullInFadeIn: Boolean = false
 ) : BaseGlShaderProgram(useHdr, 1) {
 
     private val glProgram = GlProgram(
@@ -132,9 +134,9 @@ class DreamyShaderProgram(
                 if (pullInEndUs > pullInStartUs && presentationTimeUs >= pullInStartUs && presentationTimeUs < pullInEndUs) {
                     val progress = ((presentationTimeUs - pullInStartUs).toFloat() / (pullInEndUs - pullInStartUs).toFloat()).coerceIn(0f, 1f)
                     val eased = progress * progress * (3f - 2f * progress)
-                    pullZoom = 1f + 0.35f * eased
+                    pullZoom = if (pullInFadeIn) 1f else 1f + eased
                     pullBlur = 0f
-                    pullFade = eased
+                    pullFade = if (pullInFadeIn) 1f - eased else eased
                 } else {
                     pullZoom = 1f
                     pullBlur = 0f
