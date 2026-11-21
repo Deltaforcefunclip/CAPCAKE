@@ -2366,7 +2366,6 @@ class MainActivity : AppCompatActivity() {
                         return true
                     }
                     MotionEvent.ACTION_CANCEL -> {
-                pressedTransition = null
                         emptyScaleDetector.onTouchEvent(event)
                         panVelocityTracker?.recycle()
                         panVelocityTracker = null
@@ -8849,6 +8848,7 @@ class TimelineView(
             }
 
             MotionEvent.ACTION_CANCEL -> {
+                pressedTransition = null
                 pointerDown = false
                 removeCallbacks(scrubSettleRunnable)
                 isScrubbingTimeline = false
