@@ -2053,7 +2053,7 @@ class MainActivity : AppCompatActivity() {
                     // Jika playhead sudah berada di dalam klip yang dipilih,
                     // pertahankan posisi timeline agar pengguna bisa langsung memotong.
                     if (!timeline.isPlayheadInsideClip(tappedClip)) {
-                        timeline.navigateToClipStart(tappedClip)
+                        timeline.navigateToClipEnd(tappedClip)
                     }
                 }
                 timeline.updateSelection(false)
@@ -7954,16 +7954,18 @@ class TimelineView(
     }
 
     /**
-     * Gerakkan timeline ke frame pertama klip terpilih.
-     * Urutan/durasi klip tidak disentuh; hanya playhead dan viewport yang dianimasikan.
+     * Saat memilih klip yang tidak sedang berada di bawah playhead, geser timeline
+     * hingga ujung kanan klip tepat menyentuh playhead tetap di tengah layar.
+     * Posisi akhir memakai 1 ms sebelum batas agar preview tetap menampilkan klip terpilih.
      */
-    fun navigateToClipStart(clip: VideoClip) {
+    fun navigateToClipEnd(clip: VideoClip) {
         if (videoClips.find(clip.id) == null || width <= 0) return
         navigationAnimator?.cancel()
         val startPosition = controller.positionMs.toFloat()
-        val endPosition = clip.timelineStartMs.toFloat()
+        val targetPosition = (clip.timelineEndMs - 1L).coerceAtLeast(clip.timelineStartMs)
+        val endPosition = targetPosition.toFloat()
         val startOffset = controller.offsetPx
-        val endOffset = (clip.timelineStartMs * pixelsPerMs -
+        val endOffset = (targetPosition * pixelsPerMs -
             controller.viewportWidthPx / 2f)
         isNavigatingToClip = true
         navigationAnimator = android.animation.ValueAnimator.ofFloat(0f, 1f).apply {
@@ -7982,13 +7984,13 @@ class TimelineView(
                     // cancel() juga memanggil onAnimationEnd; jangan biarkan animasi lama
                     // menimpa tujuan navigasi yang lebih baru.
                     if (!isNavigatingToClip) return
-                    controller.positionMs = clip.timelineStartMs
+                    controller.positionMs = targetPosition
                     controller.offsetPx = endOffset
                     controller.clampOffset()
                     isNavigatingToClip = false
                     navigationAnimator = null
                     invalidate()
-                    onNavigateToPosition(clip.timelineStartMs)
+                    onNavigateToPosition(targetPosition)
                 }
 
                 override fun onAnimationCancel(animation: android.animation.Animator) {
