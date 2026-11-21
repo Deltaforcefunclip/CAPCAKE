@@ -4026,17 +4026,17 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(actions)
         dialog.setContentView(root)
-        dialog.window?.setWindowAnimations(R.style.CapcakeBottomSheetAnimation)
-        dialog.setOnShowListener {
-            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-            dialog.window?.let { window ->
-                window.setLayout(
-                    (resources.displayMetrics.widthPixels * 0.96f).toInt(),
-                    (resources.displayMetrics.heightPixels * 0.60f).toInt()
-                )
-                window.setGravity(Gravity.BOTTOM)
-                window.attributes = window.attributes.apply { dimAmount = 0f }
-            }
+        // Tetapkan ukuran dan posisi sebelum dialog ditampilkan agar window
+        // tidak berpindah dari posisi default saat animasi sedang berjalan.
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setWindowAnimations(R.style.CapcakeBottomSheetAnimation)
+            setGravity(Gravity.BOTTOM)
+            setLayout(
+                (resources.displayMetrics.widthPixels * 0.96f).toInt(),
+                (resources.displayMetrics.heightPixels * 0.60f).toInt()
+            )
+            attributes = attributes.apply { dimAmount = 0f }
         }
         dialog.setOnDismissListener {
             handler.removeCallbacks(selectedClipLoopRunnable)
