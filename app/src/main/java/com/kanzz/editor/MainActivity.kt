@@ -4688,20 +4688,98 @@ class MainActivity : AppCompatActivity() {
     private fun editSelectedText() {
         val clip = selectedTextClip() ?: return
         val input = EditText(this).apply {
-            setText(clip.text); setTextColor(Color.WHITE); textSize = 18f
-            setPadding(dp(12), dp(10), dp(12), dp(10))
-            setBackgroundColor(Color.rgb(29, 29, 29))
+            setText(clip.text)
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.GRAY)
+            textSize = 18f
+            minLines = 2
+            maxLines = 5
+            gravity = Gravity.TOP or Gravity.START
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(29, 29, 29))
+                setStroke(dp(1), Color.rgb(65, 65, 65))
+                cornerRadius = dp(12).toFloat()
+            }
         }
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Edit Text").setView(input)
-            .setNegativeButton("Batal", null)
-            .setPositiveButton("Simpan") { _, _ ->
-                val value = input.text.toString()
-                if (value.isNotBlank()) {
-                    pushUndoSnapshot(); clip.text = value
-                    updateTextPreview(); refreshTextTracks(); saveCurrentProject()
-                }
-            }.show()
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(18, 18, 18))
+                cornerRadius = dp(18).toFloat()
+            }
+        }
+        root.addView(TextView(this).apply {
+            text = "EDIT TEXT"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, dp(12))
+        })
+        root.addView(input, LinearLayout.LayoutParams(-1, dp(104)))
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, dp(12), 0, 0)
+        }
+        fun action(label: String, primary: Boolean) = TextView(this).apply {
+            text = label
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(if (primary) Color.rgb(15, 15, 15) else Color.LTGRAY)
+            setPadding(dp(20), dp(10), dp(20), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(if (primary) green else Color.rgb(38, 38, 38))
+                cornerRadius = dp(10).toFloat()
+            }
+        }
+        val cancel = action("BATAL", false)
+        val save = action("SIMPAN", true)
+        actions.addView(cancel, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) })
+        actions.addView(save, LinearLayout.LayoutParams(-2, -2))
+        root.addView(actions)
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(root).create()
+        cancel.setOnClickListener { dialog.dismiss() }
+        save.setOnClickListener {
+            val value = input.text.toString()
+            if (value.isNotBlank()) {
+                pushUndoSnapshot()
+                clip.text = value
+                updateTextPreview()
+                refreshTextTracks()
+                saveCurrentProject()
+                dialog.dismiss()
+            } else {
+                input.error = "Teks tidak boleh kosong"
+            }
+        }
+        dialog.setOnShowListener {
+            dialog.window?.apply {
+                setBackgroundDrawableResource(android.R.color.transparent)
+                setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                    android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+                setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+                setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+                    android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+            }
+            input.requestFocus()
+            input.setSelection(input.text.length)
+            input.post {
+                val imm = getSystemService(android.content.Context.INPUT_METHOD_SERVICE) as android.view.inputmethod.InputMethodManager
+                imm.showSoftInput(input, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+            }
+        }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_STATE_ALWAYS_VISIBLE or
+                android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        }
     }
 
     private fun fontLibraryDirectory(): File {
@@ -5045,13 +5123,276 @@ class MainActivity : AppCompatActivity() {
 
     private fun showTextColorPicker() {
         val clip = selectedTextClip() ?: return
-        val labels = arrayOf("Putih", "Hitam", "Merah", "Kuning", "Hijau", "Biru")
-        val colors = intArrayOf(Color.WHITE, Color.BLACK, Color.RED, Color.YELLOW, Color.GREEN, Color.CYAN)
-        androidx.appcompat.app.AlertDialog.Builder(this).setTitle("Warna teks")
-            .setItems(labels) { _, which ->
-                pushUndoSnapshot(); clip.color = colors[which]
-                updateTextPreview(); saveCurrentProject()
-            }.show()
+        val originalColor = clip.color
+        val hsv = FloatArray(3)
+        Color.colorToHSV(originalColor, hsv)
+        var hue = hsv[0]
+        var wheelColor = Color.HSVToColor(floatArrayOf(hue, 1f, 1f))
+        var blackMix = 1f
+        var whiteMix = 1f
+        var undoSaved = false
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(14), dp(18), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(18, 18, 18))
+                cornerRadius = dp(20).toFloat()
+                setStroke(dp(1), Color.rgb(55, 55, 55))
+            }
+        }
+        root.addView(TextView(this).apply {
+            text = "WARNA TEKS"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+            setPadding(0, 0, 0, dp(8))
+        })
+
+        val wheel = HueSaturationWheel(this, hue, hsv[1]) { selectedHue, saturation ->
+            hue = selectedHue
+            wheelColor = Color.HSVToColor(floatArrayOf(hue, saturation.coerceIn(0f, 1f), 1f))
+            wheelColorChanged?.invoke(wheelColor)
+        }
+        root.addView(wheel, LinearLayout.LayoutParams(dp(218), dp(218)).apply {
+            gravity = Gravity.CENTER
+        })
+
+        val preview = View(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(originalColor)
+                setStroke(dp(1), Color.rgb(90, 90, 90))
+                cornerRadius = dp(8).toFloat()
+            }
+        }
+        root.addView(TextView(this).apply {
+            text = "PREVIEW WARNA"
+            textSize = 10f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.LTGRAY)
+            setPadding(0, dp(8), 0, dp(5))
+        })
+        root.addView(preview, LinearLayout.LayoutParams(-1, dp(18)))
+
+        fun blend(from: Int, to: Int, amount: Float): Int {
+            val t = amount.coerceIn(0f, 1f)
+            return Color.rgb(
+                (Color.red(from) + (Color.red(to) - Color.red(from)) * t).toInt(),
+                (Color.green(from) + (Color.green(to) - Color.green(from)) * t).toInt(),
+                (Color.blue(from) + (Color.blue(to) - Color.blue(from)) * t).toInt()
+            )
+        }
+        fun applyLiveColor() {
+            val softened = blend(Color.WHITE, wheelColor, whiteMix)
+            clip.color = blend(Color.BLACK, softened, blackMix)
+            preview.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(clip.color)
+                setStroke(dp(1), Color.rgb(90, 90, 90))
+                cornerRadius = dp(8).toFloat()
+            }
+            updateTextPreview()
+        }
+        val blackSlider = GradientColorSlider(this, Color.BLACK, wheelColor, 100) { value ->
+            blackMix = value / 100f
+            applyLiveColor()
+        }
+        val whiteSlider = GradientColorSlider(this, Color.WHITE, wheelColor, 100) { value ->
+            whiteMix = value / 100f
+            applyLiveColor()
+        }
+        root.addView(TextView(this).apply {
+            text = "KEDALAMAN WARNA"
+            textSize = 10f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.LTGRAY)
+            setPadding(0, dp(9), 0, 0)
+        })
+        root.addView(blackSlider, LinearLayout.LayoutParams(-1, dp(34)))
+        root.addView(TextView(this).apply {
+            text = "CAMPURAN PUTIH"
+            textSize = 10f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.LTGRAY)
+            setPadding(0, dp(2), 0, 0)
+        })
+        root.addView(whiteSlider, LinearLayout.LayoutParams(-1, dp(34)))
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        fun action(label: String, primary: Boolean) = TextView(this).apply {
+            text = label
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(if (primary) Color.rgb(15, 15, 15) else Color.LTGRAY)
+            setPadding(dp(18), dp(9), dp(18), dp(9))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(if (primary) green else Color.rgb(38, 38, 38))
+                cornerRadius = dp(10).toFloat()
+            }
+        }
+        val cancel = action("BATAL", false)
+        val done = action("SELESAI", true)
+        actions.addView(cancel, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) })
+        actions.addView(done, LinearLayout.LayoutParams(-2, -2))
+        root.addView(actions)
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(root).create()
+        dialog.setCanceledOnTouchOutside(false)
+        cancel.setOnClickListener {
+            clip.color = originalColor
+            updateTextPreview()
+            dialog.dismiss()
+        }
+        done.setOnClickListener {
+            if (!undoSaved) pushUndoSnapshot()
+            saveCurrentProject()
+            dialog.dismiss()
+        }
+        dialog.setOnDismissListener {
+            if (clip.color != originalColor && !undoSaved) {
+                // Simpan satu snapshot untuk seluruh sesi pemilihan warna.
+                pushUndoSnapshot()
+                undoSaved = true
+            }
+        }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_NOTHING)
+        }
+        // Warna pada kedua gradient mengikuti pilihan wheel tanpa membuat ulang popup.
+        wheelColorChanged = { color ->
+            wheelColor = color
+            blackSlider.setEndColor(color)
+            whiteSlider.setEndColor(color)
+            applyLiveColor()
+        }
+    }
+
+    private var wheelColorChanged: ((Int) -> Unit)? = null
+
+    private inner class HueSaturationWheel(
+        context: android.content.Context,
+        initialHue: Float,
+        initialSaturation: Float,
+        private val onColorChanged: (Float, Float) -> Unit
+    ) : View(context) {
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        private var wheelBitmap: android.graphics.Bitmap? = null
+        private var selectedHue = initialHue
+        private var selectedSaturation = initialSaturation
+
+        override fun onSizeChanged(w: Int, h: Int, oldw: Int, oldh: Int) {
+            super.onSizeChanged(w, h, oldw, oldh)
+            val size = minOf(w, h).coerceAtLeast(1)
+            val pixels = IntArray(size * size)
+            val center = (size - 1) / 2f
+            val radius = center
+            for (y in 0 until size) for (x in 0 until size) {
+                val dx = x - center
+                val dy = y - center
+                val distance = kotlin.math.sqrt(dx * dx + dy * dy)
+                if (distance <= radius) {
+                    val hueValue = (Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())) + 360.0) % 360.0
+                    val saturation = (distance / radius).coerceIn(0f, 1f)
+                    pixels[y * size + x] = Color.HSVToColor(floatArrayOf(hueValue.toFloat(), saturation, 1f))
+                } else pixels[y * size + x] = Color.TRANSPARENT
+            }
+            wheelBitmap = android.graphics.Bitmap.createBitmap(pixels, size, size, android.graphics.Bitmap.Config.ARGB_8888)
+        }
+
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            super.onDraw(canvas)
+            val bitmap = wheelBitmap ?: return
+            val side = minOf(width, height).toFloat()
+            val left = (width - side) / 2f
+            val top = (height - side) / 2f
+            canvas.drawBitmap(bitmap, null, android.graphics.RectF(left, top, left + side, top + side), paint)
+            val angle = Math.toRadians(selectedHue.toDouble())
+            val radius = side * 0.46f * selectedSaturation
+            val cx = width / 2f + kotlin.math.cos(angle).toFloat() * radius
+            val cy = height / 2f + kotlin.math.sin(angle).toFloat() * radius
+            paint.style = android.graphics.Paint.Style.STROKE
+            paint.strokeWidth = dp(3).toFloat()
+            paint.color = Color.WHITE
+            canvas.drawCircle(cx, cy, dp(8).toFloat(), paint)
+            paint.style = android.graphics.Paint.Style.FILL
+        }
+
+        override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+            if (event.actionMasked == android.view.MotionEvent.ACTION_DOWN ||
+                event.actionMasked == android.view.MotionEvent.ACTION_MOVE) {
+                val dx = event.x - width / 2f
+                val dy = event.y - height / 2f
+                val radius = (minOf(width, height) / 2f).coerceAtLeast(1f)
+                selectedHue = ((Math.toDegrees(kotlin.math.atan2(dy.toDouble(), dx.toDouble())) + 360.0) % 360.0).toFloat()
+                selectedSaturation = (kotlin.math.sqrt(dx * dx + dy * dy) / radius).coerceIn(0f, 1f)
+                onColorChanged(selectedHue, selectedSaturation)
+                invalidate()
+                return true
+            }
+            return event.actionMasked == android.view.MotionEvent.ACTION_UP
+        }
+    }
+
+    private inner class GradientColorSlider(
+        context: android.content.Context,
+        private val startColor: Int,
+        endColor: Int,
+        initialValue: Int,
+        private val onValueChanged: (Int) -> Unit
+    ) : View(context) {
+        private val paint = android.graphics.Paint(android.graphics.Paint.ANTI_ALIAS_FLAG)
+        private var endColorValue = endColor
+        private var value = initialValue.coerceIn(0, 100)
+
+        fun setEndColor(color: Int) {
+            endColorValue = color
+            invalidate()
+        }
+
+        override fun onDraw(canvas: android.graphics.Canvas) {
+            super.onDraw(canvas)
+            val left = dp(8).toFloat()
+            val right = width - dp(8).toFloat()
+            val cy = height / 2f
+            val shader = android.graphics.LinearGradient(left, cy, right, cy,
+                startColor, endColorValue, android.graphics.Shader.TileMode.CLAMP)
+            paint.shader = shader
+            canvas.drawRoundRect(left, cy - dp(5), right, cy + dp(5), dp(5).toFloat(), dp(5).toFloat(), paint)
+            paint.shader = null
+            val x = left + (right - left) * value / 100f
+            paint.color = Color.WHITE
+            canvas.drawCircle(x, cy, dp(8).toFloat(), paint)
+            paint.style = android.graphics.Paint.Style.STROKE
+            paint.strokeWidth = dp(2).toFloat()
+            paint.color = endColorValue
+            canvas.drawCircle(x, cy, dp(8).toFloat(), paint)
+            paint.style = android.graphics.Paint.Style.FILL
+        }
+
+        override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+            when (event.actionMasked) {
+                android.view.MotionEvent.ACTION_DOWN, android.view.MotionEvent.ACTION_MOVE -> {
+                    val left = dp(8).toFloat()
+                    val right = width - dp(8).toFloat()
+                    value = (((event.x - left) / (right - left).coerceAtLeast(1f)) * 100f).toInt().coerceIn(0, 100)
+                    onValueChanged(value)
+                    invalidate()
+                    return true
+                }
+                android.view.MotionEvent.ACTION_UP -> return true
+                else -> return false
+            }
+        }
     }
 
     private fun toggleSelectedTextStyle() {
