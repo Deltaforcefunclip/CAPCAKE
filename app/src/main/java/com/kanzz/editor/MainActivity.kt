@@ -5184,6 +5184,10 @@ class MainActivity : AppCompatActivity() {
             )
         }
         fun applyLiveColor() {
+            if (!undoSaved) {
+                pushUndoSnapshot()
+                undoSaved = true
+            }
             val softened = blend(Color.WHITE, wheelColor, whiteMix)
             clip.color = blend(Color.BLACK, softened, blackMix)
             preview.background = android.graphics.drawable.GradientDrawable().apply {
@@ -5245,20 +5249,14 @@ class MainActivity : AppCompatActivity() {
         dialog.setCanceledOnTouchOutside(false)
         cancel.setOnClickListener {
             clip.color = originalColor
+            if (undoSaved) undoStack.removeLastOrNull()
+            undoSaved = false
             updateTextPreview()
             dialog.dismiss()
         }
         done.setOnClickListener {
-            if (!undoSaved) pushUndoSnapshot()
-            saveCurrentProject()
+            if (undoSaved) saveCurrentProject()
             dialog.dismiss()
-        }
-        dialog.setOnDismissListener {
-            if (clip.color != originalColor && !undoSaved) {
-                // Simpan satu snapshot untuk seluruh sesi pemilihan warna.
-                pushUndoSnapshot()
-                undoSaved = true
-            }
         }
         dialog.show()
         dialog.window?.apply {
