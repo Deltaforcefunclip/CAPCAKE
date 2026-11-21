@@ -2030,34 +2030,8 @@ class MainActivity : AppCompatActivity() {
                 selectedVideoClipId = tappedClip?.id
                 videoSelected = tappedClip != null
 
-                // Saat klip dipilih jauh dari playhead, pindahkan secara magnetik
-                // ke sisi playhead: klip di kanan menempel dari awal, klip di kiri
-                // menempel dari ujung akhirnya. Jika playhead sudah berada di dalam
-                // klip, jangan ubah urutan timeline.
-                if (tappedClip != null && videoClipManager.clips.size > 1) {
-                    val playheadMs = timelineController.positionMs.coerceIn(
-                        0L, videoClipManager.durationMs
-                    )
-                    val targetStartMs = when {
-                        tappedClip.timelineEndMs <= playheadMs ->
-                            (playheadMs - tappedClip.timelineDurationMs).coerceAtLeast(0L)
-                        tappedClip.timelineStartMs > playheadMs -> playheadMs
-                        else -> null
-                    }
-                    if (targetStartMs != null &&
-                        targetStartMs != tappedClip.timelineStartMs
-                    ) {
-                        val oldPosition = playheadMs
-                        pushUndoSnapshot()
-                        if (videoClipManager.moveToTimelinePosition(tappedClip.id, targetStartMs)) {
-                            refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
-                            saveCurrentProject()
-                        } else if (undoStack.isNotEmpty()) {
-                            undoStack.removeLast()
-                        }
-                    }
-                }
-
+                // Mengetuk klip hanya memilihnya. Perubahan urutan timeline
+                // hanya boleh terjadi melalui gesture drag yang disengaja.
                 timeline.selectClip(selectedVideoClipId)
                 timeline.updateSelection(false)
                 playerView.foreground = null
@@ -7096,7 +7070,8 @@ class TimelineView(
     private var isSelected = false
     private var selectedClipId: String? = null
 
-    // Drag klip memakai long-press agar geser biasa tetap berfungsi untuk scrub/scroll.
+    // Drag klip memakai long-press; toleransi gerak kecil mencegah sentuhan HP
+    // membatalkan long-press terlalu dini.
     private var pressedClip: VideoClip? = null
     private var pointerDown = false
     // Setelah pinch zoom dimulai, gerakan satu jari yang tersisa tidak boleh dianggap scrub.
@@ -7807,6 +7782,10 @@ class TimelineView(
                 val hitClip = if (event.y in trackTop..trackBottom) {
                     videoClips.clips.firstOrNull { tappedTime >= it.timelineStartMs && tappedTime < it.timelineEndMs }
                 } else null
+                // Sinkronkan identitas seleksi sejak awal sentuhan agar border,
+                // handle trim, dan hit-test tidak memakai klip yang sebelumnya aktif.
+                selectedClipId = hitClip?.id
+                invalidate()
 
                 // Handle trim hanya aktif setelah klip dipilih; area sentuh diperlebar agar mudah di HP.
                 if (hitClip != null && hitClip.id == selectedClipId) {
@@ -7827,7 +7806,7 @@ class TimelineView(
                     pressedClip?.let { clip ->
                         dragInitialStartMs = clip.timelineStartMs
                         dragTargetStartMs = clip.timelineStartMs
-                        postDelayed(dragLongPress, 350L)
+                        postDelayed(dragLongPress, 250L)
                     }
                 } else {
                     pressedClip = null
@@ -7858,7 +7837,7 @@ class TimelineView(
                         trimDeltaMs = if (trimEdge < 0) delta.coerceAtLeast(0L) else delta
                         invalidate()
                     } else {
-                        if (!isDraggingClip && abs(event.x - downX) > dp(3)) {
+                        if (!isDraggingClip && abs(event.x - downX) > dp(10)) {
                             removeCallbacks(dragLongPress)
                             pressedClip = null
                         }
@@ -7872,27 +7851,23 @@ class TimelineView(
                             val deltaMs = ((event.x - dragDownX) /
                                 pixelsPerMs.coerceAtLeast(0.000001f)).toLong()
                             val proposed = (dragInitialStartMs + deltaMs).coerceAtLeast(0L)
-                            val snapState = TimelineState(
-                                clips = videoClips.clips.map { item ->
-                                    EditorClip(
-                                        id = item.id,
-                                        mediaUri = item.sourceUri,
-                                        trackIndex = 0,
-                                        startTime = item.timelineStartMs,
-                                        duration = item.timelineDurationMs,
-                                        sourceDuration = item.timelineDurationMs
-                                    )
-                                },
-                                playheadMs = position
-                            )
-                            val snapped = TimelineSnapEngine.snap(
-                                proposedTimeMs = proposed,
-                                movingClipId = clip.id,
-                                state = snapState,
-                                pixelsPerMs = pixelsPerMs
-                            )
-                            dragTargetStartMs = snapped.timeMs.coerceAtLeast(0L)
-                            dragSnapTargetMs = snapped.targetTimeMs
+                            // Hitung batas sisip setelah klip yang digeser dikeluarkan.
+                            // Perhitungan ini sama dengan VideoClipManager saat commit,
+                            // sehingga preview sementara dan hasil akhir tidak berbeda arah.
+                            val remaining = videoClips.clips.filter { it.id != clip.id }
+                            var cursor = 0L
+                            var nearestBoundary = 0L
+                            var nearestDistance = Long.MAX_VALUE
+                            for (index in 0..remaining.size) {
+                                val distance = kotlin.math.abs(cursor - proposed)
+                                if (distance < nearestDistance) {
+                                    nearestDistance = distance
+                                    nearestBoundary = cursor
+                                }
+                                if (index < remaining.size) cursor += remaining[index].timelineDurationMs
+                            }
+                            dragTargetStartMs = nearestBoundary
+                            dragSnapTargetMs = nearestBoundary
                             val now = android.os.SystemClock.uptimeMillis()
                             if (dragTargetStartMs != lastDragPreviewTargetMs &&
                                 now - lastDragPreviewAt >= 35L
