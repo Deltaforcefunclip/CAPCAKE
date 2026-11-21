@@ -6457,7 +6457,7 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(panel)
         }
         val description = TextView(this).apply {
-            text = "Motion Blur mengikuti perubahan gerakan antar-frame pada video asli. Nilai tinggi menghasilkan sapuan blur lebih kuat."
+            text = "MODE UJI GPU: naikkan ke 100%. Gambar harus terlihat sangat buram. Ini tes jalur pemrosesan, belum efek Motion Blur final."
             setTextColor(Color.LTGRAY)
             textSize = 12f
         }

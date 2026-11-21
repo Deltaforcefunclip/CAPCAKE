@@ -5,6 +5,7 @@ uniform sampler2D uPreviousTexture;
 uniform vec2 uTexelSize;
 uniform float uIntensity;
 uniform float uHasHistory;
+uniform float uDiagnosticMode;
 
 float luma(vec3 c) {
     return dot(c, vec3(0.299, 0.587, 0.114));
@@ -12,7 +13,28 @@ float luma(vec3 c) {
 
 void main() {
     vec4 current = texture2D(sTexture, vTextureCoord);
-    if (uHasHistory < 0.5 || uIntensity <= 0.001) {
+    if (uIntensity <= 0.001) {
+        gl_FragColor = current;
+        return;
+    }
+
+    // MODE DIAGNOSTIK SEMENTARA: blur spasial kuat, tidak bergantung estimasi gerak.
+    // Jika intensitas 100% tetap tidak mengubah preview, jalur shader/parameter tidak terpanggil.
+    if (uDiagnosticMode > 0.5) {
+        vec3 diagnosticBlur = vec3(0.0);
+        float radius = 0.004 + 0.030 * uIntensity;
+        for (int y = -2; y <= 2; y++) {
+            for (int x = -2; x <= 2; x++) {
+                vec2 offset = vec2(float(x), float(y)) * uTexelSize * radius * 900.0;
+                diagnosticBlur += texture2D(sTexture, clamp(vTextureCoord + offset, 0.0, 1.0)).rgb;
+            }
+        }
+        diagnosticBlur /= 25.0;
+        gl_FragColor = vec4(diagnosticBlur, current.a);
+        return;
+    }
+
+    if (uHasHistory < 0.5) {
         gl_FragColor = current;
         return;
     }

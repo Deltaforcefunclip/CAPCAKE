@@ -85,6 +85,8 @@ private class MotionBlurShaderProgram(
             glProgram.setSamplerTexIdUniform("uPreviousTexture", historyTexture, 1)
             glProgram.setFloatUniform("uIntensity", amount)
             glProgram.setFloatUniform("uHasHistory", if (historyValid && amount > 0.001f) 1f else 0f)
+            // Mode diagnostik sementara untuk memastikan shader dan slider benar-benar berjalan.
+            glProgram.setFloatUniform("uDiagnosticMode", 1f)
             glProgram.setFloatsUniform("uTexelSize", floatArrayOf(1f / width, 1f / height))
             glProgram.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
