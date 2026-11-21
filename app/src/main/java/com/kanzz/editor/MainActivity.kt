@@ -2942,7 +2942,7 @@ class MainActivity : AppCompatActivity() {
 
                     "Atur" -> {
                         effectClipManager.find(selectedEffectClipId)?.let { clip ->
-                            if (clip.effectName == "Dreamy") showEffectPanel()
+                            if (clip.effectName == "Dreamy" || clip.effectName == "Cahaya Lembut") showEffectPanel()
                             else showMessage("Pengaturan ${clip.effectName} belum tersedia.")
                         }
                     }
@@ -3213,7 +3213,7 @@ class MainActivity : AppCompatActivity() {
     private fun updateDreamyPreviewOverlay() {
         val position = if (::timelineController.isInitialized) currentTimelinePosition() else 0L
         val activeEffect = effectClipManager.clips.firstOrNull {
-            (it.effectName == "Dreamy" || it.effectName == "Black & White") &&
+            (it.effectName == "Dreamy" || it.effectName == "Black & White" || it.effectName == "Cahaya Lembut") &&
                 position >= it.startTimeMs && position < it.endTimeMs
         }
         val strength = ((activeEffect?.intensity ?: 0f) *
@@ -3224,7 +3224,11 @@ class MainActivity : AppCompatActivity() {
         dreamyPreviewState.glowSpread = activeEffect?.glowSpread?.coerceIn(0f, 1f) ?: 0.35f
         dreamyPreviewState.warmth = activeEffect?.warmth?.coerceIn(0f, 1f) ?: 0.5f
         dreamyPreviewState.softFocus = activeEffect?.softFocus?.coerceIn(0f, 1f) ?: 0.35f
-        dreamyPreviewState.effectMode = if (activeEffect?.effectName == "Black & White") 1f else 0f
+        dreamyPreviewState.effectMode = when (activeEffect?.effectName) {
+            "Black & White" -> 1f
+            "Cahaya Lembut" -> 2f
+            else -> 0f
+        }
 
         // Tidak memakai tint overlay; frame preview diproses oleh shader GPU.
         dreamyPreviewOverlay?.visibility = View.GONE
@@ -3246,7 +3250,7 @@ class MainActivity : AppCompatActivity() {
         if (amount > 0.001f) listOf(buildDreamyColorMatrix(amount)) else emptyList()
 
     private fun showEffectPicker() {
-        val options = listOf("Dreamy", "Vintage", "Black & White", "Warm", "Cool")
+        val options = listOf("Cahaya Lembut", "Dreamy", "Vintage", "Black & White", "Warm", "Cool")
         var chosen = options.first()
         val dialog = android.app.Dialog(this)
         val root = LinearLayout(this).apply {
@@ -3308,8 +3312,8 @@ class MainActivity : AppCompatActivity() {
     }
     private fun showEffectPanel() {
         val clip = effectClipManager.find(selectedEffectClipId)
-        if (clip == null || clip.effectName != "Dreamy") {
-            showMessage("Pilih klip Dreamy terlebih dahulu.")
+        if (clip == null || (clip.effectName != "Dreamy" && clip.effectName != "Cahaya Lembut")) {
+            showMessage("Pilih klip Dreamy atau Cahaya Lembut terlebih dahulu.")
             return
         }
         val panel = LinearLayout(this).apply {
@@ -3318,10 +3322,10 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.rgb(19, 19, 19))
         }
         panel.addView(TextView(this).apply {
-            text = "DREAMY"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE)
+            text = if (clip.effectName == "Cahaya Lembut") "CAHAYA LEMBUT" else "DREAMY"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE)
         })
         panel.addView(TextView(this).apply {
-            text = "Atur kekuatan glow dan karakter warna klip ini."
+            text = if (clip.effectName == "Cahaya Lembut") "Atur sebaran cahaya, kelembutan, dan warna." else "Atur kekuatan glow dan karakter warna klip ini."
             textSize = 11f; setTextColor(Color.LTGRAY); setPadding(0, dp(5), 0, dp(12))
         })
         fun addSlider(title: String, initial: Float, onValue: (Float) -> Unit) {
@@ -3353,7 +3357,7 @@ class MainActivity : AppCompatActivity() {
         val oldWarmth = clip.warmth
         val oldSoftFocus = clip.softFocus
         addSlider("Intensity", clip.intensity) { clip.intensity = it }
-        addSlider("Glow Spread", clip.glowSpread) { clip.glowSpread = it }
+        addSlider(if (clip.effectName == "Cahaya Lembut") "Light Spread" else "Glow Spread", clip.glowSpread) { clip.glowSpread = it }
         addSlider("Tone / Warmth", clip.warmth) { clip.warmth = it }
         addSlider("Soft Focus / Blur", clip.softFocus) { clip.softFocus = it }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
@@ -5695,7 +5699,7 @@ class MainActivity : AppCompatActivity() {
                                 // Efek Dreamy mengikuti rentang klip pada timeline utama.
                                 effectClipManager.clips
                                     .filter {
-                                        (it.effectName == "Dreamy" || it.effectName == "Black & White") &&
+                                        (it.effectName == "Dreamy" || it.effectName == "Black & White" || it.effectName == "Cahaya Lembut") &&
                                             it.intensity * it.opacity > 0.001f
                                     }
                                     .forEach { effectClip ->
@@ -5712,7 +5716,11 @@ class MainActivity : AppCompatActivity() {
                                                     warmth = effectClip.warmth,
                                                     startTimeUs = localStartUs,
                                                     endTimeUs = localEndUs,
-                                                    effectMode = if (effectClip.effectName == "Black & White") 1f else 0f,
+                                                    effectMode = when (effectClip.effectName) {
+                                                        "Black & White" -> 1f
+                                                        "Cahaya Lembut" -> 2f
+                                                        else -> 0f
+                                                    },
                                                     softFocus = effectClip.softFocus
                                                 )
                                             )
