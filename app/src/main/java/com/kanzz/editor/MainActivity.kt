@@ -341,6 +341,7 @@ class MainActivity : AppCompatActivity() {
     private var proxyTargetFps = 30
     private var previewProxyFps = 30
     private var dreamyIntensity = 0f
+    private val dreamyPreviewState = DreamyPreviewState()
     private var dreamyPreviewOverlay: View? = null
     private var proxyCompletedCount = 0
     private var proxyFailedCount = 0
@@ -508,6 +509,18 @@ class MainActivity : AppCompatActivity() {
             .experimentalSetEnableMediaCodecVideoRendererPrewarming(true)
 
         player = ExoPlayer.Builder(this, renderersFactory).build().apply {
+            // Pasang pipeline efek sebelum prepare. Parameter shader diperbarui live
+            // mengikuti playhead tanpa mengganti renderer selama playback.
+            setVideoEffects(
+                listOf(
+                    DreamyGlEffect(
+                        intensity = 0f,
+                        glowSpread = 0.35f,
+                        warmth = 0.5f,
+                        previewState = dreamyPreviewState
+                    )
+                )
+            )
             // Tetap preload awal item berikutnya; renderer prewarming menyiapkan decoder video.
             preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
             addAnalyticsListener(playbackAnalyticsListener)
@@ -3198,13 +3211,20 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateDreamyPreviewOverlay() {
-        val overlay = dreamyPreviewOverlay ?: return
-        val selectedDreamy = effectClipManager.find(selectedEffectClipId)?.takeIf { it.effectName == "Dreamy" }
-        val strength = (selectedDreamy?.intensity ?: dreamyIntensity).coerceIn(0f, 1f)
-        overlay.visibility = if (strength <= 0.001f) View.GONE else View.VISIBLE
-        overlay.setBackgroundColor(Color.rgb(255, 246, 232))
-        overlay.alpha = 0.14f * strength
-        overlay.invalidate()
+        val position = if (::timelineController.isInitialized) currentTimelinePosition() else 0L
+        val activeDreamy = effectClipManager.clips.firstOrNull {
+            it.effectName == "Dreamy" && position >= it.startTimeMs && position < it.endTimeMs
+        }
+        val strength = ((activeDreamy?.intensity ?: 0f) *
+            (activeDreamy?.opacity ?: 0f)).coerceIn(0f, 1f)
+
+        // Nilai volatile ini dibaca langsung oleh shader pada thread GL.
+        dreamyPreviewState.intensity = strength
+        dreamyPreviewState.glowSpread = activeDreamy?.glowSpread?.coerceIn(0f, 1f) ?: 0.35f
+        dreamyPreviewState.warmth = activeDreamy?.warmth?.coerceIn(0f, 1f) ?: 0.5f
+
+        // Tidak memakai tint overlay; frame preview diproses oleh shader GPU.
+        dreamyPreviewOverlay?.visibility = View.GONE
     }
     private fun buildDreamyColorMatrix(amount: Float): RgbMatrix {
         val strength = amount.coerceIn(0f, 1f)
@@ -5194,6 +5214,7 @@ class MainActivity : AppCompatActivity() {
         invalidateTextTrackViews()
         // Effect clips juga harus mengikuti playhead pada setiap frame playback.
         invalidateEffectTrackViews()
+        updateDreamyPreviewOverlay()
         updateTextPreview(force = false)
 
         currentProject?.position = position
