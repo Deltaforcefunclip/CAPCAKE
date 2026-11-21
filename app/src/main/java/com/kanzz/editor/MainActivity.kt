@@ -5738,6 +5738,28 @@ class MainActivity : AppCompatActivity() {
             }
         }
         if (width <= 0 || height <= 0) return null
+
+        // MediaExtractor melaporkan dimensi encoded mentah. Video portrait dari
+        // banyak kamera disimpan sebagai landscape + metadata rotasi 90/270 derajat.
+        // Normalisasikan dimensi ke orientasi tampilan agar opsi "Sumber Video"
+        // tidak keliru menawarkan resolusi landscape untuk video portrait.
+        var rotationDegrees = 0
+        val orientationRetriever = MediaMetadataRetriever()
+        try {
+            orientationRetriever.setDataSource(this, uri)
+            rotationDegrees = orientationRetriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION
+            )?.toIntOrNull() ?: 0
+        } catch (_: Exception) {
+        } finally {
+            try { orientationRetriever.release() } catch (_: Exception) {}
+        }
+        if (rotationDegrees % 180 != 0) {
+            val rawWidth = width
+            width = height
+            height = rawWidth
+        }
+
         return ExportSourceProfile(uriString, width, height, frameRate)
     }
 
@@ -6096,9 +6118,17 @@ class MainActivity : AppCompatActivity() {
 
                                     val videoSize = player.videoSize
                                     val sourceAspect = if (videoSize.width > 0 && videoSize.height > 0) {
-                                        videoSize.width.toFloat() *
+                                        val encodedAspect = videoSize.width.toFloat() *
                                             videoSize.pixelWidthHeightRatio /
                                             videoSize.height.toFloat()
+                                        // VideoSize menyimpan dimensi frame encoded. Pada sumber
+                                        // portrait yang memakai rotation metadata, koreksi rasio
+                                        // sebelum menghitung FIT/Crop agar 9:16 tidak dianggap 16:9.
+                                        if (videoSize.unappliedRotationDegrees % 180 != 0) {
+                                            1f / encodedAspect.coerceAtLeast(0.0001f)
+                                        } else {
+                                            encodedAspect
+                                        }
                                     } else {
                                         frameAspect
                                     }
