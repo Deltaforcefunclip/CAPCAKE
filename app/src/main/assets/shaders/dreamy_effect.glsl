@@ -10,6 +10,7 @@ uniform float uEffectMode;
 uniform float uSoftFocus;
 uniform float uPullInZoom;
 uniform float uPullInBlur;
+uniform float uPullInFade;
 uniform float uExposure;
 uniform float uContrast;
 uniform float uHighlights;
@@ -134,9 +135,11 @@ void main() {
     pullBlurred += texture2D(sTexture, clamp(sampleCoord + vec2(pullStep.x, -pullStep.y), 0.0, 1.0)).rgb * 0.08;
     pullBlurred += texture2D(sTexture, clamp(sampleCoord + vec2(-pullStep.x, pullStep.y), 0.0, 1.0)).rgb * 0.08;
     vec4 sampled = vec4(mix(sharpSample.rgb, pullBlurred, clamp(uPullInBlur, 0.0, 1.0)), sharpSample.a);
+    // Fade transisi diarahkan ke hitam agar preview dan hasil export konsisten.
+    sampled.rgb *= 1.0 - clamp(uPullInFade, 0.0, 1.0);
 
     // Jalur normal: lewati HSV, kernel detail, blur 8 arah, dan kalkulasi efek.
-    if (uIntensity <= 0.001 && uHasColorGrade < 0.5 && uPullInBlur <= 0.001 && abs(uPullInZoom - 1.0) <= 0.001) {
+    if (uIntensity <= 0.001 && uHasColorGrade < 0.5 && uPullInBlur <= 0.001 && uPullInFade <= 0.001 && abs(uPullInZoom - 1.0) <= 0.001) {
         gl_FragColor = sampled;
         return;
     }

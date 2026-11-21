@@ -23,6 +23,7 @@ class DreamyPreviewState {
     @Volatile var colorGrading: ColorGrading = ColorGrading()
     @Volatile var pullInZoom: Float = 1f
     @Volatile var pullInBlur: Float = 0f
+    @Volatile var pullInFade: Float = 0f
 }
 
 /**
@@ -109,6 +110,7 @@ class DreamyShaderProgram(
             val grade: ColorGrading
             val pullZoom: Float
             val pullBlur: Float
+            val pullFade: Float
             if (previewState != null) {
                 liveIntensity = previewState.intensity.coerceIn(0f, 1f)
                 liveSpread = previewState.glowSpread.coerceIn(0f, 1f)
@@ -118,6 +120,7 @@ class DreamyShaderProgram(
                 grade = previewState.colorGrading
                 pullZoom = previewState.pullInZoom.coerceIn(1f, 2f)
                 pullBlur = previewState.pullInBlur.coerceIn(0f, 1f)
+                pullFade = previewState.pullInFade.coerceIn(0f, 1f)
                 active = liveIntensity > 0.001f
             } else {
                 liveIntensity = effectIntensity
@@ -128,12 +131,14 @@ class DreamyShaderProgram(
                 grade = colorGrading
                 if (pullInEndUs > pullInStartUs && presentationTimeUs >= pullInStartUs && presentationTimeUs < pullInEndUs) {
                     val progress = ((presentationTimeUs - pullInStartUs).toFloat() / (pullInEndUs - pullInStartUs).toFloat()).coerceIn(0f, 1f)
-                    val eased = 1f - (1f - progress) * (1f - progress) * (1f - progress)
-                    pullZoom = 1f + 0.45f * eased
-                    pullBlur = eased
+                    val eased = progress * progress * (3f - 2f * progress)
+                    pullZoom = 1f + 0.35f * eased
+                    pullBlur = 0f
+                    pullFade = eased
                 } else {
                     pullZoom = 1f
                     pullBlur = 0f
+                    pullFade = 0f
                 }
                 active = presentationTimeUs >= startTimeUs && presentationTimeUs < endTimeUs
             }
@@ -143,6 +148,7 @@ class DreamyShaderProgram(
             glProgram.setFloatUniform("uIntensity", if (active) liveIntensity else 0f)
             glProgram.setFloatUniform("uPullInZoom", pullZoom)
             glProgram.setFloatUniform("uPullInBlur", pullBlur)
+            glProgram.setFloatUniform("uPullInFade", pullFade)
             glProgram.setFloatUniform("uHasColorGrade", if (grade.isDefault) 0f else 1f)
             glProgram.setFloatUniform("uBlurRadius", 0.001f + liveSpread * 0.014f)
             glProgram.setFloatUniform("uWarmth", liveWarmth)

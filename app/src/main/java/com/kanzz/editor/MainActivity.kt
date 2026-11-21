@@ -3490,7 +3490,7 @@ class MainActivity : AppCompatActivity() {
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
 
-        // Tarik Masuk bekerja pada klip kiri: zoom dan blur meningkat menjelang cut.
+        // Zoom In + Fade bekerja pada klip kiri: zoom dan fade ke hitam menjelang cut.
         val outgoingTransition = activeVideo?.let { outgoing ->
             videoClipManager.transitions.firstOrNull {
                 it.leftClipId == outgoing.id && it.type == VideoTransition.Type.PULL_IN
@@ -3504,15 +3504,18 @@ class MainActivity : AppCompatActivity() {
                 val progress = ((localMs - transitionStartMs).toFloat() /
                     (activeVideo.timelineDurationMs - transitionStartMs).coerceAtLeast(1L).toFloat()).coerceIn(0f, 1f)
                 val eased = 1f - (1f - progress) * (1f - progress) * (1f - progress)
-                dreamyPreviewState.pullInZoom = 1f + 0.45f * eased
-                dreamyPreviewState.pullInBlur = eased
+                dreamyPreviewState.pullInZoom = 1f + 0.35f * eased
+                dreamyPreviewState.pullInBlur = 0f
+                dreamyPreviewState.pullInFade = eased
             } else {
                 dreamyPreviewState.pullInZoom = 1f
                 dreamyPreviewState.pullInBlur = 0f
+                dreamyPreviewState.pullInFade = 0f
             }
         } else {
             dreamyPreviewState.pullInZoom = 1f
             dreamyPreviewState.pullInBlur = 0f
+            dreamyPreviewState.pullInFade = 0f
         }
 
         // Tidak memakai tint overlay; frame preview diproses oleh shader GPU.
@@ -4399,7 +4402,7 @@ class MainActivity : AppCompatActivity() {
         )
         val labels = arrayOf(
             "Tanpa transisi", "Fade", "Dissolve",
-            "Wipe ke kiri", "Wipe ke kanan", "Tarik Masuk (Zoom + Blur)"
+            "Wipe ke kiri", "Wipe ke kanan", "Zoom In + Fade"
         )
         var selectedType = transition.type.takeIf { it in types }
             ?: VideoTransition.Type.NONE
@@ -7249,7 +7252,7 @@ class MainActivity : AppCompatActivity() {
                                         }
                                     }
 
-                                // Tarik Masuk: klip kiri membesar dan makin blur sebelum berpindah.
+                                // Zoom In + Fade: klip kiri membesar lalu memudar ke hitam sebelum cut.
                                 val pullInTransition = videoClipManager.transitions.firstOrNull {
                                     it.leftClipId == clip.id && it.type == VideoTransition.Type.PULL_IN
                                 }
