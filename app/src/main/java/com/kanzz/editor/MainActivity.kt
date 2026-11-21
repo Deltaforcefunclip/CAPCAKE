@@ -6083,59 +6083,61 @@ class MainActivity : AppCompatActivity() {
                         Effects(
                             audioProcessors,
                             buildList {
-                                // Bentuk kanvas output terlebih dahulu. Setelah kanvas terbentuk,
-                                // zoom/crop diterapkan pada kanvas tersebut, bukan pada sumber 16:9.
-                                // Dengan urutan ini, rasio kanvas tetap (misalnya 3:4) sementara
-                                // isi video dapat diperbesar dan area kosong tetap hitam.
+                                // Samakan geometri export dengan preview:
+                                // 1) sumber di-FIT ke seluruh area PlayerView,
+                                // 2) zoom/rotasi/pergeseran diterapkan pada GAMBAR,
+                                // 3) baru dipotong oleh batas rasio yang tetap.
                                 if (selectedPreviewRatio.isNotBlank()) {
                                     val ratioParts = selectedPreviewRatio.split(":")
-                                    val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
-                                    add(
-                                        Presentation.createForAspectRatio(
-                                            outputAspect,
-                                            Presentation.LAYOUT_SCALE_TO_FIT
-                                        )
-                                    )
-                                }
-
-                                // Kanvas output mengikuti rasio proyek. Framing sumber
-                                // dibiarkan utuh kecuali pengguna memang melakukan zoom/geser.
-                                if (selectedPreviewRatio.isNotBlank()) {
-                                    val ratioParts = selectedPreviewRatio.split(":")
-                                    val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
+                                    val outputAspect = ratioParts[0].toFloat() /
+                                        ratioParts[1].toFloat().coerceAtLeast(0.0001f)
                                     val frameW = playerView.width.coerceAtLeast(1).toFloat()
                                     val frameH = playerView.height.coerceAtLeast(1).toFloat()
                                     val frameAspect = frameW / frameH
-                                    val boxW: Float
-                                    val boxH: Float
-                                    if (outputAspect >= frameAspect) {
-                                        boxW = frameW
-                                        boxH = boxW / outputAspect
-                                    } else {
-                                        boxH = frameH
-                                        boxW = boxH * outputAspect
-                                    }
 
-                                    // Crop hanya untuk zoom/geser yang dibuat pengguna di preview.
-                                    val effectiveScale = previewScale.coerceIn(1f, 20f)
+                                    // Area kerja harus sama dengan PlayerView, bukan langsung
+                                    // dibentuk menjadi rasio crop. Ini mencegah crop awal
+                                    // memotong gambar sebelum transformasi pengguna diterapkan.
+                                    add(
+                                        Presentation.createForAspectRatio(
+                                            frameAspect,
+                                            Presentation.LAYOUT_SCALE_TO_FIT
+                                        )
+                                    )
 
-                                    if (effectiveScale > 1.001f ||
-                                        previewTranslateX != 0f || previewTranslateY != 0f
-                                    ) {
-                                        val half = (1f / effectiveScale).coerceIn(0.05f, 1f)
-                                        val centerX = (-2f * previewTranslateX / boxW / effectiveScale)
-                                            .coerceIn(-1f + half, 1f - half)
-                                        val centerY = (2f * previewTranslateY / boxH / effectiveScale)
-                                            .coerceIn(-1f + half, 1f - half)
-                                        add(
-                                            Crop(
-                                                (centerX - half).coerceIn(-1f, 1f),
-                                                (centerX + half).coerceIn(-1f, 1f),
-                                                (centerY - half).coerceIn(-1f, 1f),
-                                                (centerY + half).coerceIn(-1f, 1f)
-                                            )
+                                    // Android View memakai koordinat Y ke bawah. Matrix GL
+                                    // memakai koordinat normal dengan Y ke atas.
+                                    // Susun satu matriks agar gambar (bukan kotak crop) yang
+                                    // mengalami zoom, rotasi, dan pergeseran.
+                                    val transformMatrix = Matrix().apply {
+                                        setScale(
+                                            previewScale.coerceIn(0.35f, 5f),
+                                            previewScale.coerceIn(0.35f, 5f)
+                                        )
+                                        postRotate(previewRotation)
+                                        postTranslate(
+                                            2f * previewTranslateX / frameW,
+                                            -2f * previewTranslateY / frameH
                                         )
                                     }
+                                    add(
+                                        androidx.media3.effect.MatrixTransformation { _ ->
+                                            Matrix(transformMatrix)
+                                        }
+                                    )
+
+                                    // Crop adalah mask tetap yang mengikuti kotak rasio
+                                    // preview. Letakkan SETELAH transformasi gambar.
+                                    val halfX: Float
+                                    val halfY: Float
+                                    if (outputAspect < frameAspect) {
+                                        halfX = (outputAspect / frameAspect).coerceIn(0.001f, 1f)
+                                        halfY = 1f
+                                    } else {
+                                        halfX = 1f
+                                        halfY = (frameAspect / outputAspect).coerceIn(0.001f, 1f)
+                                    }
+                                    add(Crop(-halfX, halfX, -halfY, halfY))
                                 }
 
                                 if (dreamyIntensity > 0.001f) add(buildDreamyColorMatrix(dreamyIntensity))
