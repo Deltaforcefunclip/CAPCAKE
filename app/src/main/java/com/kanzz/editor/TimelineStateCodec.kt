@@ -24,6 +24,18 @@ object TimelineStateCodec {
                 put("brightness", clip.brightness.toDouble())
                 put("contrast", clip.contrast.toDouble())
                 put("saturation", clip.saturation.toDouble())
+                put("colorGrading", JSONObject().apply {
+                    val grade = clip.colorGrading
+                    put("exposure", grade.exposure.toDouble()); put("contrast", grade.contrast.toDouble())
+                    put("highlights", grade.highlights.toDouble()); put("shadows", grade.shadows.toDouble())
+                    put("whites", grade.whites.toDouble()); put("blacks", grade.blacks.toDouble())
+                    put("temperature", grade.temperature.toDouble()); put("tint", grade.tint.toDouble())
+                    put("vibrance", grade.vibrance.toDouble()); put("saturation", grade.saturation.toDouble())
+                    put("texture", grade.texture.toDouble()); put("clarity", grade.clarity.toDouble())
+                    put("dehaze", grade.dehaze.toDouble()); put("vignette", grade.vignette.toDouble())
+                    put("grain", grade.grain.toDouble()); put("sharpening", grade.sharpening.toDouble())
+                    put("noiseReduction", grade.noiseReduction.toDouble())
+                })
             })
         }
         val transitions = JSONArray()
@@ -63,6 +75,27 @@ object TimelineStateCodec {
                     brightness = item.optDouble("brightness", 0.0).toFloat(),
                     contrast = item.optDouble("contrast", 1.0).toFloat(),
                     saturation = item.optDouble("saturation", 1.0).toFloat()
+                    colorGrading = item.optJSONObject("colorGrading")?.let { grade ->
+                        ColorGrading(
+                            exposure = grade.optDouble("exposure", 0.0).toFloat(),
+                            contrast = grade.optDouble("contrast", 0.0).toFloat(),
+                            highlights = grade.optDouble("highlights", 0.0).toFloat(),
+                            shadows = grade.optDouble("shadows", 0.0).toFloat(),
+                            whites = grade.optDouble("whites", 0.0).toFloat(),
+                            blacks = grade.optDouble("blacks", 0.0).toFloat(),
+                            temperature = grade.optDouble("temperature", 0.0).toFloat(),
+                            tint = grade.optDouble("tint", 0.0).toFloat(),
+                            vibrance = grade.optDouble("vibrance", 0.0).toFloat(),
+                            saturation = grade.optDouble("saturation", 0.0).toFloat(),
+                            texture = grade.optDouble("texture", 0.0).toFloat(),
+                            clarity = grade.optDouble("clarity", 0.0).toFloat(),
+                            dehaze = grade.optDouble("dehaze", 0.0).toFloat(),
+                            vignette = grade.optDouble("vignette", 0.0).toFloat(),
+                            grain = grade.optDouble("grain", 0.0).toFloat(),
+                            sharpening = grade.optDouble("sharpening", 0.0).toFloat(),
+                            noiseReduction = grade.optDouble("noiseReduction", 0.0).toFloat()
+                        )
+                    } ?: ColorGrading()
                 ))
             }
             val transitions = root.optJSONArray("transitions") ?: JSONArray()
