@@ -415,7 +415,10 @@ class MainActivity : AppCompatActivity() {
                 val motionClip = videoClipManager.clips.firstOrNull {
                     motionPosition >= it.timelineStartMs && motionPosition < it.timelineEndMs
                 }
-                motionBlurPreviewState.intensity = motionClip?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
+                motionBlurPreviewState.blur = motionClip?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
+                motionBlurPreviewState.blend = motionClip?.motionBlurBlend?.coerceIn(0f, 1f) ?: 0.65f
+                motionBlurPreviewState.direction = motionClip?.motionBlurDirection?.coerceIn(0, 2) ?: 0
+                motionBlurPreviewState.times = motionClip?.motionBlurTimes?.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 } ?: 4
                 updateTextPreview(force = false)
             }
             handler.postDelayed(this, 100L)
@@ -3500,7 +3503,10 @@ class MainActivity : AppCompatActivity() {
         } ?: videoClipManager.clips.lastOrNull()?.takeIf { position >= it.timelineEndMs }
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
-        motionBlurPreviewState.intensity = activeVideo?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
+        motionBlurPreviewState.blur = activeVideo?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
+        motionBlurPreviewState.blend = activeVideo?.motionBlurBlend?.coerceIn(0f, 1f) ?: 0.65f
+        motionBlurPreviewState.direction = activeVideo?.motionBlurDirection?.coerceIn(0, 2) ?: 0
+        motionBlurPreviewState.times = activeVideo?.motionBlurTimes?.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 } ?: 4
 
         // Transisi melewati satu frame hitam: klip kiri zoom + fade-out,
         // klip kanan fade-in dari hitam. Zoom dibuat lebih tegas hingga 2x.
@@ -6450,62 +6456,143 @@ class MainActivity : AppCompatActivity() {
 
 
     private fun showVideoMotionBlurDialog(clip: VideoClip) {
-        val original = clip.motionBlurIntensity.coerceIn(0f, 1f)
+        val originalBlur = clip.motionBlurIntensity.coerceIn(0f, 1f)
+        val originalBlend = clip.motionBlurBlend.coerceIn(0f, 1f)
+        val originalDirection = clip.motionBlurDirection.coerceIn(0, 2)
+        val originalTimes = clip.motionBlurTimes.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 }
+
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(12), dp(20), dp(8))
             setBackgroundColor(panel)
         }
-        val description = TextView(this).apply {
-            text = "MODE UJI GPU: naikkan ke 100%. Gambar harus terlihat sangat buram. Ini tes jalur pemrosesan, belum efek Motion Blur final."
-            setTextColor(Color.LTGRAY)
-            textSize = 12f
-        }
-        val valueLabel = TextView(this).apply {
-            text = "Intensitas " + (original * 100f).toInt() + "%"
+        fun label(value: String) = TextView(this).apply {
+            text = value
             setTextColor(Color.WHITE)
-            textSize = 14f
-            setPadding(0, dp(16), 0, dp(4))
+            textSize = 13f
+            setPadding(0, dp(7), 0, dp(2))
         }
-        val slider = SeekBar(this).apply {
+        val blurLabel = label("Kabur: ${(originalBlur * 100f).toInt()}%")
+        val blurSlider = SeekBar(this).apply {
             max = 100
-            progress = (original * 100f).toInt()
+            progress = (originalBlur * 100f).toInt()
         }
-        content.addView(description)
-        content.addView(valueLabel)
-        content.addView(slider, LinearLayout.LayoutParams(-1, dp(42)))
-        motionBlurPreviewState.intensity = original
+        val blendLabel = label("Campuran: ${(originalBlend * 100f).toInt()}%")
+        val blendSlider = SeekBar(this).apply {
+            max = 100
+            progress = (originalBlend * 100f).toInt()
+        }
+        content.addView(label("KABUR"))
+        content.addView(blurLabel)
+        content.addView(blurSlider, LinearLayout.LayoutParams(-1, dp(38)))
+        content.addView(label("CAMPURAN"))
+        content.addView(blendLabel)
+        content.addView(blendSlider, LinearLayout.LayoutParams(-1, dp(38)))
+
+        content.addView(label("ARAH"))
+        val directionGroup = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.HORIZONTAL
+        }
+        val directionButtons = listOf("Keduanya", "Kebelakang", "Teruskan").mapIndexed { index, title ->
+            android.widget.RadioButton(this).apply {
+                id = View.generateViewId()
+                text = title
+                textSize = 11f
+                setTextColor(Color.WHITE)
+                buttonTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+                isChecked = index == originalDirection
+                directionGroup.addView(this, android.widget.RadioGroup.LayoutParams(0, dp(42), 1f))
+            }
+        }
+        content.addView(directionGroup)
+
+        content.addView(label("KALI"))
+        val timesGroup = android.widget.RadioGroup(this).apply {
+            orientation = android.widget.RadioGroup.HORIZONTAL
+        }
+        val timeOptions = listOf(1, 2, 4, 6)
+        timeOptions.forEach { count ->
+            val button = android.widget.RadioButton(this).apply {
+                id = View.generateViewId()
+                text = when (count) {
+                    1 -> "Sekali"
+                    2 -> "Dua kali"
+                    else -> "${count}x"
+                }
+                textSize = 11f
+                setTextColor(Color.WHITE)
+                buttonTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
+                isChecked = count == originalTimes
+            }
+            timesGroup.addView(button, android.widget.RadioGroup.LayoutParams(0, dp(42), 1f))
+        }
+        content.addView(timesGroup)
+
+        fun selectedTimes(): Int {
+            val index = (0 until timesGroup.childCount).firstOrNull { i ->
+                (timesGroup.getChildAt(i) as? android.widget.RadioButton)?.isChecked == true
+            } ?: 2
+            return timeOptions.getOrElse(index) { 4 }
+        }
+        fun updatePreview() {
+            motionBlurPreviewState.blur = blurSlider.progress / 100f
+            motionBlurPreviewState.blend = blendSlider.progress / 100f
+            motionBlurPreviewState.direction = directionButtons.indexOfFirst {
+                it.id == directionGroup.checkedRadioButtonId
+            }.coerceAtLeast(0)
+            motionBlurPreviewState.times = selectedTimes()
+        }
+        blurSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                blurLabel.text = "Kabur: ${progress}%"
+                updatePreview()
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        blendSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                blendLabel.text = "Campuran: ${progress}%"
+                updatePreview()
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        directionGroup.setOnCheckedChangeListener { _, _ -> updatePreview() }
+        timesGroup.setOnCheckedChangeListener { _, _ -> updatePreview() }
+        updatePreview()
+
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Motion Blur")
             .setView(content)
             .setNegativeButton("BATAL", null)
             .setPositiveButton("TERAPKAN", null)
             .create()
-        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                val amount = progress / 100f
-                valueLabel.text = "Intensitas " + progress + "%"
-                motionBlurPreviewState.intensity = amount
-            }
-            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
-            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
-        })
         dialog.setOnShowListener {
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                val amount = slider.progress / 100f
-                if (kotlin.math.abs(clip.motionBlurIntensity - amount) > 0.001f) {
+                updatePreview()
+                val blur = blurSlider.progress / 100f
+                val blend = blendSlider.progress / 100f
+                val direction = directionButtons.indexOfFirst {
+                    it.id == directionGroup.checkedRadioButtonId
+                }.coerceAtLeast(0)
+                val times = selectedTimes()
+                val changed = kotlin.math.abs(clip.motionBlurIntensity - blur) > 0.001f ||
+                    kotlin.math.abs(clip.motionBlurBlend - blend) > 0.001f ||
+                    clip.motionBlurDirection != direction || clip.motionBlurTimes != times
+                if (changed) {
                     pushUndoSnapshot()
-                    clip.motionBlurIntensity = amount
+                    clip.motionBlurIntensity = blur
+                    clip.motionBlurBlend = blend
+                    clip.motionBlurDirection = direction
+                    clip.motionBlurTimes = times
                     saveCurrentProject()
                 }
-                motionBlurPreviewState.intensity = amount
                 dialog.dismiss()
             }
         }
         dialog.setOnDismissListener {
             updateDreamyPreviewOverlay()
-            // Saat preview dijeda, minta decoder mengirim ulang frame agar
-            // parameter shader terbaru dapat diterapkan pada frame diam.
             if (!player.isPlaying && player.playbackState == Player.STATE_READY) {
                 val position = currentTimelinePosition()
                 handler.post { player.seekTo(position) }
@@ -7313,7 +7400,7 @@ class MainActivity : AppCompatActivity() {
 
                                 // Motion Blur diterapkan langsung pada frame clip, bukan layer/transisi.
                                 if (clip.motionBlurIntensity > 0.001f) {
-                                    add(MotionBlurGlEffect(intensity = clip.motionBlurIntensity))
+                                    add(MotionBlurGlEffect(blur = clip.motionBlurIntensity, blend = clip.motionBlurBlend, direction = clip.motionBlurDirection, times = clip.motionBlurTimes))
                                 }
 
                                 // Color grading per-klip diproses pada GPU, sama seperti preview.
