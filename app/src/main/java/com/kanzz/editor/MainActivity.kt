@@ -1998,6 +1998,35 @@ class MainActivity : AppCompatActivity() {
                 }
                 selectedVideoClipId = tappedClip?.id
                 videoSelected = tappedClip != null
+
+                // Saat klip dipilih jauh dari playhead, pindahkan secara magnetik
+                // ke sisi playhead: klip di kanan menempel dari awal, klip di kiri
+                // menempel dari ujung akhirnya. Jika playhead sudah berada di dalam
+                // klip, jangan ubah urutan timeline.
+                if (tappedClip != null && videoClipManager.clips.size > 1) {
+                    val playheadMs = timelineController.positionMs.coerceIn(
+                        0L, videoClipManager.durationMs
+                    )
+                    val targetStartMs = when {
+                        tappedClip.timelineEndMs <= playheadMs ->
+                            (playheadMs - tappedClip.timelineDurationMs).coerceAtLeast(0L)
+                        tappedClip.timelineStartMs > playheadMs -> playheadMs
+                        else -> null
+                    }
+                    if (targetStartMs != null &&
+                        targetStartMs != tappedClip.timelineStartMs
+                    ) {
+                        val oldPosition = playheadMs
+                        pushUndoSnapshot()
+                        if (videoClipManager.moveToTimelinePosition(tappedClip.id, targetStartMs)) {
+                            refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
+                            saveCurrentProject()
+                        } else if (undoStack.isNotEmpty()) {
+                            undoStack.removeLast()
+                        }
+                    }
+                }
+
                 timeline.selectClip(selectedVideoClipId)
                 timeline.updateSelection(false)
                 playerView.foreground = null
