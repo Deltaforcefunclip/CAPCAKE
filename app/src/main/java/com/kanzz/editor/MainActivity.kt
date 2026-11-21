@@ -1270,6 +1270,46 @@ class MainActivity : AppCompatActivity() {
         ).show()
     }
 
+    /**
+     * Membaca durasi dari metadata file dan track video.
+     * Beberapa container melaporkan durasi berbeda melalui ExoPlayer dan retriever;
+     * gunakan nilai valid terpanjang agar klip tidak terpotong menjadi sangat pendek.
+     */
+    private fun readVideoDurationMs(uri: Uri): Long {
+        var metadataDurationMs = 0L
+        val retriever = MediaMetadataRetriever()
+        try {
+            retriever.setDataSource(this, uri)
+            metadataDurationMs = retriever.extractMetadata(
+                MediaMetadataRetriever.METADATA_KEY_DURATION
+            )?.toLongOrNull()?.coerceAtLeast(0L) ?: 0L
+        } catch (_: Exception) {
+        } finally {
+            try { retriever.release() } catch (_: Exception) {}
+        }
+
+        var videoTrackDurationMs = 0L
+        val extractor = MediaExtractor()
+        try {
+            extractor.setDataSource(this, uri, null)
+            for (index in 0 until extractor.trackCount) {
+                val format = extractor.getTrackFormat(index)
+                val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
+                if (!mime.startsWith("video/")) continue
+                if (format.containsKey(MediaFormat.KEY_DURATION)) {
+                    val durationUs = format.getLong(MediaFormat.KEY_DURATION)
+                    if (durationUs > 0L) {
+                        videoTrackDurationMs = max(videoTrackDurationMs, durationUs / 1000L)
+                    }
+                }
+            }
+        } catch (_: Exception) {
+        } finally {
+            try { extractor.release() } catch (_: Exception) {}
+        }
+        return max(metadataDurationMs, videoTrackDurationMs)
+    }
+
     private fun addVideoClip(uri: Uri) {
         try {
             contentResolver.takePersistableUriPermission(
@@ -1278,16 +1318,7 @@ class MainActivity : AppCompatActivity() {
             )
         } catch (_: Exception) {}
 
-        val retriever = MediaMetadataRetriever()
-        val durationMs = try {
-            retriever.setDataSource(this, uri)
-            retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)
-                ?.toLongOrNull() ?: 0L
-        } catch (_: Exception) {
-            0L
-        } finally {
-            try { retriever.release() } catch (_: Exception) {}
-        }
+        val durationMs = readVideoDurationMs(uri)
 
         if (durationMs <= 0L) {
             showMessage("File video tidak dapat dibaca.")
@@ -2491,7 +2522,12 @@ class MainActivity : AppCompatActivity() {
 
                 // First prepare the source once so its real duration is known.
                 if (!playlistInstalled) {
-                    val sourceDuration = player.duration.coerceAtLeast(0L)
+                    // ExoPlayer dapat sementara melaporkan durasi pendek/tidak lengkap
+                    // pada sebagian container. Cocokkan dengan metadata dan track video.
+                    val sourceDuration = max(
+                        player.duration.coerceAtLeast(0L),
+                        readVideoDurationMs(uri)
+                    )
                     if (videoClipManager.clips.isEmpty()) {
                         videoClipManager.setSource(uri.toString(), sourceDuration)
                     }
