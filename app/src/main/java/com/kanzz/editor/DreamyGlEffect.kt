@@ -17,7 +17,7 @@ import androidx.media3.effect.GlShaderProgram
 class DreamyPreviewState {
     @Volatile var intensity: Float = 0f
     @Volatile var glowSpread: Float = 0.35f
-    @Volatile var warmth: Float = 0.5
+    @Volatile var warmth: Float = 0.5f
     @Volatile var softFocus: Float = 0.35f
     @Volatile var effectMode: Float = 0f
 }
