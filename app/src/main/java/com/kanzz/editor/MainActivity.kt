@@ -8010,6 +8010,7 @@ class TimelineView(
 
     private var lastX = 0f
     private var downX = 0f
+    private var downY = 0f
 
     private var moved = false
     private var isSelected = false
@@ -8703,7 +8704,9 @@ class TimelineView(
                 // Deteksi tombol transisi langsung saat DOWN. Jangan bergantung pada
                 // hit-box hasil onDraw karena redraw bisa belum terjadi saat disentuh.
                 pressedTransition = null
-                val transitionTouchRadius = 22f * density
+                // Area tombol transisi mengikuti ukuran visualnya, bukan radius lebar
+                // yang sebelumnya menutupi area handle trim di kedua sisi klip.
+                val transitionTouchRadius = 12f * density
                 if (event.y in (27f * density)..(92f * density)) {
                     val clipsOnScreen = displayedClipPositions()
                     for (index in 0 until (clipsOnScreen.size - 1).coerceAtLeast(0)) {
@@ -8717,16 +8720,10 @@ class TimelineView(
                         }
                     }
                 }
-                if (pressedTransition != null) {
-                    pressedClip = null
-                    trimClipId = null
-                    removeCallbacks(dragLongPress)
-                    pointerDown = true
-                    moved = false
-                    parent?.requestDisallowInterceptTouchEvent(true)
-                    return true
-                }
+                // Jangan langsung mengambil alih gesture. Sentuhan yang bergerak
+                // tetap diteruskan ke sistem trim/drag; popup hanya dibuka saat tap.
                 downX = event.x
+                downY = event.y
                 lastX = event.x
                 dragDownX = event.x
                 moved = false
@@ -8791,6 +8788,13 @@ class TimelineView(
             }
 
             MotionEvent.ACTION_MOVE -> {
+                // Jika jari bergerak dari tombol transisi, batalkan kandidat tap.
+                // Gesture kemudian diproses normal sebagai trim, drag, atau scrub.
+                if (pressedTransition != null &&
+                    (abs(event.x - downX) > dp(6) || abs(event.y - downY) > dp(6))
+                ) {
+                    pressedTransition = null
+                }
                 // Jari yang tersisa setelah pinch tidak boleh menggeser playhead.
                 if (isPinchGesture) return true
                 if (event.pointerCount == 1 && !scaleDetector.isInProgress) {
