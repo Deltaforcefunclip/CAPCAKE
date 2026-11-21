@@ -1502,17 +1502,17 @@ class MainActivity : AppCompatActivity() {
                 if (viewW <= 0f || viewH <= 0f) return
                 // Ambil ukuran area video aktual dari TextureView, bukan rasio kanvas.
                 // Dengan begitu bingkai seleksi mengikuti bentuk video asli (portrait/landscape).
-                val surface = playerView.videoSurfaceView
-                val surfaceLocation = IntArray(2)
+                val contentFrame = playerView.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
+                val playerLocation = IntArray(2)
                 val overlayLocation = IntArray(2)
-                surface?.getLocationOnScreen(surfaceLocation)
+                playerView.getLocationOnScreen(playerLocation)
                 getLocationOnScreen(overlayLocation)
-                val boxW = (surface?.width ?: 0).takeIf { it > 0 }?.toFloat() ?: viewW
-                val boxH = (surface?.height ?: 0).takeIf { it > 0 }?.toFloat() ?: viewH
-                val baseCx = if (surface != null && surface.width > 0)
-                    surfaceLocation[0] - overlayLocation[0] + boxW / 2f else viewW / 2f
-                val baseCy = if (surface != null && surface.height > 0)
-                    surfaceLocation[1] - overlayLocation[1] + boxH / 2f else viewH / 2f
+                val boxW = (contentFrame?.width ?: 0).takeIf { it > 0 }?.toFloat() ?: viewW
+                val boxH = (contentFrame?.height ?: 0).takeIf { it > 0 }?.toFloat() ?: viewH
+                val baseCx = if (contentFrame != null && contentFrame.width > 0)
+                    playerLocation[0] - overlayLocation[0] + contentFrame.left + boxW / 2f else viewW / 2f
+                val baseCy = if (contentFrame != null && contentFrame.height > 0)
+                    playerLocation[1] - overlayLocation[1] + contentFrame.top + boxH / 2f else viewH / 2f
                 val halfW = boxW / 2f
                 val halfH = boxH / 2f
                 canvas.save()
@@ -1551,18 +1551,18 @@ class MainActivity : AppCompatActivity() {
             setOnTouchListener { _, event ->
                 val clip = videoClipManager.find(selectedVideoClipId)
                 if (!videoSelected || clip == null) return@setOnTouchListener false
-                val surface = playerView.videoSurfaceView
-                val surfaceLocation = IntArray(2)
+                val contentFrame = playerView.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
+                val playerLocation = IntArray(2)
                 val overlayLocation = IntArray(2)
-                surface?.getLocationOnScreen(surfaceLocation)
+                playerView.getLocationOnScreen(playerLocation)
                 getLocationOnScreen(overlayLocation)
-                val boxW = (surface?.width ?: 0).takeIf { it > 0 }?.toFloat() ?: width.toFloat()
-                val boxH = (surface?.height ?: 0).takeIf { it > 0 }?.toFloat() ?: height.toFloat()
-                val cx = (if (surface != null && surface.width > 0)
-                    surfaceLocation[0] - overlayLocation[0] + boxW / 2f else width / 2f) +
+                val boxW = (contentFrame?.width ?: 0).takeIf { it > 0 }?.toFloat() ?: width.toFloat()
+                val boxH = (contentFrame?.height ?: 0).takeIf { it > 0 }?.toFloat() ?: height.toFloat()
+                val cx = (if (contentFrame != null && contentFrame.width > 0)
+                    playerLocation[0] - overlayLocation[0] + contentFrame.left + boxW / 2f else width / 2f) +
                     if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f
-                val cy = (if (surface != null && surface.height > 0)
-                    surfaceLocation[1] - overlayLocation[1] + boxH / 2f else height / 2f) +
+                val cy = (if (contentFrame != null && contentFrame.height > 0)
+                    playerLocation[1] - overlayLocation[1] + contentFrame.top + boxH / 2f else height / 2f) +
                     if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
                 val factor = if (selectedPreviewRatio.isNotBlank()) previewScale else 1f
                 val totalAngle = Math.toRadians((previewRotation + clip.rotationDegrees).toDouble())
