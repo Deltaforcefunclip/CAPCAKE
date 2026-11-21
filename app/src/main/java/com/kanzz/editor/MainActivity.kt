@@ -3321,7 +3321,8 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("Simpan") { _, _ -> saveCurrentProject(); refreshEffectTracks() }.show()
     }
     private fun showVideoColorGrading(clip: VideoClip) {
-        var working = clip.colorGrading
+        val original = clip.colorGrading
+        var working = original
         var applyToAll = false
         var confirmed = false
         var activeCategory = "CAHAYA"
@@ -3458,6 +3459,44 @@ class MainActivity : AppCompatActivity() {
         renderCategory()
         root.addView(tabs)
         root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+
+        // Lightroom-style compare: tahan untuk melihat kondisi sebelum grading.
+        val compareButton = TextView(this).apply {
+            text = "CMPRN  •  TAHAN UNTUK MEMBANDINGKAN"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setPadding(dp(10), dp(12), dp(10), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(37, 37, 37))
+                setStroke(dp(1), Color.rgb(80, 80, 80))
+                cornerRadius = dp(9).toFloat()
+            }
+            isClickable = true
+            isFocusable = true
+            setOnTouchListener { view, event ->
+                when (event.action) {
+                    android.view.MotionEvent.ACTION_DOWN -> {
+                        liveColorGradingPreview = original
+                        updateDreamyPreviewOverlay()
+                        text = "MENAMPILKAN SEBELUM"
+                        true
+                    }
+                    android.view.MotionEvent.ACTION_UP,
+                    android.view.MotionEvent.ACTION_CANCEL -> {
+                        liveColorGradingPreview = working
+                        updateDreamyPreviewOverlay()
+                        text = "CMPRN  •  TAHAN UNTUK MEMBANDINGKAN"
+                        true
+                    }
+                    else -> true
+                }
+            }
+        }
+        root.addView(compareButton, LinearLayout.LayoutParams(-1, dp(42)).apply {
+            topMargin = dp(5)
+        })
         root.addView(status)
 
         val actions = LinearLayout(this).apply {
@@ -3503,10 +3542,16 @@ class MainActivity : AppCompatActivity() {
         dialog.setContentView(root)
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
-            dialog.window?.setLayout(
-                (resources.displayMetrics.widthPixels * 0.94f).toInt(),
-                (resources.displayMetrics.heightPixels * 0.82f).toInt()
-            )
+            dialog.window?.let { window ->
+                window.setLayout(
+                    (resources.displayMetrics.widthPixels * 0.96f).toInt(),
+                    (resources.displayMetrics.heightPixels * 0.60f).toInt()
+                )
+                window.setGravity(Gravity.BOTTOM)
+                window.attributes = window.attributes.apply {
+                    dimAmount = 0.22f
+                }
+            }
         }
         dialog.setOnDismissListener {
             if (!confirmed) {
