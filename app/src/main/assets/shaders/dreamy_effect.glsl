@@ -24,6 +24,30 @@ uniform float uVignette;
 uniform float uGrain;
 uniform float uSharpening;
 uniform float uNoiseReduction;
+uniform float uRedHue;
+uniform float uRedSaturation;
+uniform float uRedLuminance;
+uniform float uOrangeHue;
+uniform float uOrangeSaturation;
+uniform float uOrangeLuminance;
+uniform float uYellowHue;
+uniform float uYellowSaturation;
+uniform float uYellowLuminance;
+uniform float uGreenHue;
+uniform float uGreenSaturation;
+uniform float uGreenLuminance;
+uniform float uAquaHue;
+uniform float uAquaSaturation;
+uniform float uAquaLuminance;
+uniform float uBlueHue;
+uniform float uBlueSaturation;
+uniform float uBlueLuminance;
+uniform float uPurpleHue;
+uniform float uPurpleSaturation;
+uniform float uPurpleLuminance;
+uniform float uMagentaHue;
+uniform float uMagentaSaturation;
+uniform float uMagentaLuminance;
 
 vec3 screenBlend(vec3 baseColor, vec3 glowColor) {
     return 1.0 - ((1.0 - baseColor) * (1.0 - glowColor));
@@ -31,6 +55,39 @@ vec3 screenBlend(vec3 baseColor, vec3 glowColor) {
 
 float luminanceOf(vec3 color) {
     return dot(color, vec3(0.2126, 0.7152, 0.0722));
+}
+
+
+vec3 rgbToHsv(vec3 c) {
+    vec4 K = vec4(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
+    vec4 p = mix(vec4(c.bg, K.wz), vec4(c.gb, K.xy), step(c.b, c.g));
+    vec4 q = mix(vec4(p.xyw, c.r), vec4(c.r, p.yzx), step(p.x, c.r));
+    float d = q.x - min(q.w, q.y);
+    float e = 1.0e-10;
+    return vec3(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
+}
+vec3 hsvToRgb(vec3 c) {
+    vec3 p = abs(fract(c.xxx + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0);
+    return c.z * mix(vec3(1.0), clamp(p - 1.0, 0.0, 1.0), c.y);
+}
+void correctHueRange(inout vec3 hsv, float center, float hueShift, float satShift, float lumShift) {
+    float d = abs(fract(hsv.x - center + 0.5) - 0.5);
+    float mask = 1.0 - smoothstep(0.045, 0.115, d);
+    hsv.x = fract(hsv.x + hueShift * 0.005 * mask);
+    hsv.y = clamp(hsv.y + satShift * 0.01 * mask, 0.0, 1.0);
+    hsv.z = clamp(hsv.z + lumShift * 0.003 * mask, 0.0, 1.0);
+}
+vec3 applyColorCorrection(vec3 color) {
+    vec3 hsv = rgbToHsv(color);
+    correctHueRange(hsv, 0.0000, uRedHue, uRedSaturation, uRedLuminance);
+    correctHueRange(hsv, 0.0833, uOrangeHue, uOrangeSaturation, uOrangeLuminance);
+    correctHueRange(hsv, 0.1667, uYellowHue, uYellowSaturation, uYellowLuminance);
+    correctHueRange(hsv, 0.3333, uGreenHue, uGreenSaturation, uGreenLuminance);
+    correctHueRange(hsv, 0.5000, uAquaHue, uAquaSaturation, uAquaLuminance);
+    correctHueRange(hsv, 0.6667, uBlueHue, uBlueSaturation, uBlueLuminance);
+    correctHueRange(hsv, 0.7778, uPurpleHue, uPurpleSaturation, uPurpleLuminance);
+    correctHueRange(hsv, 0.9167, uMagentaHue, uMagentaSaturation, uMagentaLuminance);
+    return hsvToRgb(hsv);
 }
 
 vec3 applyColorGrading(vec3 color) {
@@ -62,7 +119,7 @@ vec3 applyColorGrading(vec3 color) {
 
 void main() {
     vec4 sampled = texture2D(sTexture, vTextureCoord);
-    vec3 graded = applyColorGrading(sampled.rgb);
+    vec3 graded = applyColorCorrection(applyColorGrading(sampled.rgb));
 
     // Local contrast/detail controls use a compact neighborhood kernel.
     vec2 detailStep = vec2(0.0015);
