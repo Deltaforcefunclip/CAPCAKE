@@ -6133,27 +6133,12 @@ class MainActivity : AppCompatActivity() {
                                         frameAspect
                                     }
 
-                                    val previewFitWidth = minOf(frameW, frameH * sourceAspect)
-                                    val previewFitHeight = minOf(frameH, frameW / sourceAspect)
-                                    val previewWidthFraction = previewFitWidth / boxW
-                                    val previewHeightFraction = previewFitHeight / boxH
-
-                                    val exportFitWidthFraction: Float
-                                    val exportFitHeightFraction: Float
-                                    if (sourceAspect >= outputAspect) {
-                                        exportFitWidthFraction = 1f
-                                        exportFitHeightFraction = outputAspect / sourceAspect
-                                    } else {
-                                        exportFitHeightFraction = 1f
-                                        exportFitWidthFraction = sourceAspect / outputAspect
-                                    }
-                                    val correctionX = previewWidthFraction /
-                                        exportFitWidthFraction.coerceAtLeast(0.0001f)
-                                    val correctionY = previewHeightFraction /
-                                        exportFitHeightFraction.coerceAtLeast(0.0001f)
-                                    val effectiveScale = (previewScale *
-                                        ((correctionX + correctionY) / 2f))
-                                        .coerceIn(0.05f, 20f)
+                                    // Jangan mengubah framing sumber secara otomatis saat export.
+                                    // Presentation di atas sudah membentuk kanvas rasio target dengan FIT.
+                                    // Crop hanya dipakai untuk menerapkan zoom/geser yang memang dibuat
+                                    // pengguna di preview. Koreksi berbasis ukuran playerView sebelumnya
+                                    // dapat menghasilkan scale > 1 pada pilihan "Sumber Rasio".
+                                    val effectiveScale = previewScale.coerceIn(1f, 20f)
 
                                     if (effectiveScale > 1.001f ||
                                         previewTranslateX != 0f || previewTranslateY != 0f
