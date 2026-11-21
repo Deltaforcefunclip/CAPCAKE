@@ -1500,28 +1500,25 @@ class MainActivity : AppCompatActivity() {
                 val viewW = width.toFloat()
                 val viewH = height.toFloat()
                 if (viewW <= 0f || viewH <= 0f) return
-                val ratio = selectedPreviewRatio.split(":").let { parts ->
-                    if (parts.size == 2) {
-                        (parts[0].toFloatOrNull() ?: 0f) /
-                            (parts[1].toFloatOrNull() ?: 1f).coerceAtLeast(0.001f)
-                    } else viewW / viewH
-                }
-                val viewRatio = viewW / viewH
-                val boxW: Float
-                val boxH: Float
-                if (ratio >= viewRatio) {
-                    boxW = viewW
-                    boxH = boxW / ratio
-                } else {
-                    boxH = viewH
-                    boxW = boxH * ratio
-                }
+                // Ambil ukuran area video aktual dari TextureView, bukan rasio kanvas.
+                // Dengan begitu bingkai seleksi mengikuti bentuk video asli (portrait/landscape).
+                val surface = playerView.videoSurfaceView
+                val surfaceLocation = IntArray(2)
+                val overlayLocation = IntArray(2)
+                surface?.getLocationOnScreen(surfaceLocation)
+                getLocationOnScreen(overlayLocation)
+                val boxW = (surface?.width ?: 0).takeIf { it > 0 }?.toFloat() ?: viewW
+                val boxH = (surface?.height ?: 0).takeIf { it > 0 }?.toFloat() ?: viewH
+                val baseCx = if (surface != null && surface.width > 0)
+                    surfaceLocation[0] - overlayLocation[0] + boxW / 2f else viewW / 2f
+                val baseCy = if (surface != null && surface.height > 0)
+                    surfaceLocation[1] - overlayLocation[1] + boxH / 2f else viewH / 2f
                 val halfW = boxW / 2f
                 val halfH = boxH / 2f
                 canvas.save()
                 canvas.translate(
-                    viewW / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f,
-                    viewH / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
+                    baseCx + if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f,
+                    baseCy + if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
                 )
                 canvas.rotate(previewRotation + selected.rotationDegrees)
                 if (selectedPreviewRatio.isNotBlank()) canvas.scale(previewScale, previewScale)
@@ -1546,41 +1543,89 @@ class MainActivity : AppCompatActivity() {
             isClickable = false
             isFocusable = false
             var rotatingClipId: String? = null
+            var resizingClipId: String? = null
             var rotationStart = 0f
             var rotationStartAngle = 0f
+            var resizeStartScale = 1f
+            var resizeStartDistance = 1f
             setOnTouchListener { _, event ->
                 val clip = videoClipManager.find(selectedVideoClipId)
                 if (!videoSelected || clip == null) return@setOnTouchListener false
-                val cx = width / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f
-                val cy = height / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
-                val parts = selectedPreviewRatio.split(":")
-                val ratio = if (parts.size == 2) {
-                    (parts[0].toFloatOrNull() ?: 0f) /
-                        (parts[1].toFloatOrNull() ?: 1f).coerceAtLeast(0.001f)
-                } else width.toFloat() / height.coerceAtLeast(1)
-                val viewRatio = width.toFloat() / height.coerceAtLeast(1)
-                val boxW = if (ratio >= viewRatio) width.toFloat() else height.toFloat() * ratio
-                val boxH = if (ratio >= viewRatio) boxW / ratio else height.toFloat()
+                val surface = playerView.videoSurfaceView
+                val surfaceLocation = IntArray(2)
+                val overlayLocation = IntArray(2)
+                surface?.getLocationOnScreen(surfaceLocation)
+                getLocationOnScreen(overlayLocation)
+                val boxW = (surface?.width ?: 0).takeIf { it > 0 }?.toFloat() ?: width.toFloat()
+                val boxH = (surface?.height ?: 0).takeIf { it > 0 }?.toFloat() ?: height.toFloat()
+                val cx = (if (surface != null && surface.width > 0)
+                    surfaceLocation[0] - overlayLocation[0] + boxW / 2f else width / 2f) +
+                    if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f
+                val cy = (if (surface != null && surface.height > 0)
+                    surfaceLocation[1] - overlayLocation[1] + boxH / 2f else height / 2f) +
+                    if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
                 val factor = if (selectedPreviewRatio.isNotBlank()) previewScale else 1f
-                val handleOffsetY = -boxH / 2f * factor - dp(24).toFloat() * factor
-                val handleAngle = Math.toRadians((previewRotation + clip.rotationDegrees).toDouble())
-                val handleX = cx - handleOffsetY * kotlin.math.sin(handleAngle).toFloat()
-                val handleY = cy + handleOffsetY * kotlin.math.cos(handleAngle).toFloat()
+                val totalAngle = Math.toRadians((previewRotation + clip.rotationDegrees).toDouble())
+                val cosA = kotlin.math.cos(totalAngle).toFloat()
+                val sinA = kotlin.math.sin(totalAngle).toFloat()
+                fun transformedPoint(x: Float, y: Float): Pair<Float, Float> {
+                    val sx = x * factor
+                    val sy = y * factor
+                    return Pair(cx + sx * cosA - sy * sinA, cy + sx * sinA + sy * cosA)
+                }
+                val rotationPoint = transformedPoint(0f, -boxH / 2f - dp(24).toFloat())
+                val handleX = rotationPoint.first
+                val handleY = rotationPoint.second
+                val corners = listOf(
+                    transformedPoint(-boxW / 2f, -boxH / 2f),
+                    transformedPoint(boxW / 2f, -boxH / 2f),
+                    transformedPoint(-boxW / 2f, boxH / 2f),
+                    transformedPoint(boxW / 2f, boxH / 2f)
+                )
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         val dx = event.x - handleX
                         val dy = event.y - handleY
-                        if (kotlin.math.sqrt(dx * dx + dy * dy) > dp(24)) return@setOnTouchListener false
-                        rotatingClipId = clip.id
-                        rotationStart = clip.rotationDegrees
-                        rotationStartAngle = Math.toDegrees(
-                            kotlin.math.atan2((event.y - cy).toDouble(), (event.x - cx).toDouble())
-                        ).toFloat()
-                        pushUndoSnapshot()
-                        parent?.requestDisallowInterceptTouchEvent(true)
-                        true
+                        if (kotlin.math.sqrt(dx * dx + dy * dy) <= dp(24)) {
+                            rotatingClipId = clip.id
+                            rotationStart = clip.rotationDegrees
+                            rotationStartAngle = Math.toDegrees(
+                                kotlin.math.atan2((event.y - cy).toDouble(), (event.x - cx).toDouble())
+                            ).toFloat()
+                            pushUndoSnapshot()
+                            parent?.requestDisallowInterceptTouchEvent(true)
+                            return@setOnTouchListener true
+                        }
+                        // Keempat sudut menjadi pegangan resize satu jari.
+                        val nearestCorner = corners.minByOrNull { (x, y) ->
+                            val ddx = event.x - x; val ddy = event.y - y
+                            ddx * ddx + ddy * ddy
+                        }
+                        if (nearestCorner != null) {
+                            val ddx = event.x - nearestCorner.first
+                            val ddy = event.y - nearestCorner.second
+                            if (kotlin.math.sqrt(ddx * ddx + ddy * ddy) <= dp(26)) {
+                                resizingClipId = clip.id
+                                resizeStartScale = previewScale
+                                resizeStartDistance = kotlin.math.sqrt(
+                                    (event.x - cx) * (event.x - cx) + (event.y - cy) * (event.y - cy)
+                                ).coerceAtLeast(1f)
+                                pushUndoSnapshot()
+                                parent?.requestDisallowInterceptTouchEvent(true)
+                                return@setOnTouchListener true
+                            }
+                        }
+                        false
                     }
                     MotionEvent.ACTION_MOVE -> {
+                        if (resizingClipId == clip.id) {
+                            val distance = kotlin.math.sqrt(
+                                (event.x - cx) * (event.x - cx) + (event.y - cy) * (event.y - cy)
+                            )
+                            previewScale = (resizeStartScale * distance / resizeStartDistance).coerceIn(0.35f, 5f)
+                            applyPreviewTransform()
+                            return@setOnTouchListener true
+                        }
                         if (rotatingClipId != clip.id) return@setOnTouchListener false
                         val angle = Math.toDegrees(
                             kotlin.math.atan2((event.y - cy).toDouble(), (event.x - cx).toDouble())
@@ -1594,13 +1639,16 @@ class MainActivity : AppCompatActivity() {
                         true
                     }
                     MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                        if (rotatingClipId != clip.id) return@setOnTouchListener false
+                        if (rotatingClipId != clip.id && resizingClipId != clip.id) return@setOnTouchListener false
                         rotatingClipId = null
+                        resizingClipId = null
                         parent?.requestDisallowInterceptTouchEvent(false)
+                        val key = currentProject?.id ?: "default"
+                        prefs.edit().putFloat("preview_scale_$key", previewScale).apply()
                         saveCurrentProject()
                         true
                     }
-                    else -> rotatingClipId == clip.id
+                    else -> rotatingClipId == clip.id || resizingClipId == clip.id
                 }
             }
         }
