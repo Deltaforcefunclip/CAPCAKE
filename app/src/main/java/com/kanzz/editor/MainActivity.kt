@@ -1524,10 +1524,8 @@ class MainActivity : AppCompatActivity() {
                     viewW / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f,
                     viewH / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
                 )
-                if (selectedPreviewRatio.isNotBlank()) {
-                    canvas.rotate(previewRotation + selected.rotationDegrees)
-                    canvas.scale(previewScale, previewScale)
-                }
+                canvas.rotate(previewRotation + selected.rotationDegrees)
+                if (selectedPreviewRatio.isNotBlank()) canvas.scale(previewScale, previewScale)
                 canvas.drawRect(-halfW, -halfH, halfW, halfH, outline)
                 val handleRadius = dp(4).toFloat()
                 arrayOf(
@@ -1562,8 +1560,10 @@ class MainActivity : AppCompatActivity() {
                 val boxW = if (ratio >= viewRatio) width.toFloat() else height.toFloat() * ratio
                 val boxH = if (ratio >= viewRatio) boxW / ratio else height.toFloat()
                 val factor = if (selectedPreviewRatio.isNotBlank()) previewScale else 1f
-                val handleX = cx
-                val handleY = cy - boxH / 2f * factor - dp(24).toFloat() * factor
+                val handleOffsetY = -boxH / 2f * factor - dp(24).toFloat() * factor
+                val handleAngle = Math.toRadians((previewRotation + clip.rotationDegrees).toDouble())
+                val handleX = cx - handleOffsetY * kotlin.math.sin(handleAngle).toFloat()
+                val handleY = cy + handleOffsetY * kotlin.math.cos(handleAngle).toFloat()
                 when (event.actionMasked) {
                     MotionEvent.ACTION_DOWN -> {
                         val dx = event.x - handleX
@@ -1952,6 +1952,7 @@ class MainActivity : AppCompatActivity() {
                 timeline.updateSelection(false)
                 playerView.foreground = null
                 if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
+                applyPreviewTransform()
                 updateTextPreview()
                 if (tappedClip == null && player.isPlaying) {
                     player.pause()
@@ -4233,6 +4234,7 @@ class MainActivity : AppCompatActivity() {
         content.translationX = if (transformEnabled) previewTranslateX else 0f
         content.translationY = if (transformEnabled) previewTranslateY else 0f
         previewRatioOverlay?.invalidate()
+        if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
     }
 
     private fun showTransitionPicker(transition: VideoTransition) {
@@ -6218,40 +6220,38 @@ class MainActivity : AppCompatActivity() {
                                 // 1) sumber di-FIT ke seluruh area PlayerView,
                                 // 2) zoom/rotasi/pergeseran diterapkan pada GAMBAR,
                                 // 3) baru dipotong oleh batas rasio yang tetap.
-                                if (selectedPreviewRatio.isNotBlank()) {
-                                    val ratioParts = selectedPreviewRatio.split(":")
-                                    val outputAspect = ratioParts[0].toFloat() /
-                                        ratioParts[1].toFloat().coerceAtLeast(0.0001f)
-                                    val frameW = playerView.width.coerceAtLeast(1).toFloat()
-                                    val frameH = playerView.height.coerceAtLeast(1).toFloat()
-                                    val frameAspect = frameW / frameH
+                                val frameW = playerView.width.coerceAtLeast(1).toFloat()
+                                val frameH = playerView.height.coerceAtLeast(1).toFloat()
+                                val frameAspect = frameW / frameH
+                                val hasCanvasRatio = selectedPreviewRatio.isNotBlank()
+                                val hasClipRotation = abs(clip.rotationDegrees) > 0.001f
+                                if (hasCanvasRatio || hasClipRotation) {
+                                    val outputAspect = if (hasCanvasRatio) {
+                                        val ratioParts = selectedPreviewRatio.split(":")
+                                        (ratioParts[0].toFloatOrNull() ?: frameAspect) /
+                                            (ratioParts.getOrNull(1)?.toFloatOrNull() ?: 1f).coerceAtLeast(0.0001f)
+                                    } else frameAspect
 
-                                    // Area kerja harus sama dengan PlayerView, bukan langsung
-                                    // dibentuk menjadi rasio crop. Ini mencegah crop awal
-                                    // memotong gambar sebelum transformasi pengguna diterapkan.
-                                    add(
-                                        Presentation.createForAspectRatio(
-                                            frameAspect,
-                                            Presentation.LAYOUT_SCALE_TO_FIT
+                                    // Rasio kanvas dan transformasi proyek tetap global.
+                                    // Rotasi clip ditambahkan secara individual untuk setiap segmen.
+                                    if (hasCanvasRatio) {
+                                        add(
+                                            Presentation.createForAspectRatio(
+                                                frameAspect,
+                                                Presentation.LAYOUT_SCALE_TO_FIT
+                                            )
                                         )
-                                    )
+                                    }
 
-                                    // PlayerView melakukan transformasi pada bidang persegi
-                                    // exo_content_frame yang ditampilkan dengan aspect ratio frame.
-                                    // Matrix Media3 bekerja pada NDC (-1..1), sehingga rotasi harus
-                                    // dikonversi dari koordinat layar (Y ke bawah) ke koordinat NDC
-                                    // (Y ke atas) DAN dikoreksi dengan aspect ratio bidang.
-                                    val scale = previewScale.coerceIn(0.35f, 5f)
-                                    val radians = Math.toRadians((previewRotation + clip.rotationDegrees).toDouble())
+                                    val scale = if (hasCanvasRatio) previewScale.coerceIn(0.35f, 5f) else 1f
+                                    val rotation = (if (hasCanvasRatio) previewRotation else 0f) + clip.rotationDegrees
+                                    val radians = Math.toRadians(rotation.toDouble())
                                     val cosA = kotlin.math.cos(radians).toFloat()
                                     val sinA = kotlin.math.sin(radians).toFloat()
                                     val aspect = frameAspect.coerceAtLeast(0.0001f)
-                                    val tx = 2f * previewTranslateX / frameW
-                                    val ty = -2f * previewTranslateY / frameH
+                                    val tx = if (hasCanvasRatio) 2f * previewTranslateX / frameW else 0f
+                                    val ty = if (hasCanvasRatio) -2f * previewTranslateY / frameH else 0f
 
-                                    // Matriks affine langsung dalam NDC. Konjugasi aspect-ratio
-                                    // membuat rotasi tetap berputar mengelilingi pusat gambar,
-                                    // bukan seolah-olah gambar berada di dalam kotak 1:1.
                                     val transformMatrix = Matrix().apply {
                                         setValues(
                                             floatArrayOf(
@@ -6271,17 +6271,19 @@ class MainActivity : AppCompatActivity() {
                                         }
                                     )
 
-                                    // Crop hanya membatasi kanvas output. Ia tidak ikut diputar.
-                                    val halfX: Float
-                                    val halfY: Float
-                                    if (outputAspect < frameAspect) {
-                                        halfX = (outputAspect / frameAspect).coerceIn(0.001f, 1f)
-                                        halfY = 1f
-                                    } else {
-                                        halfX = 1f
-                                        halfY = (frameAspect / outputAspect).coerceIn(0.001f, 1f)
+                                    // Crop hanya dipakai ketika pengguna memilih rasio kanvas.
+                                    if (hasCanvasRatio) {
+                                        val halfX: Float
+                                        val halfY: Float
+                                        if (outputAspect < frameAspect) {
+                                            halfX = (outputAspect / frameAspect).coerceIn(0.001f, 1f)
+                                            halfY = 1f
+                                        } else {
+                                            halfX = 1f
+                                            halfY = (frameAspect / outputAspect).coerceIn(0.001f, 1f)
+                                        }
+                                        add(Crop(-halfX, halfX, -halfY, halfY))
                                     }
-                                    add(Crop(-halfX, halfX, -halfY, halfY))
                                 }
 
                                 if (dreamyIntensity > 0.001f) add(buildDreamyColorMatrix(dreamyIntensity))
