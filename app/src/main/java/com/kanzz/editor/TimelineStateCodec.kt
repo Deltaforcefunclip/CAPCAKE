@@ -28,6 +28,7 @@ object TimelineStateCodec {
                 put("transformScale", clip.transformScale.toDouble())
                 put("transformX", clip.transformX.toDouble())
                 put("transformY", clip.transformY.toDouble())
+                put("motionBlurIntensity", clip.motionBlurIntensity.toDouble())
                 put("colorGrading", JSONObject().apply {
                     val grade = clip.colorGrading
                     put("exposure", grade.exposure.toDouble()); put("contrast", grade.contrast.toDouble())
@@ -107,6 +108,7 @@ object TimelineStateCodec {
                     transformScale = item.optDouble("transformScale", 1.0).toFloat().coerceIn(0.35f, 5f),
                     transformX = item.optDouble("transformX", 0.0).toFloat(),
                     transformY = item.optDouble("transformY", 0.0).toFloat(),
+                    motionBlurIntensity = item.optDouble("motionBlurIntensity", 0.0).toFloat().coerceIn(0f, 1f),
                     colorGrading = item.optJSONObject("colorGrading")?.let { grade ->
                         ColorGrading(
                             exposure = grade.optDouble("exposure", 0.0).toFloat(),

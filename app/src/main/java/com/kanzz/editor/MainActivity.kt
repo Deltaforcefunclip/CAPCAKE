@@ -350,6 +350,7 @@ class MainActivity : AppCompatActivity() {
     private var previewProxyFps = 30
     private var dreamyIntensity = 0f
     private val dreamyPreviewState = DreamyPreviewState()
+    private val motionBlurPreviewState = MotionBlurPreviewState()
     private var liveColorGradingPreview: ColorGrading? = null
     private var dreamyPreviewOverlay: View? = null
     private var proxyCompletedCount = 0
@@ -529,7 +530,8 @@ class MainActivity : AppCompatActivity() {
                         glowSpread = 0.35f,
                         warmth = 0.5f,
                         previewState = dreamyPreviewState
-                    )
+                    ),
+                    MotionBlurGlEffect(intensity = 0f, previewState = motionBlurPreviewState)
                 )
             )
             // Preload awal sengaja tidak diaktifkan untuk pengujian frame drop.
@@ -3195,6 +3197,10 @@ class MainActivity : AppCompatActivity() {
                         videoClipManager.find(selectedVideoClipId)?.let { showVideoColorGrading(it) }
                     }
 
+                    "Motion Blur" -> {
+                        videoClipManager.find(selectedVideoClipId)?.let { showVideoMotionBlurDialog(it) }
+                    }
+
                     "Atur" -> {
                         effectClipManager.find(selectedEffectClipId)?.let { clip ->
                             if (clip.effectName == "Dreamy" || clip.effectName == "Cahaya Lembut") showEffectPanel()
@@ -3489,6 +3495,7 @@ class MainActivity : AppCompatActivity() {
         } ?: videoClipManager.clips.lastOrNull()?.takeIf { position >= it.timelineEndMs }
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
+        motionBlurPreviewState.intensity = activeVideo?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
 
         // Transisi melewati satu frame hitam: klip kiri zoom + fade-out,
         // klip kanan fade-in dari hitam. Zoom dibuat lebih tegas hingga 2x.
@@ -6436,6 +6443,64 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+
+    private fun showVideoMotionBlurDialog(clip: VideoClip) {
+        val original = clip.motionBlurIntensity.coerceIn(0f, 1f)
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+            setBackgroundColor(panel)
+        }
+        val description = TextView(this).apply {
+            text = "Motion Blur mengikuti perubahan gerakan antar-frame pada video asli. Nilai tinggi menghasilkan sapuan blur lebih kuat."
+            setTextColor(Color.LTGRAY)
+            textSize = 12f
+        }
+        val valueLabel = TextView(this).apply {
+            text = "Intensitas " + (original * 100f).toInt() + "%"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            setPadding(0, dp(16), 0, dp(4))
+        }
+        val slider = SeekBar(this).apply {
+            max = 100
+            progress = (original * 100f).toInt()
+        }
+        content.addView(description)
+        content.addView(valueLabel)
+        content.addView(slider, LinearLayout.LayoutParams(-1, dp(42)))
+        motionBlurPreviewState.intensity = original
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Motion Blur")
+            .setView(content)
+            .setNegativeButton("BATAL", null)
+            .setPositiveButton("TERAPKAN", null)
+            .create()
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                val amount = progress / 100f
+                valueLabel.text = "Intensitas " + progress + "%"
+                motionBlurPreviewState.intensity = amount
+            }
+            override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+            override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+        })
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                val amount = slider.progress / 100f
+                if (kotlin.math.abs(clip.motionBlurIntensity - amount) > 0.001f) {
+                    pushUndoSnapshot()
+                    clip.motionBlurIntensity = amount
+                    saveCurrentProject()
+                }
+                motionBlurPreviewState.intensity = amount
+                dialog.dismiss()
+            }
+        }
+        dialog.setOnDismissListener { updateDreamyPreviewOverlay() }
+        dialog.show()
+    }
+
     private fun showVideoClipOpacity(clip: VideoClip) {
         // Tampilkan klip yang sedang diatur agar perubahan langsung terlihat di preview.
         seekTimelinePosition(clip.timelineStartMs)
@@ -7232,6 +7297,11 @@ class MainActivity : AppCompatActivity() {
                                 }
 
                                 if (dreamyIntensity > 0.001f) add(buildDreamyColorMatrix(dreamyIntensity))
+
+                                // Motion Blur diterapkan langsung pada frame clip, bukan layer/transisi.
+                                if (clip.motionBlurIntensity > 0.001f) {
+                                    add(MotionBlurGlEffect(intensity = clip.motionBlurIntensity))
+                                }
 
                                 // Color grading per-klip diproses pada GPU, sama seperti preview.
                                 if (!clip.colorGrading.isDefault) {
