@@ -2366,6 +2366,7 @@ class MainActivity : AppCompatActivity() {
                         return true
                     }
                     MotionEvent.ACTION_CANCEL -> {
+                pressedTransition = null
                         emptyScaleDetector.onTouchEvent(event)
                         panVelocityTracker?.recycle()
                         panVelocityTracker = null
@@ -7963,6 +7964,7 @@ class TimelineView(
     private data class ThumbnailSet(val frames: List<Bitmap>, val durationMs: Long)
     private val thumbnailSets = mutableMapOf<String, ThumbnailSet>()
     private val transitionHitBoxes = mutableListOf<Pair<RectF, VideoTransition>>()
+    private var pressedTransition: VideoTransition? = null
     // Kotak tombol transisi dipakai ulang setiap onDraw agar tidak membuat RectF baru.
     private val transitionRectPool = mutableListOf<RectF>()
 
@@ -8608,6 +8610,32 @@ class TimelineView(
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
                 removeCallbacks(scrubSettleRunnable)
+                // Deteksi tombol transisi langsung saat DOWN. Jangan bergantung pada
+                // hit-box hasil onDraw karena redraw bisa belum terjadi saat disentuh.
+                pressedTransition = null
+                val transitionTouchRadius = 22f * density
+                if (event.y in (27f * density)..(92f * density)) {
+                    val clipsOnScreen = displayedClipPositions()
+                    for (index in 0 until (clipsOnScreen.size - 1).coerceAtLeast(0)) {
+                        val (leftClip, leftStart) = clipsOnScreen[index]
+                        val (rightClip, _) = clipsOnScreen[index + 1]
+                        val seamX = timeToX(leftStart + leftClip.timelineDurationMs)
+                        if (kotlin.math.abs(event.x - seamX) <= transitionTouchRadius) {
+                            pressedTransition = videoClips.transitionBetween(leftClip.id, rightClip.id)
+                                ?: VideoTransition(leftClipId = leftClip.id, rightClipId = rightClip.id)
+                            break
+                        }
+                    }
+                }
+                if (pressedTransition != null) {
+                    pressedClip = null
+                    trimClipId = null
+                    removeCallbacks(dragLongPress)
+                    pointerDown = true
+                    moved = false
+                    parent?.requestDisallowInterceptTouchEvent(true)
+                    return true
+                }
                 downX = event.x
                 lastX = event.x
                 dragDownX = event.x
@@ -8748,6 +8776,17 @@ class TimelineView(
 
             MotionEvent.ACTION_UP -> {
                 pointerDown = false
+                val tappedTransition = pressedTransition
+                pressedTransition = null
+                if (tappedTransition != null) {
+                    if (!moved && !isPinchGesture) onTransitionClick(tappedTransition)
+                    pressedClip = null
+                    trimClipId = null
+                    removeCallbacks(dragLongPress)
+                    parent?.requestDisallowInterceptTouchEvent(false)
+                    invalidate()
+                    return true
+                }
                 // Jangan langsung melepas kunci scrub. Callback seek player dapat
                 // datang terlambat dan menggeser timeline kembali setelah jari lepas.
                 if (isScrubbingTimeline) {
