@@ -142,6 +142,10 @@ class MainActivity : AppCompatActivity() {
     private var activeLayerGroup = "AUDIO"
     private val audioTrackViews = mutableMapOf<String, AudioTrackView>()
     private val audioPlayers = mutableMapOf<String, ExoPlayer>()
+    private val audioGainProcessors = mutableMapOf<String, GainAudioProcessor>()
+    private var volumePreviewPlayer: ExoPlayer? = null
+    private var volumePreviewGain: GainAudioProcessor? = null
+    private var videoGainProcessor: GainAudioProcessor? = null
     private var exportTransformer: Transformer? = null
     // Penyalinan file dan pembacaan metadata hasil export tidak boleh membebani UI thread.
     private val exportFinalizeExecutor = Executors.newSingleThreadExecutor()
@@ -510,6 +514,11 @@ class MainActivity : AppCompatActivity() {
         // Uji playback tanpa decoder prewarming. Renderer dibuat dengan konfigurasi
         // standar agar kita bisa membandingkan kestabilan decoder saat play/resume.
         val renderersFactory = DefaultRenderersFactory(this)
+        videoGainProcessor = GainAudioProcessor()
+        val videoAudioSink = androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(this)
+            .setAudioProcessors(arrayOf(videoGainProcessor!!))
+            .build()
+        renderersFactory.setAudioSink(videoAudioSink)
 
         player = ExoPlayer.Builder(this, renderersFactory).build().apply {
             // Kembalikan pipeline preview Dreamy yang sudah dioptimalkan.
@@ -840,6 +849,10 @@ class MainActivity : AppCompatActivity() {
         selectedAudioClipId = null
         audioPlayers.values.forEach { it.release() }
         audioPlayers.clear()
+        audioGainProcessors.clear()
+        volumePreviewPlayer?.release()
+        volumePreviewPlayer = null
+        volumePreviewGain = null
 
         TimelineStateCodec.restoreVideo(
             prefs.getString("video_timeline_${project.id}", null),
@@ -5996,26 +6009,108 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showAudioClipVolume(clip: AudioClip) {
+        volumePreviewPlayer?.release()
+        volumePreviewPlayer = null
+        volumePreviewGain = null
+        val dialog = android.app.Dialog(this)
+        val valueLabel = TextView(this).apply {
+            text = "Volume  ${(clip.volume * 100f).toInt()}%"
+            setTextColor(Color.WHITE)
+            textSize = 14f
+            gravity = Gravity.CENTER
+        }
         val seek = SeekBar(this).apply {
-            max = 300
-            progress = (clip.volume * 100f).toInt().coerceIn(0, 300)
+            max = 200
+            progress = (clip.volume.coerceIn(0f, 2f) * 100f).toInt()
+        }
+        val playButton = TextView(this).apply {
+            text = "▶  Putar audio"
+            gravity = Gravity.CENTER
+            textSize = 14f
+            setTextColor(Color.WHITE)
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(42, 45, 48)); cornerRadius = dp(8).toFloat()
+            }
         }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(4))
-            addView(seek, LinearLayout.LayoutParams(-1, dp(48)))
+            setPadding(dp(16), dp(10), dp(16), dp(8))
+            setBackgroundColor(Color.rgb(25, 27, 29))
+            addView(valueLabel, LinearLayout.LayoutParams(-1, dp(24)))
+            addView(seek, LinearLayout.LayoutParams(-1, dp(42)))
+            addView(playButton, LinearLayout.LayoutParams(-1, dp(38)))
         }
-
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Volume: ${clip.name}")
-            .setView(content)
-            .setNegativeButton("Batal", null)
-            .setPositiveButton("Simpan") { _, _ ->
-                clip.volume = seek.progress / 100f
-                audioPlayers[clip.id]?.volume = clip.volume
-                saveCurrentProject()
+        dialog.setContentView(content)
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(-1, -2)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            attributes = attributes.apply { y = dp(94) }
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.12f)
+        }
+        fun applyVolume(progress: Int) {
+            clip.volume = (progress / 100f).coerceIn(0f, 2f)
+            valueLabel.text = "Volume  ${(clip.volume * 100f).toInt()}%"
+            audioGainProcessors[clip.id]?.gain = clip.volume
+            volumePreviewGain?.gain = clip.volume
+            audioPlayers[clip.id]?.volume = 1f
+            saveCurrentProject()
+        }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                if (fromUser) applyVolume(value)
             }
-            .show()
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        playButton.setOnClickListener {
+            val active = volumePreviewPlayer
+            if (active?.isPlaying == true) {
+                active.pause()
+                playButton.text = "▶  Putar audio"
+            } else {
+                if (volumePreviewPlayer == null) {
+                    val gain = GainAudioProcessor().also { it.gain = clip.volume }
+                    volumePreviewGain = gain
+                    val factory = DefaultRenderersFactory(this)
+                    factory.setAudioSink(
+                        androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(this)
+                            .setAudioProcessors(arrayOf(gain)).build()
+                    )
+                    volumePreviewPlayer = ExoPlayer.Builder(this, factory).build().apply {
+                        setMediaItem(
+                            MediaItem.Builder().setUri(Uri.parse(clip.filePath))
+                                .setClippingConfiguration(
+                                    MediaItem.ClippingConfiguration.Builder()
+                                        .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                                        .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(clip.sourceStartMs + 1L))
+                                        .build()
+                                ).build()
+                        )
+                        playbackParameters = PlaybackParameters(clip.speed.coerceIn(0.25f, 3.25f))
+                        prepare()
+                        playWhenReady = true
+                    }
+                } else {
+                    volumePreviewPlayer?.play()
+                }
+                playButton.text = "Ⅱ  Jeda audio"
+            }
+        }
+        dialog.setOnDismissListener {
+            volumePreviewPlayer?.release()
+            volumePreviewPlayer = null
+            volumePreviewGain = null
+            saveCurrentProject()
+        }
+        dialog.show()
+        dialog.window?.apply {
+            setLayout(-1, -2)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            attributes = attributes.apply { y = dp(94) }
+        }
     }
 
     private fun showAudioClipSpeed(clip: AudioClip) {
@@ -6056,7 +6151,8 @@ class MainActivity : AppCompatActivity() {
     private fun syncVideoClipProperties() {
         if (!::player.isInitialized || videoClipManager.clips.isEmpty()) return
         val clip = activeVideoClip() ?: return
-        player.volume = if (muteAudio) 0f else clip.volume.coerceIn(0f, 1f)
+        videoGainProcessor?.gain = clip.volume.coerceIn(0f, 2f)
+        player.volume = if (muteAudio) 0f else 1f
         if (::playerView.isInitialized) {
             playerView.alpha = clip.opacity.coerceIn(0f, 1f)
         }
@@ -6068,23 +6164,49 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showVideoClipVolume(clip: VideoClip) {
-        val seek = SeekBar(this).apply {
-            max = 100
-            progress = (clip.volume * 100f).toInt().coerceIn(0, 100)
+        val dialog = android.app.Dialog(this)
+        val valueLabel = TextView(this).apply {
+            text = "Volume  ${(clip.volume * 100f).toInt()}%"
+            setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER
         }
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Volume klip video")
-            .setMessage("Atur volume untuk klip yang dipilih.")
-            .setView(seek)
-            .setNegativeButton("Batal", null)
-            .setPositiveButton("Simpan") { _, _ ->
-                clip.volume = seek.progress / 100f
-                if (activeVideoClip()?.id == clip.id) {
-                    player.volume = if (muteAudio) 0f else clip.volume
-                }
-                saveCurrentProject()
+        val seek = SeekBar(this).apply {
+            max = 200
+            progress = (clip.volume.coerceIn(0f, 2f) * 100f).toInt()
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(8))
+            setBackgroundColor(Color.rgb(25, 27, 29))
+            addView(valueLabel, LinearLayout.LayoutParams(-1, dp(24)))
+            addView(seek, LinearLayout.LayoutParams(-1, dp(42)))
+        }
+        fun applyVolume(progress: Int) {
+            clip.volume = (progress / 100f).coerceIn(0f, 2f)
+            valueLabel.text = "Volume  ${(clip.volume * 100f).toInt()}%"
+            if (activeVideoClip()?.id == clip.id) {
+                videoGainProcessor?.gain = clip.volume
+                player.volume = if (muteAudio) 0f else 1f
             }
-            .show()
+            saveCurrentProject()
+        }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                if (fromUser) applyVolume(value)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        dialog.setContentView(content)
+        dialog.setOnDismissListener { saveCurrentProject() }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(-1, -2)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            attributes = attributes.apply { y = dp(94) }
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.12f)
+        }
     }
 
     private fun showVideoClipSpeed(clip: VideoClip) {
@@ -6257,7 +6379,15 @@ class MainActivity : AppCompatActivity() {
                 (timelinePosition - clip.startTimeMs).coerceAtLeast(0L) * clip.speed
             ).toLong().coerceAtLeast(0L)
 
-            val instance = audioPlayer ?: ExoPlayer.Builder(this).build().also { created ->
+            val gainProcessor = audioGainProcessors[clip.id] ?: GainAudioProcessor().also { audioGainProcessors[clip.id] = it }
+            gainProcessor.gain = clip.volume.coerceIn(0f, 2f)
+            val instance = audioPlayer ?: run {
+                val factory = DefaultRenderersFactory(this)
+                factory.setAudioSink(
+                    androidx.media3.exoplayer.audio.DefaultAudioSink.Builder(this)
+                        .setAudioProcessors(arrayOf(gainProcessor)).build()
+                )
+                ExoPlayer.Builder(this, factory).build().also { created ->
                 created.setAudioAttributes(
                     androidx.media3.common.AudioAttributes.Builder()
                         .setUsage(C.USAGE_MEDIA)
@@ -6265,7 +6395,7 @@ class MainActivity : AppCompatActivity() {
                         .build(),
                     false
                 )
-                created.volume = clip.volume
+                created.volume = 1f
                 val audioItem = MediaItem.Builder()
                     .setUri(Uri.parse(clip.filePath))
                     .setClippingConfiguration(
@@ -6283,9 +6413,10 @@ class MainActivity : AppCompatActivity() {
                 created.playWhenReady = true
                 audioPlayers[clip.id] = created
                 created.prepare()
+                }
             }
 
-            instance.volume = clip.volume
+            instance.volume = 1f
             instance.playbackParameters = PlaybackParameters(clip.speed.coerceIn(0.25f, 3.25f))
 
             // Setelah satu klip audio selesai, ExoPlayer masuk STATE_ENDED.
@@ -6307,7 +6438,7 @@ class MainActivity : AppCompatActivity() {
 
         val activeIds = audioClipManager.clips.map { it.id }.toSet()
         val removedIds = audioPlayers.keys.filter { it !in activeIds }
-        removedIds.forEach { id -> audioPlayers.remove(id)?.release() }
+        removedIds.forEach { id -> audioPlayers.remove(id)?.release(); audioGainProcessors.remove(id) }
     }
 
     private fun createToolItem(
@@ -6869,14 +7000,14 @@ class MainActivity : AppCompatActivity() {
                 // setSpeed pada EditedMediaItem mengatur kecepatan video dan audio sumber.
                 // Di sini hanya volume yang perlu diproses manual.
                 val audioProcessors = buildList<AudioProcessor> {
-                    if (clip.volume < 0.999f) {
+                    if (abs(clip.volume - 1f) > 0.001f) {
                         val mixer = ChannelMixingAudioProcessor()
                         for (channelCount in 1..6) {
                             mixer.putChannelMixingMatrix(
                                 ChannelMixingMatrix.createForConstantPower(
                                     channelCount,
                                     channelCount
-                                ).scaleBy(clip.volume.coerceIn(0f, 1f))
+                                ).scaleBy(clip.volume.coerceIn(0f, 2f))
                             )
                         }
                         add(mixer)
@@ -7283,14 +7414,14 @@ class MainActivity : AppCompatActivity() {
                             add(SonicAudioProcessor().apply {
                                 setSpeed(clip.speed.coerceIn(0.25f, 4f))
                             })
-                            if (clip.volume < 0.999f) {
+                            if (abs(clip.volume - 1f) > 0.001f) {
                                 val mixer = ChannelMixingAudioProcessor()
                                 for (channelCount in 1..6) {
                                     mixer.putChannelMixingMatrix(
                                         ChannelMixingMatrix.createForConstantPower(
                                             channelCount,
                                             channelCount
-                                        ).scaleBy(clip.volume.coerceIn(0f, 1f))
+                                        ).scaleBy(clip.volume.coerceIn(0f, 2f))
                                     )
                                 }
                                 add(mixer)
