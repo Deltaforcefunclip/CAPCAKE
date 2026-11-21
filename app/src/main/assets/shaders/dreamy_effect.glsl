@@ -205,20 +205,27 @@ void main() {
         return;
     }
 
-    // Mode 0: Dreamy lama — tetap tersedia tanpa mengubah karakter B&W.
-    vec3 softImage = mix(original.rgb, blurred, focus);
-    vec3 highlights = max(blurred - vec3(0.42), vec3(0.0));
-    highlights = highlights * highlights * 2.4;
-    vec3 bloom = highlights * (0.65 + strength * 2.2);
-    vec3 dreamy = screenBlend(softImage, bloom * strength);
-    vec3 halation = max(original.rgb - vec3(0.72), vec3(0.0));
-    dreamy += halation * vec3(0.10 + 0.16 * uWarmth, 0.07 + 0.08 * uWarmth, 0.10);
-    dreamy.r += uWarmth * 0.10 * strength;
-    dreamy.g += uWarmth * 0.045 * strength;
-    dreamy.b += (1.0 - uWarmth) * 0.035 * strength;
-    dreamy = mix(dreamy, vec3(0.52), 0.035 * strength);
-    vec2 centered = sampleCoord - vec2(0.5);
-    float vignette = 1.0 - dot(centered, centered) * 0.16 * strength;
-    dreamy *= clamp(vignette, 0.86, 1.0);
+    // Mode 0: Dreamy — seluruh diffusion berasal dari piksel clip yang sama.
+    // Tidak ada frame duplikat, ghosting, atau elemen cahaya yang ditempel.
+    vec3 softBase = mix(original.rgb, blurred, focus * 0.38);
+
+    // Glow hanya muncul dari area terang yang memang ada pada gambar asli.
+    float sourceLuma = luminanceOf(blurred);
+    float brightMask = smoothstep(0.48, 0.86, sourceLuma);
+    vec3 brightSource = max(blurred - vec3(0.40), vec3(0.0)) * brightMask;
+    float spread = clamp(uBlurRadius * 42.0, 0.08, 0.70);
+    vec3 sourceGlow = brightSource * (0.22 + strength * 0.72) * spread;
+    vec3 dreamy = screenBlend(softBase, sourceGlow);
+
+    // Haze tipis dibentuk dari luminansi dan warna frame itu sendiri.
+    float imageLuma = luminanceOf(blurred);
+    vec3 imageAtmosphere = mix(vec3(imageLuma), blurred, 0.78);
+    float hazeAmount = strength * (0.025 + focus * 0.035);
+    dreamy = mix(dreamy, imageAtmosphere, hazeAmount);
+
+    // Kehangatan warna sangat halus; tidak menambahkan sumber cahaya baru.
+    dreamy.r += uWarmth * 0.018 * strength;
+    dreamy.b += (1.0 - uWarmth) * 0.012 * strength;
+
     gl_FragColor = vec4(clamp(mix(original.rgb, dreamy, strength), 0.0, 1.0), original.a);
 }
