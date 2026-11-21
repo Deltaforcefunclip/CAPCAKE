@@ -120,6 +120,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioTimelineFrame: FrameLayout
     private lateinit var previewTextOverlay: TextView
     private lateinit var textSelectionOverlay: View
+    private lateinit var videoSelectionOverlay: View
     private val additionalTextPreviewViews = mutableMapOf<String, TextView>()
     private lateinit var thisTextTracksContainer: LinearLayout
     private lateinit var genericLayerPlaceholder: TextView
@@ -1312,6 +1313,7 @@ class MainActivity : AppCompatActivity() {
         timeline.selectClip(clip.id)
         timeline.setDuration(videoClipManager.durationMs, oldPosition)
         timeline.updateSelection(true)
+        if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
         if (::playerView.isInitialized) playerView.foreground = null
         refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
         timeline.loadThumbnails(uri, durationMs)
@@ -1475,6 +1477,76 @@ class MainActivity : AppCompatActivity() {
         previewRatioOverlay = ratioOverlay
         ratioOverlay.isEnabled = selectedPreviewRatio.isNotBlank()
         previewFrame.addView(ratioOverlay, FrameLayout.LayoutParams(-1, -1))
+
+        // Bingkai seleksi video mengikuti kanvas dan transformasi preview.
+        // Overlay ini hanya visual; gesture tetap ditangani ratioOverlay.
+        videoSelectionOverlay = object : View(this) {
+            private val outline = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = green
+                style = Paint.Style.STROKE
+                strokeWidth = dp(2).toFloat()
+            }
+            private val handles = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = Color.WHITE
+                style = Paint.Style.FILL
+            }
+            private val rotationStem = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = green
+                strokeWidth = dp(1.5f).toFloat()
+            }
+            override fun onDraw(canvas: Canvas) {
+                super.onDraw(canvas)
+                val selected = videoClipManager.find(selectedVideoClipId) ?: return
+                if (!videoSelected || selected.id != selectedVideoClipId) return
+                val viewW = width.toFloat()
+                val viewH = height.toFloat()
+                if (viewW <= 0f || viewH <= 0f) return
+                val ratio = selectedPreviewRatio.split(":").let { parts ->
+                    if (parts.size == 2) {
+                        (parts[0].toFloatOrNull() ?: 0f) /
+                            (parts[1].toFloatOrNull() ?: 1f).coerceAtLeast(0.001f)
+                    } else viewW / viewH
+                }
+                val viewRatio = viewW / viewH
+                val boxW: Float
+                val boxH: Float
+                if (ratio >= viewRatio) {
+                    boxW = viewW
+                    boxH = boxW / ratio
+                } else {
+                    boxH = viewH
+                    boxW = boxH * ratio
+                }
+                val halfW = boxW / 2f
+                val halfH = boxH / 2f
+                canvas.save()
+                canvas.translate(
+                    viewW / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f,
+                    viewH / 2f + if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
+                )
+                if (selectedPreviewRatio.isNotBlank()) {
+                    canvas.rotate(previewRotation)
+                    canvas.scale(previewScale, previewScale)
+                }
+                canvas.drawRect(-halfW, -halfH, halfW, halfH, outline)
+                val handleRadius = dp(4).toFloat()
+                arrayOf(
+                    -halfW to -halfH, halfW to -halfH,
+                    -halfW to halfH, halfW to halfH
+                ).forEach { (x, y) ->
+                    canvas.drawCircle(x, y, handleRadius, handles)
+                    canvas.drawCircle(x, y, handleRadius, outline)
+                }
+                canvas.drawLine(0f, -halfH, 0f, -halfH - dp(24), rotationStem)
+                canvas.drawCircle(0f, -halfH - dp(24), dp(5).toFloat(), handles)
+                canvas.drawCircle(0f, -halfH - dp(24), dp(5).toFloat(), outline)
+                canvas.restore()
+            }
+        }.apply {
+            isClickable = false
+            isFocusable = false
+        }
+        previewFrame.addView(videoSelectionOverlay, FrameLayout.LayoutParams(-1, -1))
         previewTextOverlay = TextView(this).apply {
             gravity = Gravity.CENTER
             textAlignment = View.TEXT_ALIGNMENT_CENTER
@@ -1823,6 +1895,7 @@ class MainActivity : AppCompatActivity() {
                 timeline.selectClip(selectedVideoClipId)
                 timeline.updateSelection(false)
                 playerView.foreground = null
+                if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
                 updateTextPreview()
                 if (tappedClip == null && player.isPlaying) {
                     player.pause()
@@ -2816,6 +2889,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateToolMenu() {
 
+        if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
         if (!::toolsContainer.isInitialized) return
 
         toolsContainer.removeAllViews()
