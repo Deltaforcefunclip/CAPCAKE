@@ -2053,7 +2053,7 @@ class MainActivity : AppCompatActivity() {
                     // Jika playhead sudah berada di dalam klip yang dipilih,
                     // pertahankan posisi timeline agar pengguna bisa langsung memotong.
                     if (!timeline.isPlayheadInsideClip(tappedClip)) {
-                        timeline.navigateToClipEnd(tappedClip)
+                        timeline.navigateToClipBoundary(tappedClip)
                     }
                 }
                 timeline.updateSelection(false)
@@ -7954,15 +7954,22 @@ class TimelineView(
     }
 
     /**
-     * Saat memilih klip yang tidak sedang berada di bawah playhead, geser timeline
-     * hingga ujung kanan klip tepat menyentuh playhead tetap di tengah layar.
-     * Posisi akhir memakai 1 ms sebelum batas agar preview tetap menampilkan klip terpilih.
+     * Navigasi seleksi dibuat simetris:
+     * - Klip terpilih berada di kanan playhead: berhenti di awal klip.
+     * - Klip terpilih berada di kiri playhead: berhenti di akhir klip.
+     * Dengan begitu batas klip yang menghadap playhead menyentuh garis playhead.
      */
-    fun navigateToClipEnd(clip: VideoClip) {
+    fun navigateToClipBoundary(clip: VideoClip) {
         if (videoClips.find(clip.id) == null || width <= 0) return
+        val currentPosition = controller.positionMs
+        val targetPosition = when {
+            currentPosition < clip.timelineStartMs -> clip.timelineStartMs
+            currentPosition >= clip.timelineEndMs ->
+                (clip.timelineEndMs - 1L).coerceAtLeast(clip.timelineStartMs)
+            else -> return
+        }
         navigationAnimator?.cancel()
-        val startPosition = controller.positionMs.toFloat()
-        val targetPosition = (clip.timelineEndMs - 1L).coerceAtLeast(clip.timelineStartMs)
+        val startPosition = currentPosition.toFloat()
         val endPosition = targetPosition.toFloat()
         val startOffset = controller.offsetPx
         val endOffset = (targetPosition * pixelsPerMs -
