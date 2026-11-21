@@ -342,6 +342,7 @@ class MainActivity : AppCompatActivity() {
     private var previewProxyFps = 30
     private var dreamyIntensity = 0f
     private val dreamyPreviewState = DreamyPreviewState()
+    private var liveColorGradingPreview: ColorGrading? = null
     private var dreamyPreviewOverlay: View? = null
     private var proxyCompletedCount = 0
     private var proxyFailedCount = 0
@@ -2940,6 +2941,10 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
 
+                    "Sesuaikan" -> {
+                        videoClipManager.find(selectedVideoClipId)?.let { showVideoColorGrading(it) }
+                    }
+
                     "Atur" -> {
                         effectClipManager.find(selectedEffectClipId)?.let { clip ->
                             if (clip.effectName == "Dreamy" || clip.effectName == "Cahaya Lembut") showEffectPanel()
@@ -3229,6 +3234,11 @@ class MainActivity : AppCompatActivity() {
             "Cahaya Lembut" -> 2f
             else -> 0f
         }
+        val activeVideo = videoClipManager.clips.firstOrNull {
+            position >= it.timelineStartMs && position < it.timelineEndMs
+        } ?: videoClipManager.clips.lastOrNull()?.takeIf { position >= it.timelineEndMs }
+        dreamyPreviewState.colorGrading = liveColorGradingPreview
+            ?: activeVideo?.colorGrading ?: ColorGrading()
 
         // Tidak memakai tint overlay; frame preview diproses oleh shader GPU.
         dreamyPreviewOverlay?.visibility = View.GONE
@@ -3310,6 +3320,203 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Batal") { _, _ -> clip.opacity = originalOpacity; refreshEffectTracks() }
             .setPositiveButton("Simpan") { _, _ -> saveCurrentProject(); refreshEffectTracks() }.show()
     }
+    private fun showVideoColorGrading(clip: VideoClip) {
+        var working = clip.colorGrading
+        var applyToAll = false
+        var confirmed = false
+        var activeCategory = "CAHAYA"
+
+        data class GradeControl(
+            val title: String, val min: Float, val max: Float, val suffix: String = "",
+            val read: (ColorGrading) -> Float,
+            val write: (ColorGrading, Float) -> ColorGrading
+        )
+        val categories = linkedMapOf(
+            "CAHAYA" to listOf(
+                GradeControl("Exposure", -2f, 2f, " EV", { it.exposure }, { g, v -> g.copy(exposure = v) }),
+                GradeControl("Contrast", -100f, 100f, "", { it.contrast }, { g, v -> g.copy(contrast = v) }),
+                GradeControl("Highlights", -100f, 100f, "", { it.highlights }, { g, v -> g.copy(highlights = v) }),
+                GradeControl("Shadows", -100f, 100f, "", { it.shadows }, { g, v -> g.copy(shadows = v) }),
+                GradeControl("Whites", -100f, 100f, "", { it.whites }, { g, v -> g.copy(whites = v) }),
+                GradeControl("Blacks", -100f, 100f, "", { it.blacks }, { g, v -> g.copy(blacks = v) })
+            ),
+            "WARNA" to listOf(
+                GradeControl("Temperature", -100f, 100f, "", { it.temperature }, { g, v -> g.copy(temperature = v) }),
+                GradeControl("Tint", -100f, 100f, "", { it.tint }, { g, v -> g.copy(tint = v) }),
+                GradeControl("Vibrance", -100f, 100f, "", { it.vibrance }, { g, v -> g.copy(vibrance = v) }),
+                GradeControl("Saturation", -100f, 100f, "", { it.saturation }, { g, v -> g.copy(saturation = v) })
+            ),
+            "EFEK" to listOf(
+                GradeControl("Texture", -100f, 100f, "", { it.texture }, { g, v -> g.copy(texture = v) }),
+                GradeControl("Clarity", -100f, 100f, "", { it.clarity }, { g, v -> g.copy(clarity = v) }),
+                GradeControl("Dehaze", -100f, 100f, "", { it.dehaze }, { g, v -> g.copy(dehaze = v) }),
+                GradeControl("Vignette", -100f, 100f, "", { it.vignette }, { g, v -> g.copy(vignette = v) }),
+                GradeControl("Grain", 0f, 100f, "", { it.grain }, { g, v -> g.copy(grain = v) })
+            ),
+            "DETAIL" to listOf(
+                GradeControl("Sharpening", 0f, 100f, "", { it.sharpening }, { g, v -> g.copy(sharpening = v) }),
+                GradeControl("Noise Reduction", 0f, 100f, "", { it.noiseReduction }, { g, v -> g.copy(noiseReduction = v) })
+            )
+        )
+
+        val dialog = android.app.Dialog(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(18), dp(18), dp(14))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(17, 17, 17))
+                setStroke(dp(1), Color.rgb(55, 55, 55))
+                cornerRadius = dp(18).toFloat()
+            }
+        }
+        root.addView(TextView(this).apply {
+            text = "SESUAIKAN"
+            textSize = 17f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        })
+        root.addView(TextView(this).apply {
+            text = "COLOR GRADING  •  NON-DESTRUCTIVE"
+            textSize = 10f
+            setTextColor(Color.GRAY)
+            setPadding(0, dp(4), 0, dp(12))
+        })
+
+        val tabs = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(3), dp(8), dp(3), dp(8))
+        }
+        val scroll = ScrollView(this).apply { isFillViewport = false; addView(content) }
+        val status = TextView(this).apply { textSize = 10f; setTextColor(green); setPadding(dp(2), dp(3), dp(2), dp(5)) }
+
+        fun refreshPreview() {
+            liveColorGradingPreview = working
+            updateDreamyPreviewOverlay()
+        }
+        fun renderCategory() {
+            content.removeAllViews()
+            categories[activeCategory].orEmpty().forEach { control ->
+                val row = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    setPadding(dp(2), dp(5), dp(2), dp(8))
+                }
+                val label = TextView(this).apply { textSize = 12f; setTextColor(Color.WHITE); typeface = Typeface.DEFAULT_BOLD }
+                val seek = SeekBar(this).apply {
+                    max = 1000
+                    progressTintList = android.content.res.ColorStateList.valueOf(green)
+                    thumbTintList = android.content.res.ColorStateList.valueOf(green)
+                }
+                fun showValue(value: Float) {
+                    label.text = if (control.suffix == " EV") {
+                        "${control.title}    ${String.format(Locale.US, "%+.2f", value)} EV"
+                    } else "${control.title}    ${value.toInt()}"
+                }
+                val initial = control.read(working).coerceIn(control.min, control.max)
+                seek.progress = (((initial - control.min) / (control.max - control.min)) * 1000f).toInt()
+                showValue(initial)
+                seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                    override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                        val value = control.min + (control.max - control.min) * progress / 1000f
+                        showValue(value)
+                        working = control.write(working, value)
+                        refreshPreview()
+                    }
+                    override fun onStartTrackingTouch(bar: SeekBar?) {}
+                    override fun onStopTrackingTouch(bar: SeekBar?) {}
+                })
+                row.addView(label)
+                row.addView(seek)
+                content.addView(row)
+            }
+        }
+        fun updateTabs() {
+            tabs.removeAllViews()
+            categories.keys.forEach { name ->
+                val selected = name == activeCategory
+                val tab = TextView(this).apply {
+                    text = name
+                    textSize = 10f
+                    typeface = if (selected) Typeface.DEFAULT_BOLD else Typeface.DEFAULT
+                    gravity = Gravity.CENTER
+                    setTextColor(if (selected) green else Color.LTGRAY)
+                    setPadding(dp(9), dp(11), dp(9), dp(11))
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(if (selected) Color.rgb(31, 48, 40) else Color.TRANSPARENT)
+                        cornerRadius = dp(8).toFloat()
+                    }
+                    setOnClickListener {
+                        activeCategory = name
+                        updateTabs()
+                        renderCategory()
+                    }
+                }
+                tabs.addView(tab, LinearLayout.LayoutParams(0, dp(40), 1f))
+            }
+        }
+        updateTabs()
+        renderCategory()
+        root.addView(tabs)
+        root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
+        root.addView(status)
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, 0)
+        }
+        fun actionButton(title: String, color: Int, weight: Float, onClick: () -> Unit) {
+            val button = TextView(this).apply {
+                text = title
+                textSize = 10f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.CENTER
+                setTextColor(color)
+                setPadding(dp(7), dp(13), dp(7), dp(13))
+                setOnClickListener { onClick() }
+            }
+            actions.addView(button, LinearLayout.LayoutParams(0, dp(44), weight))
+        }
+        actionButton("RESET", Color.LTGRAY, 1f) {
+            working = ColorGrading()
+            applyToAll = false
+            status.text = "Nilai dikembalikan ke awal."
+            updateTabs()
+            renderCategory()
+            refreshPreview()
+        }
+        actionButton("FOR ALL", Color.LTGRAY, 1.15f) {
+            applyToAll = !applyToAll
+            status.text = if (applyToAll) "Akan diterapkan ke semua klip saat CONFIRM." else ""
+        }
+        actionButton("CONFIRM", green, 1.2f) {
+            pushUndoSnapshot()
+            if (applyToAll) videoClipManager.clips.forEach { it.colorGrading = working }
+            else clip.colorGrading = working
+            liveColorGradingPreview = null
+            confirmed = true
+            saveCurrentProject()
+            updateDreamyPreviewOverlay()
+            dialog.dismiss()
+        }
+        root.addView(actions)
+        dialog.setContentView(root)
+        dialog.setOnShowListener {
+            dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
+            dialog.window?.setLayout(
+                (resources.displayMetrics.widthPixels * 0.94f).toInt(),
+                (resources.displayMetrics.heightPixels * 0.82f).toInt()
+            )
+        }
+        dialog.setOnDismissListener {
+            if (!confirmed) {
+                liveColorGradingPreview = null
+                updateDreamyPreviewOverlay()
+            }
+        }
+        dialog.show()
+    }
+
     private fun showEffectPanel() {
         val clip = effectClipManager.find(selectedEffectClipId)
         if (clip == null || (clip.effectName != "Dreamy" && clip.effectName != "Cahaya Lembut")) {
@@ -5695,6 +5902,18 @@ class MainActivity : AppCompatActivity() {
                                 }
 
                                 if (dreamyIntensity > 0.001f) add(buildDreamyColorMatrix(dreamyIntensity))
+
+                                // Color grading per-klip diproses pada GPU, sama seperti preview.
+                                if (!clip.colorGrading.isDefault) {
+                                    add(
+                                        DreamyGlEffect(
+                                            intensity = 0f,
+                                            glowSpread = 0.35f,
+                                            warmth = 0.5f,
+                                            colorGrading = clip.colorGrading
+                                        )
+                                    )
+                                }
 
                                 // Efek Dreamy mengikuti rentang klip pada timeline utama.
                                 effectClipManager.clips
