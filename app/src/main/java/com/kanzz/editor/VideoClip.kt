@@ -49,7 +49,7 @@ data class VideoClip(
     var filterName: String = "None",
     var brightness: Float = 0f,
     var contrast: Float = 1f,
-    var saturation: Float = 1f
+    var saturation: Float = 1f,
     var colorGrading: ColorGrading = ColorGrading()
 ) {
     // Durasi pada timeline mengikuti kecepatan: 0.5x membuat klip 2 kali lebih panjang.
