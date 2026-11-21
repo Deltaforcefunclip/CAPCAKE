@@ -3212,16 +3212,18 @@ class MainActivity : AppCompatActivity() {
 
     private fun updateDreamyPreviewOverlay() {
         val position = if (::timelineController.isInitialized) currentTimelinePosition() else 0L
-        val activeDreamy = effectClipManager.clips.firstOrNull {
-            it.effectName == "Dreamy" && position >= it.startTimeMs && position < it.endTimeMs
+        val activeEffect = effectClipManager.clips.firstOrNull {
+            (it.effectName == "Dreamy" || it.effectName == "Black & White") &&
+                position >= it.startTimeMs && position < it.endTimeMs
         }
-        val strength = ((activeDreamy?.intensity ?: 0f) *
-            (activeDreamy?.opacity ?: 0f)).coerceIn(0f, 1f)
+        val strength = ((activeEffect?.intensity ?: 0f) *
+            (activeEffect?.opacity ?: 0f)).coerceIn(0f, 1f)
 
-        // Nilai volatile ini dibaca langsung oleh shader pada thread GL.
+        // Mode 0 = Dreamy, mode 1 = Black & White.
         dreamyPreviewState.intensity = strength
-        dreamyPreviewState.glowSpread = activeDreamy?.glowSpread?.coerceIn(0f, 1f) ?: 0.35f
-        dreamyPreviewState.warmth = activeDreamy?.warmth?.coerceIn(0f, 1f) ?: 0.5f
+        dreamyPreviewState.glowSpread = activeEffect?.glowSpread?.coerceIn(0f, 1f) ?: 0.35f
+        dreamyPreviewState.warmth = activeEffect?.warmth?.coerceIn(0f, 1f) ?: 0.5f
+        dreamyPreviewState.effectMode = if (activeEffect?.effectName == "Black & White") 1f else 0f
 
         // Tidak memakai tint overlay; frame preview diproses oleh shader GPU.
         dreamyPreviewOverlay?.visibility = View.GONE
@@ -3268,7 +3270,12 @@ class MainActivity : AppCompatActivity() {
         cancel.setOnClickListener { dialog.dismiss() }
         confirm.setOnClickListener {
             pushUndoSnapshot()
-            val clip = EffectClip(effectName = chosen, startTimeMs = currentTimelinePosition(), durationMs = 2000L)
+            val clip = EffectClip(
+                effectName = chosen,
+                startTimeMs = currentTimelinePosition(),
+                durationMs = 2000L,
+                intensity = if (chosen == "Black & White") 1f else 0.45f
+            )
             effectClipManager.add(clip)
             selectedEffectClipId = clip.id
             selectedTextClipId = null; selectedAudioClipId = null; selectedVideoClipId = null; videoSelected = false
@@ -5682,7 +5689,10 @@ class MainActivity : AppCompatActivity() {
 
                                 // Efek Dreamy mengikuti rentang klip pada timeline utama.
                                 effectClipManager.clips
-                                    .filter { it.effectName == "Dreamy" && it.intensity > 0.001f }
+                                    .filter {
+                                        (it.effectName == "Dreamy" || it.effectName == "Black & White") &&
+                                            it.intensity * it.opacity > 0.001f
+                                    }
                                     .forEach { effectClip ->
                                         val overlapStart = maxOf(effectClip.startTimeMs, clip.timelineStartMs)
                                         val overlapEnd = minOf(effectClip.endTimeMs, clip.timelineEndMs)
@@ -5696,7 +5706,8 @@ class MainActivity : AppCompatActivity() {
                                                     glowSpread = effectClip.glowSpread,
                                                     warmth = effectClip.warmth,
                                                     startTimeUs = localStartUs,
-                                                    endTimeUs = localEndUs
+                                                    endTimeUs = localEndUs,
+                                                    effectMode = if (effectClip.effectName == "Black & White") 1f else 0f
                                                 )
                                             )
                                         }
