@@ -7099,7 +7099,9 @@ class TimelineView(
             }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
-                    if (navigationAnimator !== this@apply) return
+                    // cancel() juga memanggil onAnimationEnd; jangan biarkan animasi lama
+                    // menimpa tujuan navigasi yang lebih baru.
+                    if (!isNavigatingToClip) return
                     controller.positionMs = clip.timelineStartMs
                     controller.offsetPx = endOffset
                     controller.clampOffset()
