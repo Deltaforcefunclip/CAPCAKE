@@ -4175,7 +4175,7 @@ class MainActivity : AppCompatActivity() {
         val scaleDetector = ScaleGestureDetector(this,
             object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
                 override fun onScale(detector: ScaleGestureDetector): Boolean {
-                    previewScale = (previewScale * detector.scaleFactor).coerceIn(0.35f, 5f)
+                    videoClipManager.find(selectedVideoClipId)?.let { clip -> clip.transformScale = (clip.transformScale * detector.scaleFactor).coerceIn(0.35f, 5f) }
                     applyPreviewTransform()
                     return true
                 }
@@ -4216,11 +4216,11 @@ class MainActivity : AppCompatActivity() {
                 MotionEvent.ACTION_MOVE -> {
                     if (event.pointerCount >= 2) {
                         val currentAngle = angle(event)
-                        previewRotation += normalizeAngle(currentAngle - lastAngle)
+                        videoClipManager.find(selectedVideoClipId)?.let { clip -> clip.rotationDegrees += normalizeAngle(currentAngle - lastAngle) }
                         // Magnet rotasi ringan di kelipatan 90 derajat (lurus/datar/tegak).
-                        val nearestRightAngle = kotlin.math.round(previewRotation / 90f) * 90f
-                        if (abs(previewRotation - nearestRightAngle) <= 1.5f) {
-                            previewRotation = nearestRightAngle
+                        videoClipManager.find(selectedVideoClipId)?.let { clip ->
+                            val nearestRightAngle = kotlin.math.round(clip.rotationDegrees / 90f) * 90f
+                            if (abs(clip.rotationDegrees - nearestRightAngle) <= 1.5f) clip.rotationDegrees = nearestRightAngle
                         }
                         lastAngle = currentAngle
                         applyPreviewTransform()
@@ -4229,14 +4229,15 @@ class MainActivity : AppCompatActivity() {
                         val dx = event.x - lastX
                         val dy = event.y - lastY
                         if (abs(event.x - downX) > dp(5) || abs(event.y - downY) > dp(5)) moved = true
-                        previewTranslateX += dx
-                        previewTranslateY += dy
+                        videoClipManager.find(selectedVideoClipId)?.let { clip -> clip.transformX += dx; clip.transformY += dy }
                         // Magnet posisi dibuat ringan: hanya mengunci sangat dekat pusat.
                         val snap = dp(3).toFloat()
-                        previewMagnetVertical = abs(previewTranslateX) < snap
-                        previewMagnetHorizontal = abs(previewTranslateY) < snap
-                        if (previewMagnetVertical) previewTranslateX = 0f
-                        if (previewMagnetHorizontal) previewTranslateY = 0f
+                        videoClipManager.find(selectedVideoClipId)?.let { clip ->
+                            previewMagnetVertical = abs(clip.transformX) < snap
+                            previewMagnetHorizontal = abs(clip.transformY) < snap
+                            if (previewMagnetVertical) clip.transformX = 0f
+                            if (previewMagnetHorizontal) clip.transformY = 0f
+                        }
                         lastX = event.x
                         lastY = event.y
                         applyPreviewTransform()
@@ -4279,10 +4280,16 @@ class MainActivity : AppCompatActivity() {
         val transformEnabled = selectedPreviewRatio.isNotBlank()
         content.scaleX = if (transformEnabled) previewScale else 1f
         content.scaleY = if (transformEnabled) previewScale else 1f
-        val selectedClipRotation = videoClipManager.find(selectedVideoClipId)?.rotationDegrees ?: 0f
-        content.rotation = (if (transformEnabled) previewRotation else 0f) + selectedClipRotation
-        content.translationX = if (transformEnabled) previewTranslateX else 0f
-        content.translationY = if (transformEnabled) previewTranslateY else 0f
+        val activeClip = activeVideoClip() ?: videoClipManager.find(selectedVideoClipId)
+        val clipScale = activeClip?.transformScale ?: 1f
+        val clipRotation = activeClip?.rotationDegrees ?: 0f
+        val clipX = activeClip?.transformX ?: 0f
+        val clipY = activeClip?.transformY ?: 0f
+        content.scaleX = if (transformEnabled) clipScale else 1f
+        content.scaleY = if (transformEnabled) clipScale else 1f
+        content.rotation = (if (transformEnabled) previewRotation else 0f) + clipRotation
+        content.translationX = if (transformEnabled) previewTranslateX + clipX else 0f
+        content.translationY = if (transformEnabled) previewTranslateY + clipY else 0f
         previewRatioOverlay?.invalidate()
         if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
     }
@@ -6293,14 +6300,14 @@ class MainActivity : AppCompatActivity() {
                                         )
                                     }
 
-                                    val scale = if (hasCanvasRatio) previewScale.coerceIn(0.35f, 5f) else 1f
+                                    val scale = if (hasCanvasRatio) (previewScale * clip.transformScale).coerceIn(0.35f, 5f) else clip.transformScale
                                     val rotation = (if (hasCanvasRatio) previewRotation else 0f) + clip.rotationDegrees
                                     val radians = Math.toRadians(rotation.toDouble())
                                     val cosA = kotlin.math.cos(radians).toFloat()
                                     val sinA = kotlin.math.sin(radians).toFloat()
                                     val aspect = frameAspect.coerceAtLeast(0.0001f)
-                                    val tx = if (hasCanvasRatio) 2f * previewTranslateX / frameW else 0f
-                                    val ty = if (hasCanvasRatio) -2f * previewTranslateY / frameH else 0f
+                                    val tx = 2f * (previewTranslateX + clip.transformX) / frameW
+                                    val ty = -2f * (previewTranslateY + clip.transformY) / frameH
 
                                     val transformMatrix = Matrix().apply {
                                         setValues(
