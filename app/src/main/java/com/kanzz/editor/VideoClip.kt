@@ -3,6 +3,35 @@ package com.kanzz.editor
 import java.util.UUID
 
 /**
+ * Parameter color grading per video clip.
+ * Nilai disimpan sebagai data non-destructive dan diproses di GPU preview/export.
+ */
+data class ColorGrading(
+    val exposure: Float = 0f,
+    val contrast: Float = 0f,
+    val highlights: Float = 0f,
+    val shadows: Float = 0f,
+    val whites: Float = 0f,
+    val blacks: Float = 0f,
+    val temperature: Float = 0f,
+    val tint: Float = 0f,
+    val vibrance: Float = 0f,
+    val saturation: Float = 0f,
+    val texture: Float = 0f,
+    val clarity: Float = 0f,
+    val dehaze: Float = 0f,
+    val vignette: Float = 0f,
+    val grain: Float = 0f,
+    val sharpening: Float = 0f,
+    val noiseReduction: Float = 0f
+) {
+    val isDefault: Boolean
+        get() = listOf(exposure, contrast, highlights, shadows, whites, blacks,
+            temperature, tint, vibrance, saturation, texture, clarity, dehaze,
+            vignette, grain, sharpening, noiseReduction).all { kotlin.math.abs(it) < 0.0001f }
+}
+
+/**
  * Satu segmen timeline video yang menunjuk ke bagian tertentu dari file sumber.
  * timelineStartMs dihitung ulang oleh VideoClipManager setelah operasi edit.
  */
@@ -21,6 +50,7 @@ data class VideoClip(
     var brightness: Float = 0f,
     var contrast: Float = 1f,
     var saturation: Float = 1f
+    var colorGrading: ColorGrading = ColorGrading()
 ) {
     // Durasi pada timeline mengikuti kecepatan: 0.5x membuat klip 2 kali lebih panjang.
     val timelineDurationMs: Long
