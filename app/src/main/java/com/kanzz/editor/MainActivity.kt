@@ -6116,11 +6116,7 @@ class MainActivity : AppCompatActivity() {
                                         boxW = boxH * outputAspect
                                     }
 
-                                    // Jangan mengubah framing sumber secara otomatis saat export.
-                                    // Presentation di atas sudah membentuk kanvas rasio target dengan FIT.
-                                    // Crop hanya dipakai untuk menerapkan zoom/geser yang memang dibuat
-                                    // pengguna di preview. Koreksi berbasis ukuran playerView sebelumnya
-                                    // dapat menghasilkan scale > 1 pada pilihan "Sumber Rasio".
+                                    // Crop hanya untuk zoom/geser yang dibuat pengguna di preview.
                                     val effectiveScale = previewScale.coerceIn(1f, 20f)
 
                                     if (effectiveScale > 1.001f ||
