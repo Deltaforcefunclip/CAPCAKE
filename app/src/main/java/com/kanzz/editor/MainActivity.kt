@@ -4596,6 +4596,86 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(12), dp(10), dp(12), dp(10))
             setBackgroundColor(Color.rgb(15, 15, 15))
         }
+        // Satu baris preset di atas kolom input; item dapat digeser ke samping.
+        val savedPresets = runCatching {
+            org.json.JSONArray(
+                getSharedPreferences("capcake_text_presets", MODE_PRIVATE)
+                    .getString("items", "[]") ?: "[]"
+            )
+        }.getOrDefault(org.json.JSONArray())
+
+        if (savedPresets.length() > 0) {
+            val presetScroll = android.widget.HorizontalScrollView(this).apply {
+                isHorizontalScrollBarEnabled = false
+                overScrollMode = View.OVER_SCROLL_NEVER
+                isFillViewport = false
+            }
+            val presetRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+            }
+            for (index in 0 until savedPresets.length()) {
+                val preset = savedPresets.optJSONObject(index) ?: continue
+                val presetText = preset.optString("text", "").ifBlank { "Text" }
+                val presetFont = preset.optString("font", "Default")
+                val presetItem = TextView(this).apply {
+                    text = presetText
+                    textSize = 15f
+                    maxLines = 1
+                    ellipsize = android.text.TextUtils.TruncateAt.END
+                    gravity = Gravity.CENTER
+                    setPadding(dp(13), dp(7), dp(13), dp(7))
+                    setTextColor(preset.optInt("color", Color.WHITE))
+                    typeface = runCatching {
+                        when (presetFont) {
+                            "Serif" -> Typeface.SERIF
+                            "Monospace" -> Typeface.MONOSPACE
+                            "Sans" -> Typeface.SANS_SERIF
+                            else -> Typeface.create(presetFont, Typeface.NORMAL)
+                        }
+                    }.getOrDefault(Typeface.DEFAULT)
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(Color.rgb(34, 36, 39))
+                        cornerRadius = dp(9).toFloat()
+                        setStroke(dp(1), Color.rgb(68, 72, 76))
+                    }
+                    setOnClickListener {
+                        pushUndoSnapshot()
+                        val clip = TextClip(
+                            text = presetText,
+                            startTimeMs = currentTimelinePosition(),
+                            durationMs = 2000L
+                        ).apply {
+                            color = preset.optInt("color", Color.WHITE)
+                            fontName = presetFont
+                            scale = preset.optDouble("scale", 1.0).toFloat().coerceIn(0.2f, 6f)
+                            positionX = preset.optDouble("positionXNorm", 0.0).toFloat() *
+                                previewFrameContainer.width.coerceAtLeast(1)
+                            positionY = preset.optDouble("positionYNorm", 0.0).toFloat() *
+                                previewFrameContainer.height.coerceAtLeast(1)
+                            rotation = preset.optDouble("rotation", 0.0).toFloat()
+                            bold = preset.optBoolean("bold", true)
+                        }
+                        textClipManager.add(clip)
+                        selectedTextClipId = null
+                        activeLayerGroup = "TEXT"
+                        dialog.dismiss()
+                        refreshTextTracks()
+                        updateTextPreview()
+                        saveCurrentProject()
+                        updateToolMenu()
+                    }
+                }
+                presetRow.addView(presetItem, LinearLayout.LayoutParams(-2, dp(42)).apply {
+                    marginEnd = dp(7)
+                })
+            }
+            presetScroll.addView(presetRow, android.widget.FrameLayout.LayoutParams(-2, -1))
+            root.addView(presetScroll, LinearLayout.LayoutParams(-1, dp(50)).apply {
+                bottomMargin = dp(8)
+            })
+        }
+
         root.addView(input, LinearLayout.LayoutParams(-1, dp(82)))
 
         val actionRow = LinearLayout(this).apply {
