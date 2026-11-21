@@ -4619,27 +4619,37 @@ class MainActivity : AppCompatActivity() {
                 val preset = savedPresets.optJSONObject(index) ?: continue
                 val presetText = preset.optString("text", "").ifBlank { "Text" }
                 val presetFont = preset.optString("font", "Default")
-                val presetItem = TextView(this).apply {
-                    text = presetText
-                    textSize = 15f
-                    maxLines = 1
-                    ellipsize = android.text.TextUtils.TruncateAt.END
+                val fontLabel = when (presetFont) {
+                    "Default", "Sans", "" -> "Sans"
+                    "Serif" -> "Serif"
+                    "Monospace" -> "Monospace"
+                    else -> java.io.File(presetFont).nameWithoutExtension
+                }
+                val presetItem = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
                     gravity = Gravity.CENTER
-                    setPadding(dp(13), dp(7), dp(13), dp(7))
-                    setTextColor(preset.optInt("color", Color.WHITE))
-                    typeface = runCatching {
-                        when (presetFont) {
-                            "Serif" -> Typeface.SERIF
-                            "Monospace" -> Typeface.MONOSPACE
-                            "Sans" -> Typeface.SANS_SERIF
-                            else -> Typeface.create(presetFont, Typeface.NORMAL)
-                        }
-                    }.getOrDefault(Typeface.DEFAULT)
+                    setPadding(dp(10), dp(3), dp(10), dp(3))
                     background = android.graphics.drawable.GradientDrawable().apply {
                         setColor(Color.rgb(34, 36, 39))
                         cornerRadius = dp(9).toFloat()
                         setStroke(dp(1), Color.rgb(68, 72, 76))
                     }
+                    addView(TextView(this@MainActivity).apply {
+                        text = presetText
+                        textSize = 15f
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        gravity = Gravity.CENTER
+                        setTextColor(preset.optInt("color", Color.WHITE))
+                        typeface = getLibraryTypeface(presetFont, preset.optBoolean("bold", true))
+                    }, LinearLayout.LayoutParams(-1, 0, 1f))
+                    addView(TextView(this@MainActivity).apply {
+                        text = "FONT: $fontLabel"
+                        textSize = 9f
+                        maxLines = 1
+                        gravity = Gravity.CENTER
+                        setTextColor(Color.LTGRAY)
+                    }, LinearLayout.LayoutParams(-1, dp(13)))
                     setOnClickListener {
                         pushUndoSnapshot()
                         val clip = TextClip(
@@ -4667,12 +4677,12 @@ class MainActivity : AppCompatActivity() {
                         updateToolMenu()
                     }
                 }
-                presetRow.addView(presetItem, LinearLayout.LayoutParams(-2, dp(42)).apply {
+                presetRow.addView(presetItem, LinearLayout.LayoutParams(-2, dp(54)).apply {
                     marginEnd = dp(7)
                 })
             }
             presetScroll.addView(presetRow, android.widget.FrameLayout.LayoutParams(-2, -1))
-            root.addView(presetScroll, LinearLayout.LayoutParams(-1, dp(50)).apply {
+            root.addView(presetScroll, LinearLayout.LayoutParams(-1, dp(62)).apply {
                 bottomMargin = dp(8)
             })
         }
@@ -5175,33 +5185,45 @@ class MainActivity : AppCompatActivity() {
             }
             for (index in 0 until presets.length()) {
                 val item = presets.optJSONObject(index) ?: continue
-                val sample = TextView(this).apply {
-                    text = item.optString("text", "Text")
-                    textSize = 16f
-                    maxLines = 2
-                    ellipsize = android.text.TextUtils.TruncateAt.END
+                val presetFont = item.optString("font", "Default")
+                val fontLabel = when (presetFont) {
+                    "Default", "Sans", "" -> "Sans"
+                    "Serif" -> "Serif"
+                    "Monospace" -> "Monospace"
+                    else -> java.io.File(presetFont).nameWithoutExtension
+                }
+                val sample = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
-                    setPadding(dp(10), dp(8), dp(10), dp(8))
-                    setTextColor(item.optInt("color", Color.WHITE))
-                    typeface = runCatching {
-                        when (item.optString("font", "Default")) {
-                            "Serif" -> Typeface.SERIF
-                            "Monospace" -> Typeface.MONOSPACE
-                            "Sans" -> Typeface.SANS_SERIF
-                            else -> Typeface.create(item.optString("font", "Default"), Typeface.NORMAL)
-                        }
-                    }.getOrDefault(Typeface.DEFAULT)
+                    setPadding(dp(10), dp(6), dp(10), dp(6))
                     background = android.graphics.drawable.GradientDrawable().apply {
                         setColor(Color.rgb(28, 30, 33))
                         cornerRadius = dp(8).toFloat()
                         setStroke(dp(1), Color.rgb(52, 56, 60))
                     }
+                    addView(TextView(this@MainActivity).apply {
+                        text = item.optString("text", "Text")
+                        textSize = 16f
+                        maxLines = 1
+                        ellipsize = android.text.TextUtils.TruncateAt.END
+                        gravity = Gravity.CENTER_VERTICAL
+                        setTextColor(item.optInt("color", Color.WHITE))
+                        typeface = getLibraryTypeface(presetFont, item.optBoolean("bold", true))
+                    }, LinearLayout.LayoutParams(0, -1, 1f))
+                    addView(TextView(this@MainActivity).apply {
+                        text = "FONT: $fontLabel"
+                        textSize = 10f
+                        maxLines = 2
+                        gravity = Gravity.CENTER
+                        setTextColor(Color.LTGRAY)
+                        setPadding(dp(8), 0, 0, 0)
+                    }, LinearLayout.LayoutParams(dp(76), -1))
                     setOnClickListener {
                         val target = selectedTextClip() ?: return@setOnClickListener
                         pushUndoSnapshot()
                         target.text = item.optString("text", target.text)
                         target.color = item.optInt("color", target.color)
-                        target.fontName = item.optString("font", target.fontName)
+                        target.fontName = presetFont
                         target.scale = item.optDouble("scale", target.scale.toDouble()).toFloat().coerceIn(0.2f, 6f)
                         target.positionX = item.optDouble("positionXNorm", 0.0).toFloat() *
                             previewFrameContainer.width.coerceAtLeast(1)
