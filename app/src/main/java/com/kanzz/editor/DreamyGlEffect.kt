@@ -17,7 +17,8 @@ import androidx.media3.effect.GlShaderProgram
 class DreamyPreviewState {
     @Volatile var intensity: Float = 0f
     @Volatile var glowSpread: Float = 0.35f
-    @Volatile var warmth: Float = 0.5f
+    @Volatile var warmth: Float = 0.5
+    @Volatile var softFocus: Float = 0.35f
     @Volatile var effectMode: Float = 0f
 }
 
@@ -33,7 +34,8 @@ class DreamyGlEffect(
     private val startTimeUs: Long = 0L,
     private val endTimeUs: Long = Long.MAX_VALUE,
     private val previewState: DreamyPreviewState? = null,
-    private val effectMode: Float = 0f
+    private val effectMode: Float = 0f,
+    private val softFocus: Float = 0.35f
 ) : GlEffect {
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
@@ -42,7 +44,7 @@ class DreamyGlEffect(
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
         DreamyShaderProgram(
             context, useHdr, intensity, glowSpread, warmth,
-            startTimeUs, endTimeUs, previewState, effectMode
+            startTimeUs, endTimeUs, previewState, effectMode, softFocus
         )
 }
 
@@ -56,7 +58,8 @@ class DreamyShaderProgram(
     private val startTimeUs: Long,
     private val endTimeUs: Long,
     private val previewState: DreamyPreviewState? = null,
-    private val effectMode: Float = 0f
+    private val effectMode: Float = 0f,
+    private val softFocus: Float = 0.35f
 ) : BaseGlShaderProgram(useHdr, 1) {
 
     private val glProgram = GlProgram(
@@ -91,18 +94,21 @@ class DreamyShaderProgram(
             val liveSpread: Float
             val liveWarmth: Float
             val liveMode: Float
+            val liveSoftFocus: Float
             val active: Boolean
             if (previewState != null) {
                 liveIntensity = previewState.intensity.coerceIn(0f, 1f)
                 liveSpread = previewState.glowSpread.coerceIn(0f, 1f)
                 liveWarmth = previewState.warmth.coerceIn(0f, 1f)
                 liveMode = previewState.effectMode.coerceIn(0f, 1f)
+                liveSoftFocus = previewState.softFocus.coerceIn(0f, 1f)
                 active = liveIntensity > 0.001f
             } else {
                 liveIntensity = effectIntensity
                 liveSpread = effectSpread
                 liveWarmth = effectWarmth
                 liveMode = effectMode.coerceIn(0f, 1f)
+                liveSoftFocus = softFocus.coerceIn(0f, 1f)
                 active = presentationTimeUs >= startTimeUs && presentationTimeUs < endTimeUs
             }
 
@@ -112,6 +118,7 @@ class DreamyShaderProgram(
             glProgram.setFloatUniform("uBlurRadius", 0.001f + liveSpread * 0.014f)
             glProgram.setFloatUniform("uWarmth", liveWarmth)
             glProgram.setFloatUniform("uEffectMode", liveMode)
+            glProgram.setFloatUniform("uSoftFocus", liveSoftFocus)
             glProgram.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
             val error = GLES20.glGetError()
