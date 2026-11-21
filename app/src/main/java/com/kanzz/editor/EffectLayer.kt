@@ -20,7 +20,8 @@ data class EffectClip(
     var opacity: Float = 1f,
     var intensity: Float = 0.45f,
     var glowSpread: Float = 0.35f,
-    var warmth: Float = 0.5f
+    var warmth: Float = 0.5f,
+    var softFocus: Float = 0.35f
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
