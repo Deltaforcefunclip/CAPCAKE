@@ -3481,7 +3481,7 @@ class MainActivity : AppCompatActivity() {
                         cornerRadius = trackHeight / 2f
                     }
                     val progressTrack = android.graphics.drawable.ClipDrawable(
-                        gradientTrack, Gravity.LEFT, android.view.Gravity.HORIZONTAL_GRAVITY_MASK
+                        gradientTrack, Gravity.LEFT, android.graphics.drawable.ClipDrawable.HORIZONTAL
                     )
                     val layers = android.graphics.drawable.LayerDrawable(
                         arrayOf(trackBackground, progressTrack)
