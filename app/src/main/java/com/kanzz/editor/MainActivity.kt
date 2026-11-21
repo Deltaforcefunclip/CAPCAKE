@@ -2034,6 +2034,10 @@ class MainActivity : AppCompatActivity() {
                 // playhead bergerak ke frame pertama klip tanpa mengubah urutan klip.
                 timeline.selectClip(selectedVideoClipId)
                 if (tappedClip != null) {
+                    if (player.isPlaying) {
+                        player.pause()
+                        updatePlayButton()
+                    }
                     timeline.navigateToClipStart(tappedClip)
                 }
                 timeline.updateSelection(false)
