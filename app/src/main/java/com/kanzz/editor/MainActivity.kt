@@ -411,6 +411,11 @@ class MainActivity : AppCompatActivity() {
                 if (!player.isPlaying) updateTime()
                 syncVideoClipProperties()
                 syncAudioPlayback()
+                val motionPosition = currentTimelinePosition()
+                val motionClip = videoClipManager.clips.firstOrNull {
+                    motionPosition >= it.timelineStartMs && motionPosition < it.timelineEndMs
+                }
+                motionBlurPreviewState.intensity = motionClip?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
                 updateTextPreview(force = false)
             }
             handler.postDelayed(this, 100L)
@@ -6497,7 +6502,15 @@ class MainActivity : AppCompatActivity() {
                 dialog.dismiss()
             }
         }
-        dialog.setOnDismissListener { updateDreamyPreviewOverlay() }
+        dialog.setOnDismissListener {
+            updateDreamyPreviewOverlay()
+            // Saat preview dijeda, minta decoder mengirim ulang frame agar
+            // parameter shader terbaru dapat diterapkan pada frame diam.
+            if (!player.isPlaying && player.playbackState == Player.STATE_READY) {
+                val position = currentTimelinePosition()
+                handler.post { player.seekTo(position) }
+            }
+        }
         dialog.show()
     }
 
