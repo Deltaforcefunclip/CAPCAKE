@@ -6098,8 +6098,8 @@ class MainActivity : AppCompatActivity() {
                                     )
                                 }
 
-                                // Pemetaan FIT yang benar: satu dimensi memenuhi kanvas,
-                                // dimensi lainnya mengikuti rasio sumber.
+                                // Kanvas output mengikuti rasio proyek. Framing sumber
+                                // dibiarkan utuh kecuali pengguna memang melakukan zoom/geser.
                                 if (selectedPreviewRatio.isNotBlank()) {
                                     val ratioParts = selectedPreviewRatio.split(":")
                                     val outputAspect = ratioParts[0].toFloat() / ratioParts[1].toFloat()
@@ -6114,23 +6114,6 @@ class MainActivity : AppCompatActivity() {
                                     } else {
                                         boxH = frameH
                                         boxW = boxH * outputAspect
-                                    }
-
-                                    val videoSize = player.videoSize
-                                    val sourceAspect = if (videoSize.width > 0 && videoSize.height > 0) {
-                                        val encodedAspect = videoSize.width.toFloat() *
-                                            videoSize.pixelWidthHeightRatio /
-                                            videoSize.height.toFloat()
-                                        // VideoSize menyimpan dimensi frame encoded. Pada sumber
-                                        // portrait yang memakai rotation metadata, koreksi rasio
-                                        // sebelum menghitung FIT/Crop agar 9:16 tidak dianggap 16:9.
-                                        if (videoSize.unappliedRotationDegrees % 180 != 0) {
-                                            1f / encodedAspect.coerceAtLeast(0.0001f)
-                                        } else {
-                                            encodedAspect
-                                        }
-                                    } else {
-                                        frameAspect
                                     }
 
                                     // Jangan mengubah framing sumber secara otomatis saat export.
