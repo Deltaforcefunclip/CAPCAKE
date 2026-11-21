@@ -4596,6 +4596,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(12), dp(10), dp(12), dp(10))
             setBackgroundColor(Color.rgb(15, 15, 15))
         }
+        lateinit var dialog: androidx.appcompat.app.AlertDialog
         // Satu baris preset di atas kolom input; item dapat digeser ke samping.
         val savedPresets = runCatching {
             org.json.JSONArray(
@@ -4708,7 +4709,7 @@ class MainActivity : AppCompatActivity() {
         })
         root.addView(actionRow, LinearLayout.LayoutParams(-1, -2))
 
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(root).create()
+        dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(root).create()
         cancel.setOnClickListener { dialog.dismiss() }
         confirm.setOnClickListener {
             val value = input.text.toString().trim()
