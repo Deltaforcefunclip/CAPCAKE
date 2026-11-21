@@ -21,6 +21,8 @@ class DreamyPreviewState {
     @Volatile var softFocus: Float = 0.35f
     @Volatile var effectMode: Float = 0f
     @Volatile var colorGrading: ColorGrading = ColorGrading()
+    @Volatile var pullInZoom: Float = 1f
+    @Volatile var pullInBlur: Float = 0f
 }
 
 /**
@@ -37,16 +39,19 @@ class DreamyGlEffect(
     private val previewState: DreamyPreviewState? = null,
     private val effectMode: Float = 0f,
     private val softFocus: Float = 0.35f,
-    private val colorGrading: ColorGrading = ColorGrading()
+    private val colorGrading: ColorGrading = ColorGrading(),
+    private val pullInStartUs: Long = -1L,
+    private val pullInEndUs: Long = -1L
 ) : GlEffect {
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
-        if (previewState != null) false else (intensity <= 0.001f && colorGrading.isDefault) || endTimeUs <= startTimeUs
+        if (previewState != null) false else (intensity <= 0.001f && colorGrading.isDefault && pullInEndUs <= pullInStartUs) || (endTimeUs <= startTimeUs && pullInEndUs <= pullInStartUs)
 
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
         DreamyShaderProgram(
             context, useHdr, intensity, glowSpread, warmth,
-            startTimeUs, endTimeUs, previewState, effectMode, softFocus, colorGrading
+            startTimeUs, endTimeUs, previewState, effectMode, softFocus, colorGrading,
+            pullInStartUs, pullInEndUs
         )
 }
 
@@ -62,7 +67,9 @@ class DreamyShaderProgram(
     private val previewState: DreamyPreviewState? = null,
     private val effectMode: Float = 0f,
     private val softFocus: Float = 0.35f,
-    private val colorGrading: ColorGrading = ColorGrading()
+    private val colorGrading: ColorGrading = ColorGrading(),
+    private val pullInStartUs: Long = -1L,
+    private val pullInEndUs: Long = -1L
 ) : BaseGlShaderProgram(useHdr, 1) {
 
     private val glProgram = GlProgram(
@@ -100,6 +107,8 @@ class DreamyShaderProgram(
             val liveSoftFocus: Float
             val active: Boolean
             val grade: ColorGrading
+            val pullZoom: Float
+            val pullBlur: Float
             if (previewState != null) {
                 liveIntensity = previewState.intensity.coerceIn(0f, 1f)
                 liveSpread = previewState.glowSpread.coerceIn(0f, 1f)
@@ -107,6 +116,8 @@ class DreamyShaderProgram(
                 liveMode = previewState.effectMode.coerceIn(0f, 2f)
                 liveSoftFocus = previewState.softFocus.coerceIn(0f, 1f)
                 grade = previewState.colorGrading
+                pullZoom = previewState.pullInZoom.coerceIn(1f, 2f)
+                pullBlur = previewState.pullInBlur.coerceIn(0f, 1f)
                 active = liveIntensity > 0.001f
             } else {
                 liveIntensity = effectIntensity
@@ -115,12 +126,23 @@ class DreamyShaderProgram(
                 liveMode = effectMode.coerceIn(0f, 0f + 2f)
                 liveSoftFocus = softFocus.coerceIn(0f, 1f)
                 grade = colorGrading
+                if (pullInEndUs > pullInStartUs && presentationTimeUs >= pullInStartUs && presentationTimeUs < pullInEndUs) {
+                    val progress = ((presentationTimeUs - pullInStartUs).toFloat() / (pullInEndUs - pullInStartUs).toFloat()).coerceIn(0f, 1f)
+                    val eased = 1f - (1f - progress) * (1f - progress) * (1f - progress)
+                    pullZoom = 1.45f - 0.45f * eased
+                    pullBlur = 1f - eased
+                } else {
+                    pullZoom = 1f
+                    pullBlur = 0f
+                }
                 active = presentationTimeUs >= startTimeUs && presentationTimeUs < endTimeUs
             }
 
             glProgram.use()
             glProgram.setSamplerTexIdUniform("sTexture", inputTexId, 0)
             glProgram.setFloatUniform("uIntensity", if (active) liveIntensity else 0f)
+            glProgram.setFloatUniform("uPullInZoom", pullZoom)
+            glProgram.setFloatUniform("uPullInBlur", pullBlur)
             glProgram.setFloatUniform("uHasColorGrade", if (grade.isDefault) 0f else 1f)
             glProgram.setFloatUniform("uBlurRadius", 0.001f + liveSpread * 0.014f)
             glProgram.setFloatUniform("uWarmth", liveWarmth)
