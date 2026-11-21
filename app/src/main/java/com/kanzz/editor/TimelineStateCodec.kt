@@ -74,7 +74,7 @@ object TimelineStateCodec {
                     filterName = item.optString("filterName", "None"),
                     brightness = item.optDouble("brightness", 0.0).toFloat(),
                     contrast = item.optDouble("contrast", 1.0).toFloat(),
-                    saturation = item.optDouble("saturation", 1.0).toFloat()
+                    saturation = item.optDouble("saturation", 1.0).toFloat(),
                     colorGrading = item.optJSONObject("colorGrading")?.let { grade ->
                         ColorGrading(
                             exposure = grade.optDouble("exposure", 0.0).toFloat(),
