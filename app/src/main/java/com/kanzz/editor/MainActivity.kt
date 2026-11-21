@@ -1390,14 +1390,13 @@ class MainActivity : AppCompatActivity() {
         fontPickerAnchorView = previewFrame
         previewFrameContainer = previewFrame
 
-        playerView = PlayerView(this).apply {
-
+        // TextureView diperlukan agar rotasi dan transformasi parent benar-benar
+        // diterapkan pada frame video, bukan hanya pada bingkai seleksi.
+        playerView = (android.view.LayoutInflater.from(this)
+            .inflate(R.layout.preview_player_view, previewFrame, false) as PlayerView).apply {
             useController = false
             setBackgroundColor(Color.BLACK)
-
-            resizeMode =
-                androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-
+            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
             setKeepContentOnPlayerReset(true)
         }
 
@@ -1541,7 +1540,10 @@ class MainActivity : AppCompatActivity() {
                 canvas.restore()
             }
         }.apply {
-            isClickable = true
+            // Jangan konsumsi sentuhan di seluruh area preview.
+            // Hanya pegangan rotasi yang mengambil gesture; sentuhan lain
+            // diteruskan ke ratioOverlay untuk drag dan pinch zoom.
+            isClickable = false
             isFocusable = false
             var rotatingClipId: String? = null
             var rotationStart = 0f
