@@ -89,7 +89,7 @@ void main() {
             float ageFrames=min(float(i+1),uHistoryCount);
             float ageIndex=ageFrames-1.0;
             float t=(float(i)+0.5)/max(uTimes,1.0);
-            vec2 backwardCoord=clamp(vTextureCoord-flowUv*(ageFrames*(1.0-t)*uBlur),0.0,1.0);
+            vec2 backwardCoord=clamp(vTextureCoord-flowUv*(ageFrames*t*uBlur),0.0,1.0);
             vec2 forwardCoord=clamp(vTextureCoord-flowUv*(ageFrames*t*uBlur),0.0,1.0);
             vec3 sampleColor;
 
