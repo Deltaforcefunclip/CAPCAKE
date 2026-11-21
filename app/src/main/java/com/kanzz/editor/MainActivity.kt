@@ -1517,11 +1517,11 @@ class MainActivity : AppCompatActivity() {
                 val halfH = boxH / 2f
                 canvas.save()
                 canvas.translate(
-                    baseCx + if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f,
-                    baseCy + if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
+                    baseCx + if (selectedPreviewRatio.isNotBlank()) previewTranslateX + selected.transformX else selected.transformX,
+                    baseCy + if (selectedPreviewRatio.isNotBlank()) previewTranslateY + selected.transformY else selected.transformY
                 )
                 canvas.rotate(previewRotation + selected.rotationDegrees)
-                if (selectedPreviewRatio.isNotBlank()) canvas.scale(previewScale, previewScale)
+                canvas.scale(selected.transformScale * if (selectedPreviewRatio.isNotBlank()) previewScale else 1f, selected.transformScale * if (selectedPreviewRatio.isNotBlank()) previewScale else 1f)
                 canvas.drawRect(-halfW, -halfH, halfW, halfH, outline)
                 val handleRadius = dp(4).toFloat()
                 arrayOf(
@@ -1560,11 +1560,11 @@ class MainActivity : AppCompatActivity() {
                 val boxH = (contentFrame?.height ?: 0).takeIf { it > 0 }?.toFloat() ?: height.toFloat()
                 val cx = (if (contentFrame != null && contentFrame.width > 0)
                     playerLocation[0] - overlayLocation[0] + contentFrame.left + boxW / 2f else width / 2f) +
-                    if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f
+                    (if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f) + clip.transformX
                 val cy = (if (contentFrame != null && contentFrame.height > 0)
                     playerLocation[1] - overlayLocation[1] + contentFrame.top + boxH / 2f else height / 2f) +
-                    if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f
-                val factor = if (selectedPreviewRatio.isNotBlank()) previewScale else 1f
+                    (if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f) + clip.transformY
+                val factor = clip.transformScale * if (selectedPreviewRatio.isNotBlank()) previewScale else 1f
                 val totalAngle = Math.toRadians((previewRotation + clip.rotationDegrees).toDouble())
                 val cosA = kotlin.math.cos(totalAngle).toFloat()
                 val sinA = kotlin.math.sin(totalAngle).toFloat()
@@ -1606,7 +1606,7 @@ class MainActivity : AppCompatActivity() {
                             val ddy = event.y - nearestCorner.second
                             if (kotlin.math.sqrt(ddx * ddx + ddy * ddy) <= dp(26)) {
                                 resizingClipId = clip.id
-                                resizeStartScale = previewScale
+                                resizeStartScale = clip.transformScale
                                 resizeStartDistance = kotlin.math.sqrt(
                                     (event.x - cx) * (event.x - cx) + (event.y - cy) * (event.y - cy)
                                 ).coerceAtLeast(1f)
@@ -1622,7 +1622,7 @@ class MainActivity : AppCompatActivity() {
                             val distance = kotlin.math.sqrt(
                                 (event.x - cx) * (event.x - cx) + (event.y - cy) * (event.y - cy)
                             )
-                            previewScale = (resizeStartScale * distance / resizeStartDistance).coerceIn(0.35f, 5f)
+                            clip.transformScale = (resizeStartScale * distance / resizeStartDistance).coerceIn(0.35f, 5f)
                             applyPreviewTransform()
                             return@setOnTouchListener true
                         }
