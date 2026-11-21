@@ -3223,6 +3223,7 @@ class MainActivity : AppCompatActivity() {
         dreamyPreviewState.intensity = strength
         dreamyPreviewState.glowSpread = activeEffect?.glowSpread?.coerceIn(0f, 1f) ?: 0.35f
         dreamyPreviewState.warmth = activeEffect?.warmth?.coerceIn(0f, 1f) ?: 0.5f
+        dreamyPreviewState.softFocus = activeEffect?.softFocus?.coerceIn(0f, 1f) ?: 0.35f
         dreamyPreviewState.effectMode = if (activeEffect?.effectName == "Black & White") 1f else 0f
 
         // Tidak memakai tint overlay; frame preview diproses oleh shader GPU.
@@ -3350,9 +3351,11 @@ class MainActivity : AppCompatActivity() {
         val oldIntensity = clip.intensity
         val oldSpread = clip.glowSpread
         val oldWarmth = clip.warmth
+        val oldSoftFocus = clip.softFocus
         addSlider("Intensity", clip.intensity) { clip.intensity = it }
         addSlider("Glow Spread", clip.glowSpread) { clip.glowSpread = it }
         addSlider("Tone / Warmth", clip.warmth) { clip.warmth = it }
+        addSlider("Soft Focus / Blur", clip.softFocus) { clip.softFocus = it }
         val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setView(panel).setNegativeButton("BATAL", null)
             .setPositiveButton("SELESAI", null).create()
@@ -3368,6 +3371,7 @@ class MainActivity : AppCompatActivity() {
                     clip.intensity = oldIntensity
                     clip.glowSpread = oldSpread
                     clip.warmth = oldWarmth
+                    clip.softFocus = oldSoftFocus
                     updateDreamyPreviewOverlay()
                     dialog.dismiss()
                 }
@@ -4495,7 +4499,7 @@ class MainActivity : AppCompatActivity() {
                 put("startTimeMs", clip.startTimeMs); put("durationMs", clip.durationMs)
                 put("trackIndex", clip.trackIndex); put("opacity", clip.opacity.toDouble())
                 put("intensity", clip.intensity.toDouble()); put("glowSpread", clip.glowSpread.toDouble())
-                put("warmth", clip.warmth.toDouble())
+                put("warmth", clip.warmth.toDouble()); put("softFocus", clip.softFocus.toDouble())
             })
         }
         return array.toString()
@@ -4514,7 +4518,8 @@ class MainActivity : AppCompatActivity() {
                     trackIndex = item.optInt("trackIndex", 0), opacity = item.optDouble("opacity", 1.0).toFloat(),
                     intensity = item.optDouble("intensity", 0.45).toFloat(),
                     glowSpread = item.optDouble("glowSpread", 0.35).toFloat(),
-                    warmth = item.optDouble("warmth", 0.5).toFloat()
+                    warmth = item.optDouble("warmth", 0.5).toFloat(),
+                    softFocus = item.optDouble("softFocus", 0.35).toFloat()
                 ))
             }
             effectClipManager.compactLanes()
@@ -5707,7 +5712,8 @@ class MainActivity : AppCompatActivity() {
                                                     warmth = effectClip.warmth,
                                                     startTimeUs = localStartUs,
                                                     endTimeUs = localEndUs,
-                                                    effectMode = if (effectClip.effectName == "Black & White") 1f else 0f
+                                                    effectMode = if (effectClip.effectName == "Black & White") 1f else 0f,
+                                                    softFocus = effectClip.softFocus
                                                 )
                                             )
                                         }
