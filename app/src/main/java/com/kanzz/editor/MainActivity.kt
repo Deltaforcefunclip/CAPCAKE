@@ -4026,6 +4026,7 @@ class MainActivity : AppCompatActivity() {
         }
         root.addView(actions)
         dialog.setContentView(root)
+        dialog.window?.windowAnimations = R.style.CapcakeBottomSheetAnimation
         dialog.setOnShowListener {
             dialog.window?.setBackgroundDrawableResource(android.R.color.transparent)
             dialog.window?.let { window ->
