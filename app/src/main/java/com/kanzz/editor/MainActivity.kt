@@ -3023,6 +3023,13 @@ class MainActivity : AppCompatActivity() {
 
     /** Memetakan waktu timeline ke grup playback dan offset sumber yang benar. */
     private fun seekTimelinePosition(positionMs: Long) {
+        // ExoPlayer dapat tetap menyimpan playWhenReady=true setelah mencapai akhir.
+        // Pause dahulu agar seek kembali dari STATE_ENDED tidak memulai video otomatis.
+        if (player.playbackState == Player.STATE_ENDED) {
+            player.pause()
+            recordPlaybackDiagnostic("SEEK_FROM_ENDED paused=true target=${positionMs.coerceAtLeast(0L)}ms")
+        }
+
         if (videoClipManager.clips.isEmpty()) {
             player.seekTo(positionMs.coerceAtLeast(0L))
             return
