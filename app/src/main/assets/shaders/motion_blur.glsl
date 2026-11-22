@@ -18,7 +18,10 @@ float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
 // Estimate the displacement of a moving detail from the previous frame
 // into the current frame. The returned vector is in pixel units.
-vec2 estimateFlow(vec2 uv, sampler2D previousFrame) {
+// Lucas-Kanade flow with a texture-structure confidence score.
+// Flat areas and single-direction edges are rejected: their motion estimate
+// is ambiguous and was the main source of patchy/blotchy trails.
+vec3 estimateFlow(vec2 uv, sampler2D previousFrame) {
     float xx=0.0, yy=0.0, xy=0.0, xt=0.0, yt=0.0;
     for (int y=-2; y<=2; y++) {
         for (int x=-2; x<=2; x++) {
@@ -41,6 +44,11 @@ vec2 estimateFlow(vec2 uv, sampler2D previousFrame) {
         }
     }
 
+    float trace=xx+yy;
+    float discriminant=sqrt(max((xx-yy)*(xx-yy)+4.0*xy*xy,0.0));
+    float minEigen=0.5*(trace-discriminant);
+    float structureConfidence=smoothstep(0.00035,0.006,minEigen);
+
     float a=xx+0.00001;
     float c=yy+0.00001;
     float det=a*c-xy*xy;
@@ -50,10 +58,17 @@ vec2 estimateFlow(vec2 uv, sampler2D previousFrame) {
         flow.y=-(-xy*xt+a*yt)/det;
     }
     float magnitude=length(flow);
-    if(magnitude>18.0) flow*=18.0/magnitude;
-    return flow;
-}
+    if(magnitude>14.0) flow*=14.0/magnitude;
 
+    // Reject vectors that do not actually explain the temporal brightness
+    // change at the warped location (occlusions / unrelated texture changes).
+    vec2 warped=clamp(uv-flow*uTexelSize,0.0,1.0);
+    float nowCenter=luma(texture2D(sTexture,uv).rgb);
+    float previousWarped=luma(texture2D(previousFrame,warped).rgb);
+    float residual=abs(nowCenter-previousWarped);
+    float consistencyConfidence=1.0-smoothstep(0.035,0.18,residual);
+    return vec3(flow,structureConfidence*consistencyConfidence);
+}
 vec4 historySample(float ageIndex, vec2 coord) {
     if(ageIndex<0.5) return texture2D(uHistory0,coord);
     if(ageIndex<1.5) return texture2D(uHistory1,coord);
@@ -72,9 +87,10 @@ void main() {
 
     // Use one stable adjacent-frame motion estimate. Mixing estimates from
     // different temporal baselines made the trail length inconsistent.
-    vec2 flow=estimateFlow(vTextureCoord,uHistory0);
+    vec3 flowEstimate=estimateFlow(vTextureCoord,uHistory0);
+    vec2 flow=flowEstimate.xy;
     float flowLength=length(flow);
-    float confidence=smoothstep(0.025,0.65,flowLength);
+    float confidence=flowEstimate.z*smoothstep(0.025,0.65,flowLength);
     if(confidence<=0.001) {
         gl_FragColor=current;
         return;
