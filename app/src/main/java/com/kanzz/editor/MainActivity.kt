@@ -246,6 +246,15 @@ class MainActivity : AppCompatActivity() {
             )
         }
 
+        override fun onVideoDecoderReleased(
+            eventTime: AnalyticsListener.EventTime,
+            decoderName: String
+        ) {
+            recordPlaybackDiagnostic(
+                "DECODER_RELEASE item=${eventTime.windowIndex} name=$decoderName position=${eventTime.eventPlaybackPositionMs}ms"
+            )
+        }
+
         override fun onVideoInputFormatChanged(
             eventTime: AnalyticsListener.EventTime,
             format: androidx.media3.common.Format,
@@ -588,6 +597,39 @@ class MainActivity : AppCompatActivity() {
             )
             // Preload awal sengaja tidak diaktifkan untuk pengujian frame drop.
             addAnalyticsListener(playbackAnalyticsListener)
+            addListener(object : Player.Listener {
+                override fun onPlaybackStateChanged(state: Int) {
+                    recordPlaybackDiagnostic(
+                        "PLAYER_STATE state=$state playWhenReady=$playWhenReady isPlaying=$isPlaying " +
+                            "item=$currentMediaItemIndex position=${currentPosition}ms"
+                    )
+                }
+
+                override fun onIsPlayingChanged(isPlaying: Boolean) {
+                    recordPlaybackDiagnostic(
+                        "IS_PLAYING value=$isPlaying playWhenReady=$playWhenReady state=$playbackState " +
+                            "item=$currentMediaItemIndex position=${currentPosition}ms"
+                    )
+                }
+
+                override fun onPositionDiscontinuity(
+                    oldPosition: Player.PositionInfo,
+                    newPosition: Player.PositionInfo,
+                    reason: Int
+                ) {
+                    recordPlaybackDiagnostic(
+                        "POSITION_JUMP reason=$reason fromItem=${oldPosition.mediaItemIndex} " +
+                            "from=${oldPosition.positionMs}ms toItem=${newPosition.mediaItemIndex} " +
+                            "to=${newPosition.positionMs}ms playWhenReady=$playWhenReady state=$playbackState"
+                    )
+                }
+
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    recordPlaybackDiagnostic(
+                        "PLAYER_ERROR code=${error.errorCodeName} message=${error.message}"
+                    )
+                }
+            })
         }
 
         previewQualityShortSide = prefs.getInt("preview_quality_short_side", 720)
@@ -3023,6 +3065,11 @@ class MainActivity : AppCompatActivity() {
 
     /** Memetakan waktu timeline ke grup playback dan offset sumber yang benar. */
     private fun seekTimelinePosition(positionMs: Long) {
+        recordPlaybackDiagnostic(
+            "SEEK_REQUEST target=${positionMs.coerceAtLeast(0L)}ms state=${player.playbackState} " +
+                "playWhenReady=${player.playWhenReady} isPlaying=${player.isPlaying} " +
+                "item=${player.currentMediaItemIndex} position=${player.currentPosition}ms"
+        )
         // ExoPlayer dapat tetap menyimpan playWhenReady=true setelah mencapai akhir.
         // Pause dahulu agar seek kembali dari STATE_ENDED tidak memulai video otomatis.
         if (player.playbackState == Player.STATE_ENDED) {
