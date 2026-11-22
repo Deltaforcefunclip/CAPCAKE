@@ -8659,8 +8659,7 @@ class MainActivity : AppCompatActivity() {
             val encoderFactory = DefaultEncoderFactory.Builder(this)
                 // Izinkan Media3 memilih konfigurasi encoder yang didukung perangkat,
                 // termasuk penyesuaian resolusi bila ukuran yang diminta tidak tersedia.
-                .setEnableFallback(true)
-                .setEnableFormatFallback(true)
+.setEnableFallback(true)
                 .build()
             val transformer = Transformer.Builder(this)
                 .setEncoderFactory(encoderFactory)
