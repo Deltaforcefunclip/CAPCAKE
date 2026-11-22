@@ -31,6 +31,10 @@ data class OverlayVideoClip(
     var chromaKeyThreshold: Float = 0.22f,
     var chromaKeySoftness: Float = 0.08f,
     var volume: Float = 1f,
+    var cropLeft: Float = 0f,
+    var cropTop: Float = 0f,
+    var cropRight: Float = 0f,
+    var cropBottom: Float = 0f,
     var videoWidth: Int = 0,
     var videoHeight: Int = 0
 ) {
@@ -101,6 +105,8 @@ object OverlayVideoCodec {
                 put("chromaKeyEnabled", clip.chromaKeyEnabled); put("chromaKeyColor", clip.chromaKeyColor)
                 put("chromaKeyThreshold", clip.chromaKeyThreshold.toDouble()); put("chromaKeySoftness", clip.chromaKeySoftness.toDouble())
                 put("volume", clip.volume.toDouble())
+                put("cropLeft", clip.cropLeft.toDouble()); put("cropTop", clip.cropTop.toDouble())
+                put("cropRight", clip.cropRight.toDouble()); put("cropBottom", clip.cropBottom.toDouble())
                 put("videoWidth", clip.videoWidth); put("videoHeight", clip.videoHeight)
             })
         }
@@ -133,6 +139,10 @@ object OverlayVideoCodec {
                     chromaKeyThreshold = o.optDouble("chromaKeyThreshold", 0.22).toFloat().coerceIn(0.01f, 1f),
                     chromaKeySoftness = o.optDouble("chromaKeySoftness", 0.08).toFloat().coerceIn(0.001f, 0.5f),
                     volume = o.optDouble("volume", 1.0).toFloat().coerceIn(0f, 2f),
+                    cropLeft = o.optDouble("cropLeft", 0.0).toFloat().coerceIn(0f, 0.95f),
+                    cropTop = o.optDouble("cropTop", 0.0).toFloat().coerceIn(0f, 0.95f),
+                    cropRight = o.optDouble("cropRight", 0.0).toFloat().coerceIn(0f, 0.95f),
+                    cropBottom = o.optDouble("cropBottom", 0.0).toFloat().coerceIn(0f, 0.95f),
                     videoWidth = o.optInt("videoWidth", 0).coerceAtLeast(0),
                     videoHeight = o.optInt("videoHeight", 0).coerceAtLeast(0)
                 ))
