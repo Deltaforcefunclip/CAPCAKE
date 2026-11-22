@@ -6587,7 +6587,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun motionBlurCacheFile(clip: VideoClip): File {
         val identity = listOf(
-            "motion_blur_streak_v2", clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
+            "motion_blur_streak_v3", clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
             clip.motionBlurIntensity, clip.motionBlurBlend,
             clip.motionBlurDirection, clip.motionBlurTimes
         ).joinToString("|")
