@@ -6855,6 +6855,21 @@ class MainActivity : AppCompatActivity() {
         }
         content.addView(timesGroup)
 
+        val rifeTestStatus = TextView(this).apply {
+            text = "Mesin RIFE belum diuji."
+            setTextColor(Color.LTGRAY)
+            textSize = 11f
+            setPadding(0, dp(8), 0, dp(2))
+        }
+        val rifeTestButton = Button(this).apply {
+            text = "UJI MESIN RIFE"
+            setTextColor(Color.BLACK)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(green)
+        }
+        content.addView(rifeTestButton, LinearLayout.LayoutParams(-1, dp(44)))
+        content.addView(rifeTestStatus)
+        rifeTestButton.setOnClickListener { runRifeDiagnosticTest(clip, rifeTestButton, rifeTestStatus) }
+
         fun selectedTimes(): Int {
             val index = (0 until timesGroup.childCount).firstOrNull { i ->
                 (timesGroup.getChildAt(i) as? android.widget.RadioButton)?.isChecked == true
@@ -6954,6 +6969,111 @@ class MainActivity : AppCompatActivity() {
             }
         }
         dialog.show()
+    }
+
+    private fun runRifeDiagnosticTest(clip: VideoClip, button: Button, status: TextView) {
+        if (!button.isEnabled) return
+        button.isEnabled = false
+        status.text = "Menyiapkan model RIFE v4.6..."
+        val testDir = File(cacheDir, "rife_diagnostic").apply { mkdirs() }
+        val inputA = File(testDir, "input_a.jpg")
+        val inputB = File(testDir, "input_b.jpg")
+        val output = File(testDir, "interpolated.jpg")
+        Thread {
+            var resultText = ""
+            var success = false
+            var retriever: MediaMetadataRetriever? = null
+            try {
+                val modelDir = RifeModelInstaller.install(this)
+                runOnUiThread { status.text = "Model siap. Membaca frame sumber..." }
+                retriever = MediaMetadataRetriever()
+                retriever.setDataSource(this, Uri.parse(clip.sourceUri))
+                val offset = (clip.durationMs / 3L).coerceIn(40L, 500L)
+                val firstMs = (clip.sourceStartMs + offset).coerceAtLeast(0L)
+                val secondMs = (firstMs + 100L).coerceAtMost(
+                    (clip.sourceStartMs + clip.durationMs - 1L).coerceAtLeast(firstMs + 1L)
+                )
+                fun saveFrame(timeMs: Long, target: File) {
+                    val original = retriever?.getFrameAtTime(
+                        timeMs * 1000L,
+                        MediaMetadataRetriever.OPTION_CLOSEST
+                    ) ?: throw IllegalStateException("Frame video tidak bisa dibaca.")
+                    val scale = min(1f, 640f / max(original.width, original.height).toFloat())
+                    val resized = if (scale < 1f) Bitmap.createScaledBitmap(
+                        original,
+                        (original.width * scale).toInt().coerceAtLeast(1),
+                        (original.height * scale).toInt().coerceAtLeast(1),
+                        true
+                    ) else original
+                    target.outputStream().use { stream ->
+                        if (!resized.compress(Bitmap.CompressFormat.JPEG, 95, stream)) {
+                            throw IllegalStateException("Gagal menyimpan frame uji.")
+                        }
+                    }
+                    if (resized !== original) resized.recycle()
+                    original.recycle()
+                }
+                saveFrame(firstMs, inputA)
+                saveFrame(secondMs, inputB)
+                retriever.release()
+                retriever = null
+                runOnUiThread { status.text = "Memeriksa GPU Vulkan dan memuat RIFE..." }
+                val gpuInfo = try { RifeNative.gpuInfo() } catch (e: Throwable) {
+                    "Info GPU gagal: " + (e.message ?: e.javaClass.simpleName)
+                }
+                val modes = listOf(0 to "GPU Vulkan normal", 1 to "GPU Vulkan aman",
+                    2 to "CPU aman FP32", 3 to "CPU cepat FP16")
+                val attempts = mutableListOf<String>()
+                for ((mode, label) in modes) {
+                    runOnUiThread { status.text = "Menguji " + label + "..." }
+                    output.delete()
+                    val started = SystemClock.elapsedRealtime()
+                    val loaded = try { RifeNative.initModel(modelDir.absolutePath, mode) } catch (e: Throwable) {
+                        attempts += label + ": gagal memuat (" + (e.message ?: e.javaClass.simpleName) + ")"
+                        false
+                    }
+                    if (!loaded) {
+                        if (attempts.none { it.startsWith(label + ":") }) attempts += label + ": model gagal dimuat"
+                        continue
+                    }
+                    val inferred = try {
+                        RifeNative.interpolate(inputA.absolutePath, inputB.absolutePath, 0.5f, output.absolutePath)
+                    } catch (e: Throwable) {
+                        attempts += label + ": inferensi error (" + (e.message ?: e.javaClass.simpleName) + ")"
+                        false
+                    }
+                    val elapsed = SystemClock.elapsedRealtime() - started
+                    if (inferred && output.isFile && output.length() > 1024L) {
+                        success = true
+                        attempts += label + ": BERHASIL, " + elapsed + "ms"
+                        attempts += "Output: " + (output.length() / 1024L) + " KB"
+                        attempts += "Validasi: " + RifeNative.lastInfo()
+                        break
+                    } else {
+                        attempts += label + ": inferensi belum menghasilkan gambar valid (" + elapsed + "ms)"
+                    }
+                    try { RifeNative.release() } catch (_: Throwable) {}
+                }
+                resultText = (if (success) "RIFE AKTIF" else "RIFE BELUM BERHASIL") +
+                    "\n\nGPU: " + gpuInfo + "\n\n" + attempts.joinToString("\n") +
+                    "\nFrame AI valid: " + RifeNative.goodCount() +
+                    ", fallback: " + RifeNative.badCount()
+            } catch (e: Throwable) {
+                resultText = "Uji RIFE gagal: " + (e.message ?: e.javaClass.simpleName)
+            } finally {
+                try { retriever?.release() } catch (_: Throwable) {}
+                try { RifeNative.release() } catch (_: Throwable) {}
+                runOnUiThread {
+                    button.isEnabled = true
+                    status.text = if (success) "RIFE berhasil menjalankan interpolasi." else "Pengujian RIFE belum berhasil."
+                    androidx.appcompat.app.AlertDialog.Builder(this)
+                        .setTitle("Hasil Uji RIFE")
+                        .setMessage(resultText)
+                        .setPositiveButton("TUTUP", null)
+                        .show()
+                }
+            }
+        }.start()
     }
 
     private fun showVideoClipOpacity(clip: VideoClip) {
