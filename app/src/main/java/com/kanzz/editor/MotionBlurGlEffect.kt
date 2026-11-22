@@ -67,20 +67,8 @@ private class MotionBlurShaderProgram(
     override fun configure(inputWidth: Int, inputHeight: Int): Size {
         frameWidth = inputWidth.coerceAtLeast(1)
         frameHeight = inputHeight.coerceAtLeast(1)
+        // History texture dibuat hanya saat Motion Blur benar-benar aktif.
         releaseHistory()
-        GLES20.glGenTextures(historyTextures.size, historyTextures, 0)
-        historyTextures.forEach { texture ->
-            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
-            GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, frameWidth, frameHeight, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
-        }
-        val framebuffers = IntArray(1)
-        GLES20.glGenFramebuffers(1, framebuffers, 0)
-        historyFramebuffer = framebuffers[0]
-        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
         return Size(frameWidth, frameHeight)
     }
 
@@ -98,14 +86,22 @@ private class MotionBlurShaderProgram(
             val sampleCount = (previewState?.times ?: fixedTimes).let {
                 if (it == 1 || it == 2 || it == 4 || it == 6) it else 4
             }
+            val effectActive = amount > 0.001f && mixAmount > 0.001f
+            if (effectActive) {
+                ensureHistoryAllocated()
+            } else {
+                historyCount = 0
+                historyWriteIndex = 0
+                lastPresentationTimeUs = Long.MIN_VALUE
+            }
 
             glProgram.use()
             glProgram.setSamplerTexIdUniform("sTexture", inputTexId, 0)
             // Only uHistory0 is active in the current streak shader.
             // Binding optimized-out uniforms can fail on some GLES drivers.
-            val previousTexture = if (historyCount > 0) {
+            val previousTexture = if (effectActive && historyCount > 0) {
                 historyTextures[(historyWriteIndex - 1 + historyTextures.size) % historyTextures.size]
-            } else historyTextures[0]
+            } else inputTexId
             glProgram.setSamplerTexIdUniform("uHistory0", previousTexture, 1)
             glProgram.setFloatsUniform("uTexelSize", floatArrayOf(1f / frameWidth, 1f / frameHeight))
             glProgram.setFloatUniform("uBlur", amount)
@@ -116,8 +112,10 @@ private class MotionBlurShaderProgram(
             glProgram.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
 
-            captureInputFrame(inputTexId)
-            lastPresentationTimeUs = presentationTimeUs
+            if (effectActive) {
+                captureInputFrame(inputTexId)
+                lastPresentationTimeUs = presentationTimeUs
+            }
         } catch (e: VideoFrameProcessingException) {
             Log.e("CAPCAKE_MOTION_BLUR", "VideoFrameProcessingException at $presentationTimeUs us", e)
             throw e
@@ -125,6 +123,27 @@ private class MotionBlurShaderProgram(
             Log.e("CAPCAKE_MOTION_BLUR", "drawFrame failed at $presentationTimeUs us", e)
             throw VideoFrameProcessingException(e, presentationTimeUs)
         }
+    }
+
+    private fun ensureHistoryAllocated() {
+        if (historyTextures.all { it != 0 } && historyFramebuffer != 0) return
+        releaseHistory()
+        GLES20.glGenTextures(historyTextures.size, historyTextures, 0)
+        historyTextures.forEach { texture ->
+            GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, texture)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_S, GLES20.GL_CLAMP_TO_EDGE)
+            GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_WRAP_T, GLES20.GL_CLAMP_TO_EDGE)
+            GLES20.glTexImage2D(
+                GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA,
+                frameWidth, frameHeight, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null
+            )
+        }
+        val framebuffers = IntArray(1)
+        GLES20.glGenFramebuffers(1, framebuffers, 0)
+        historyFramebuffer = framebuffers[0]
+        GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
     }
 
     private fun captureInputFrame(inputTexId: Int) {
