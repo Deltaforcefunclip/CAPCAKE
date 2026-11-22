@@ -1617,6 +1617,8 @@ class MainActivity : AppCompatActivity() {
                     ) {
                         clip.videoWidth = width
                         clip.videoHeight = height
+                        // Perbarui ukuran PlayerView overlay sesuai rasio video yang benar.
+                        applyOverlayPreviewTransform(clip)
                         overlaySelectionOverlay?.postInvalidateOnAnimation()
                         recordPlaybackDiagnostic("OVERLAY_VIDEO_SIZE clip=" + clip.id.take(8) + " size=" + width + "x" + height)
                     }
@@ -4859,6 +4861,34 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
         overlayPreviewPlayerView?.let { view ->
+            // PlayerView overlay sebelumnya memenuhi kotak preview 1:1.
+            // Ukur ulang wadahnya agar mengikuti rasio sumber video, lalu
+            // biarkan RESIZE_MODE_FIT menangani ukuran frame di dalamnya.
+            val parentView = view.parent as? View
+            val parentWidth = parentView?.width ?: 0
+            val parentHeight = parentView?.height ?: 0
+            val videoWidth = clip.videoWidth
+            val videoHeight = clip.videoHeight
+            if (parentWidth > 0 && parentHeight > 0 && videoWidth > 0 && videoHeight > 0) {
+                val aspect = videoWidth.toFloat() / videoHeight.toFloat()
+                val fittedWidth: Int
+                val fittedHeight: Int
+                if (aspect >= parentWidth.toFloat() / parentHeight.toFloat()) {
+                    fittedWidth = parentWidth
+                    fittedHeight = (parentWidth / aspect).toInt().coerceAtLeast(1)
+                } else {
+                    fittedHeight = parentHeight
+                    fittedWidth = (parentHeight * aspect).toInt().coerceAtLeast(1)
+                }
+                val params = view.layoutParams as? FrameLayout.LayoutParams
+                if (params == null || params.width != fittedWidth || params.height != fittedHeight ||
+                    params.gravity != Gravity.CENTER
+                ) {
+                    view.layoutParams = FrameLayout.LayoutParams(
+                        fittedWidth, fittedHeight, Gravity.CENTER
+                    )
+                }
+            }
             view.pivotX = view.width / 2f
             view.pivotY = view.height / 2f
             view.scaleX = clip.transformScale.coerceIn(0.2f, 4f)
