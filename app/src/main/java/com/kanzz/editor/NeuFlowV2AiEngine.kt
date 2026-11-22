@@ -20,7 +20,11 @@ data class AiMotionField(
     val width: Int,
     val height: Int,
     val x: FloatArray,
-    val y: FloatArray
+    val y: FloatArray,
+    val meanMagnitude: Float,
+    val maxMagnitude: Float,
+    val activeRatio: Float,
+    val inferenceMs: Long
 )
 
 /**
@@ -126,6 +130,7 @@ class NeuFlowV2AiEngine(model: File) : Closeable {
     }
 
     fun estimate(previous: Bitmap, current: Bitmap): AiMotionField {
+        val inferenceStartedNs = System.nanoTime()
         require(previous.width == current.width && previous.height == current.height) {
             "Ukuran frame harus sama"
         }
@@ -209,11 +214,25 @@ class NeuFlowV2AiEngine(model: File) : Closeable {
                         val vx1 = component(i01, 0) * (1f - fx) + component(i11, 0) * fx
                         val vy0 = component(i00, 1) * (1f - fx) + component(i10, 1) * fx
                         val vy1 = component(i01, 1) * (1f - fx) + component(i11, 1) * fx
-                        outX[outIndex] = (vx0 * (1f - fy) + vx1 * fy) * scaleX
-                        outY[outIndex] = (vy0 * (1f - fy) + vy1 * fy) * scaleY
+                        // Reference ONNX wrapper resizes the flow field without scaling vector magnitudes.
+                        outX[outIndex] = vx0 * (1f - fy) + vx1 * fy
+                        outY[outIndex] = vy0 * (1f - fy) + vy1 * fy
                     }
                 }
-                return AiMotionField(targetWidth, targetHeight, outX, outY)
+                var magnitudeSum = 0.0
+                var maximumMagnitude = 0f
+                var activePixels = 0
+                for (i in outX.indices) {
+                    val magnitude = kotlin.math.sqrt(outX[i] * outX[i] + outY[i] * outY[i])
+                    magnitudeSum += magnitude.toDouble()
+                    if (magnitude > maximumMagnitude) maximumMagnitude = magnitude
+                    if (magnitude > 1f) activePixels++
+                }
+                val inferenceMs = (System.nanoTime() - inferenceStartedNs) / 1_000_000L
+                val meanMagnitude = (magnitudeSum / outX.size.coerceAtLeast(1)).toFloat()
+                val activeRatio = activePixels.toFloat() / outX.size.coerceAtLeast(1)
+                return AiMotionField(targetWidth, targetHeight, outX, outY,
+                    meanMagnitude, maximumMagnitude, activeRatio, inferenceMs)
             }
         } finally {
             firstTensor.close()

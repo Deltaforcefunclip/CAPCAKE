@@ -22,13 +22,14 @@ class AiMotionBlurGlEffect(
     private val blend: Float,
     private val direction: Int,
     private val times: Int,
-    private val modelFile: File
+    private val modelFile: File,
+    private val diagnostic: Boolean = false
 ) : GlEffect {
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
         blur <= 0.001f || blend <= 0.001f
 
     override fun toGlShaderProgram(context: android.content.Context, useHdr: Boolean): GlShaderProgram =
-        AiMotionBlurShaderProgram(context, useHdr, blur, blend, direction, times, modelFile)
+        AiMotionBlurShaderProgram(context, useHdr, blur, blend, direction, times, modelFile, diagnostic)
 }
 
 @UnstableApi
@@ -39,7 +40,8 @@ private class AiMotionBlurShaderProgram(
     private val blend: Float,
     private val direction: Int,
     private val times: Int,
-    modelFile: File
+    modelFile: File,
+    private val diagnostic: Boolean
 ) : BaseGlShaderProgram(useHdr, 1) {
     private val program = GlProgram(context, "shaders/vertex_shader.glsl", "shaders/motion_blur_ai.glsl")
     private val engine = NeuFlowV2AiEngine(modelFile)
@@ -50,6 +52,7 @@ private class AiMotionBlurShaderProgram(
     private var previousFrame: Bitmap? = null
     private var lastTimestampUs = Long.MIN_VALUE
     private val maxFlowPixels = 128f
+    private var inferenceFrameCount = 0
 
     init {
         program.setBufferAttribute("aPosition", floatArrayOf(-1f,-1f, 1f,-1f, -1f,1f, 1f,1f), 2)
@@ -91,6 +94,15 @@ private class AiMotionBlurShaderProgram(
             if (previous != null) {
                 val field = engine.estimate(previous, current)
                 uploadFlow(field)
+                inferenceFrameCount++
+                if (inferenceFrameCount == 1 || inferenceFrameCount % 15 == 0) {
+                    Log.i("CAPCAKE_AI_FLOW", "frame=" + inferenceFrameCount +
+                        " timeUs=" + presentationTimeUs +
+                        " mean=" + String.format(java.util.Locale.US, "%.3f", field.meanMagnitude) + "px" +
+                        " max=" + String.format(java.util.Locale.US, "%.3f", field.maxMagnitude) + "px" +
+                        " active=" + String.format(java.util.Locale.US, "%.1f", field.activeRatio * 100f) + "%" +
+                        " infer=" + field.inferenceMs + "ms")
+                }
             }
             previousFrame?.recycle()
             previousFrame = current
@@ -106,6 +118,7 @@ private class AiMotionBlurShaderProgram(
             program.setFloatUniform("uTimes", times.toFloat())
             program.setFloatUniform("uFlowReady", if (previous == null) 0f else 1f)
             program.setFloatUniform("uMaxFlowPixels", maxFlowPixels)
+            program.setFloatUniform("uDiagnostic", if (diagnostic) 1f else 0f)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         } catch (e: VideoFrameProcessingException) {

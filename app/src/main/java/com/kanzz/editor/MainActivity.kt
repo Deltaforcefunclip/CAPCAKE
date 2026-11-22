@@ -362,6 +362,8 @@ class MainActivity : AppCompatActivity() {
     private var motionBlurRenderGeneration = 0
     private var pendingMotionBlurClipId: String? = null
     private var motionBlurModelPreparing = false
+    private var aiDiagnosticPreviewActive = false
+    private var aiDiagnosticPreviewClipId: String? = null
     private val motionBlurRenderRunnable = object : Runnable {
         override fun run() {
             val active = motionBlurRenderTransformer ?: return
@@ -2910,12 +2912,14 @@ class MainActivity : AppCompatActivity() {
      * Klip yang memakai proxy terpisah tetap berdiri sendiri karena setiap proxy
      * merupakan file fisik yang berbeda. Properti speed/volume/opacity harus sama.
      */
-    private fun buildEditedVideoItems(): List<MediaItem> {
+    private fun buildEditedVideoItems(includeAiDiagnostic: Boolean = false): List<MediaItem> {
         val groups = mutableListOf<PlaybackGroup>()
 
         for (clip in videoClipManager.clips) {
-            val cachedMotionBlur = motionBlurCacheFile(clip)
-                .takeIf { clip.motionBlurIntensity > 0.001f && it.exists() && it.length() >= 1024L }
+            val diagnosticFile = if (includeAiDiagnostic && aiDiagnosticPreviewActive && aiDiagnosticPreviewClipId == clip.id)
+                motionBlurDiagnosticCacheFile(clip) else null
+            val cachedMotionBlur = diagnosticFile?.takeIf { it.exists() && it.length() >= 1024L }
+                ?: motionBlurCacheFile(clip).takeIf { clip.motionBlurIntensity > 0.001f && it.exists() && it.length() >= 1024L }
             val cachedProxy = if (cachedMotionBlur == null && previewQualityShortSide > 0) {
                 previewProxyFile(clip, previewQualityShortSide, previewProxyFps)
                     .takeIf { it.exists() && it.length() >= 1024L }
@@ -3068,7 +3072,7 @@ class MainActivity : AppCompatActivity() {
 
         player.pause()
         player.playWhenReady = false
-        player.setMediaItems(buildEditedVideoItems())
+        player.setMediaItems(buildEditedVideoItems(includeAiDiagnostic = true))
 
         timelineController.setDuration(videoClipManager.durationMs)
         timelineController.setPosition(safePosition)
@@ -4579,6 +4583,13 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Batal", null)
             .create()
         dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
+                updatePreview()
+                aiDiagnosticPreviewActive = false
+                aiDiagnosticPreviewClipId = null
+                dialog.dismiss()
+                startMotionBlurPreRender(clip, diagnostic = true)
+            }
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
                 .setTextColor(green)
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)
@@ -6586,6 +6597,16 @@ class MainActivity : AppCompatActivity() {
         motionBlurFloatingProgress = null
     }
 
+    private fun motionBlurDiagnosticCacheFile(clip: VideoClip): File {
+        val identity = listOf("motion_blur_neuflow_ai_diagnostic_v1", clip.id, clip.sourceUri,
+            clip.sourceStartMs, clip.durationMs).joinToString("|")
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(identity.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val directory = File(filesDir, "motion_blur_cache").apply { mkdirs() }
+        return File(directory, "ai_flow_$digest.mp4")
+    }
+
     private fun motionBlurCacheFile(clip: VideoClip): File {
         val identity = listOf(
             "motion_blur_neuflow_ai_v1", clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
@@ -6599,7 +6620,7 @@ class MainActivity : AppCompatActivity() {
         return File(directory, "$digest.mp4")
     }
 
-    private fun startMotionBlurPreRender(clip: VideoClip) {
+    private fun startMotionBlurPreRender(clip: VideoClip, diagnostic: Boolean = false) {
         if (motionBlurModelPreparing) {
             showMessage("Model AI Motion Blur sedang disiapkan.")
             return
@@ -6614,7 +6635,7 @@ class MainActivity : AppCompatActivity() {
                     handler.post {
                         motionBlurModelPreparing = false
                         showMessage("Model AI siap. Memulai render Motion Blur.")
-                        startMotionBlurPreRender(clip)
+                        startMotionBlurPreRender(clip, diagnostic)
                     }
                 } catch (error: Exception) {
                     handler.post {
@@ -6629,10 +6650,10 @@ class MainActivity : AppCompatActivity() {
             showMessage("Motion Blur sedang diproses.")
             return
         }
-        val target = motionBlurCacheFile(clip)
+        val target = if (diagnostic) motionBlurDiagnosticCacheFile(clip) else motionBlurCacheFile(clip)
         if (target.exists() && target.length() >= 1024L) {
             refreshEditedPreview(currentTimelinePosition())
-            showMessage("Hasil Motion Blur sudah tersedia.")
+            if (diagnostic) { aiDiagnosticPreviewActive = true; aiDiagnosticPreviewClipId = clip.id; refreshEditedPreview(currentTimelinePosition()); showMessage("Visualisasi AI sudah tersedia.") } else showMessage("Hasil Motion Blur sudah tersedia.")
             return
         }
 
@@ -6646,7 +6667,7 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(20), dp(12), dp(20), dp(8))
         }
         motionBlurRenderText = TextView(this).apply {
-            text = "Menyiapkan Motion Blur..."
+            text = if (diagnostic) "Menyiapkan visualisasi AI..." else "Menyiapkan Motion Blur..."
             setTextColor(Color.WHITE)
             textSize = 13f
         }
@@ -6659,8 +6680,8 @@ class MainActivity : AppCompatActivity() {
             topMargin = dp(12)
         })
         motionBlurRenderDialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Memproses Motion Blur")
-            .setMessage("Pemrosesan berjalan di background. Preview akan diperbarui setelah selesai.")
+            .setTitle(if (diagnostic) "Menguji AI Motion Flow" else "Memproses Motion Blur")
+            .setMessage(if (diagnostic) "AI menganalisis gerakan setiap frame. Hasil flow akan ditampilkan di preview." else "Pemrosesan berjalan di background. Preview akan diperbarui setelah selesai.")
             .setView(content)
             .setNegativeButton("JALAN DI BACKGROUND", null)
             .setCancelable(false)
@@ -6687,7 +6708,8 @@ class MainActivity : AppCompatActivity() {
                             blend = clip.motionBlurBlend,
                             direction = clip.motionBlurDirection,
                             times = clip.motionBlurTimes,
-                            modelFile = aiModel
+                            modelFile = aiModel,
+                            diagnostic = diagnostic
                         ))
                     )
                 )
@@ -6720,8 +6742,9 @@ class MainActivity : AppCompatActivity() {
                     motionBlurRenderText = null
                     pendingMotionBlurClipId = null
                     if (success) {
+                        if (diagnostic) { aiDiagnosticPreviewActive = true; aiDiagnosticPreviewClipId = clip.id } else { aiDiagnosticPreviewActive = false; aiDiagnosticPreviewClipId = null }
                         refreshEditedPreview(currentTimelinePosition())
-                        showMessage("Motion Blur selesai. Preview diperbarui.")
+                        showMessage(if (diagnostic) "Visualisasi AI siap. Warna menunjukkan arah dan kekuatan gerakan." else "Motion Blur selesai. Preview diperbarui.")
                     } else {
                         temp.delete()
                         refreshEditedPreview(currentTimelinePosition())
@@ -6743,8 +6766,9 @@ class MainActivity : AppCompatActivity() {
                     motionBlurRenderProgress = null
                     motionBlurRenderText = null
                     pendingMotionBlurClipId = null
+                    if (diagnostic) { aiDiagnosticPreviewActive = false; aiDiagnosticPreviewClipId = null }
                     refreshEditedPreview(currentTimelinePosition())
-                    showMessage("Motion Blur gagal: ${exportException.message}")
+                    showMessage("Pemrosesan ${if (diagnostic) "diagnostik AI" else "Motion Blur"} gagal: ${exportException.message}")
                 }
             }
             motionBlurRenderHolder.progress = 0
@@ -6876,6 +6900,7 @@ class MainActivity : AppCompatActivity() {
             .setTitle("Motion Blur")
             .setView(content)
             .setNegativeButton("BATAL", null)
+            .setNeutralButton("UJI AI", null)
             .setPositiveButton("TERAPKAN", null)
             .create()
         dialog.setOnShowListener {
@@ -6898,6 +6923,8 @@ class MainActivity : AppCompatActivity() {
                     clip.motionBlurTimes = times
                     saveCurrentProject()
                 }
+                aiDiagnosticPreviewActive = false
+                aiDiagnosticPreviewClipId = null
                 if (blur > 0.001f && blend > 0.001f) {
                     startMotionBlurPreRender(clip)
                 } else {
