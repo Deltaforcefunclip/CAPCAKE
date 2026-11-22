@@ -17,7 +17,12 @@ data class OverlayVideoClip(
     var sourceStartMs: Long = 0L,
     var durationMs: Long,
     var sourceDurationMs: Long = durationMs,
-    var name: String = "Overlay Video"
+    var name: String = "Overlay Video",
+    var trackIndex: Int = 0,
+    var transformScale: Float = 1f,
+    var rotationDegrees: Float = 0f,
+    var transformX: Float = 0f,
+    var transformY: Float = 0f
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
@@ -29,7 +34,9 @@ object OverlayVideoCodec {
                 put("id", clip.id); put("sourceUri", clip.sourceUri)
                 put("startTimeMs", clip.startTimeMs); put("sourceStartMs", clip.sourceStartMs)
                 put("durationMs", clip.durationMs); put("sourceDurationMs", clip.sourceDurationMs)
-                put("name", clip.name)
+                put("name", clip.name); put("trackIndex", clip.trackIndex)
+                put("transformScale", clip.transformScale.toDouble()); put("rotationDegrees", clip.rotationDegrees.toDouble())
+                put("transformX", clip.transformX.toDouble()); put("transformY", clip.transformY.toDouble())
             })
         }
     }.toString()
@@ -50,14 +57,19 @@ object OverlayVideoCodec {
                     sourceStartMs = o.optLong("sourceStartMs", 0L).coerceAtLeast(0L),
                     durationMs = duration,
                     sourceDurationMs = o.optLong("sourceDurationMs", duration).coerceAtLeast(duration),
-                    name = o.optString("name", "Overlay Video")
+                    name = o.optString("name", "Overlay Video"),
+                    trackIndex = o.optInt("trackIndex", 0).coerceIn(0, 7),
+                    transformScale = o.optDouble("transformScale", 1.0).toFloat().coerceIn(0.2f, 4f),
+                    rotationDegrees = o.optDouble("rotationDegrees", 0.0).toFloat(),
+                    transformX = o.optDouble("transformX", 0.0).toFloat(),
+                    transformY = o.optDouble("transformY", 0.0).toFloat()
                 ))
             }
         }
     }
 }
 
-/** Timeline mandiri untuk klip overlay; tidak mengubah gesture main video track. */
+/** Timeline overlay multi-lane; klip dapat dipindah horizontal maupun antar-lane. */
 class OverlayVideoTrackView(
     context: Context,
     private val controller: SharedTimelineController,
@@ -67,6 +79,7 @@ class OverlayVideoTrackView(
     private val onChanged: () -> Unit
 ) : View(context) {
     private val density = resources.displayMetrics.density
+    private val rowHeight = 42f * density
     private val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF2879B8.toInt() }
     private val selected = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt(); style = Paint.Style.STROKE; strokeWidth = 2f * density
@@ -74,27 +87,52 @@ class OverlayVideoTrackView(
     private val label = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFFFFFFFF.toInt(); textSize = 10f * density; isFakeBoldText = true
     }
+    private val lanePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFF303030.toInt(); strokeWidth = 1f * density
+    }
     private var selectedId: String? = null
     private var touched: OverlayVideoClip? = null
     private var downX = 0f
+    private var downY = 0f
     private var originStart = 0L
+    private var originTrack = 0
     private var dragging = false
 
     fun select(id: String?) { selectedId = id; invalidate() }
+    private fun laneCount() = maxOf(3, (clips.maxOfOrNull { it.trackIndex } ?: 0) + 2)
+
+    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
+        val desired = (laneCount() * rowHeight).toInt()
+        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), resolveSize(desired, heightMeasureSpec))
+    }
 
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         canvas.drawColor(0xFF202020.toInt())
-        clips.sortedBy { it.startTimeMs }.forEach { clip ->
+        val rows = laneCount()
+        for (i in 0 until rows) {
+            val y = i * rowHeight
+            if (i % 2 == 1) {
+                lanePaint.color = 0xFF252525.toInt()
+                canvas.drawRect(0f, y, width.toFloat(), y + rowHeight, lanePaint)
+            }
+            lanePaint.color = 0xFF3A3A3A.toInt()
+            canvas.drawLine(0f, y + rowHeight, width.toFloat(), y + rowHeight, lanePaint)
+            label.color = 0xFF888888.toInt()
+            canvas.drawText("V${i + 1}", 5f * density, y + 13f * density, label)
+        }
+        clips.forEach { clip ->
             val left = controller.timeToX(clip.startTimeMs)
             val right = controller.timeToX(clip.endTimeMs)
             if (right < 0f || left > width) return@forEach
-            val rect = RectF(left, 3f * density, right.coerceAtLeast(left + 5f), height - 3f * density)
+            val top = clip.trackIndex * rowHeight + 3f * density
+            val rect = RectF(left, top, right.coerceAtLeast(left + 5f), (clip.trackIndex + 1) * rowHeight - 3f * density)
             canvas.drawRoundRect(rect, 4f * density, 4f * density, fill)
             if (clip.id == selectedId) canvas.drawRoundRect(rect, 4f * density, 4f * density, selected)
             canvas.save()
             canvas.clipRect(rect)
-            canvas.drawText(clip.name, left + 7f * density, height / 2f + 4f * density, label)
+            label.color = Color.WHITE
+            canvas.drawText(clip.name, left + 7f * density, rect.centerY() + 4f * density, label)
             canvas.restore()
         }
     }
@@ -102,39 +140,39 @@ class OverlayVideoTrackView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = event.x
+                downX = event.x; downY = event.y
+                val lane = (event.y / rowHeight).toInt().coerceAtLeast(0)
                 touched = clips.lastOrNull {
-                    event.x >= controller.timeToX(it.startTimeMs) &&
+                    it.trackIndex == lane && event.x >= controller.timeToX(it.startTimeMs) &&
                         event.x <= controller.timeToX(it.endTimeMs)
                 }
                 selectedId = touched?.id
                 originStart = touched?.startTimeMs ?: 0L
+                originTrack = touched?.trackIndex ?: lane
                 dragging = false
-                onSelect(touched)
-                invalidate()
+                onSelect(touched); invalidate()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
                 val clip = touched ?: return true
-                val delta = event.x - downX
-                if (!dragging && kotlin.math.abs(delta) > 8f * density) {
-                    dragging = true
-                    onEditStart()
+                val dx = event.x - downX; val dy = event.y - downY
+                if (!dragging && (kotlin.math.abs(dx) > 8f * density || kotlin.math.abs(dy) > 8f * density)) {
+                    dragging = true; onEditStart()
                 }
-                if (dragging && controller.pixelsPerMs > 0f) {
-                    clip.startTimeMs = (originStart + (delta / controller.pixelsPerMs).toLong()).coerceAtLeast(0L)
-                    invalidate()
+                if (dragging) {
+                    if (controller.pixelsPerMs > 0f) clip.startTimeMs =
+                        (originStart + (dx / controller.pixelsPerMs).toLong()).coerceAtLeast(0L)
+                    clip.trackIndex = (originTrack + (dy / rowHeight).toInt()).coerceIn(0, 7)
+                    requestLayout(); invalidate()
                 }
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (dragging) onChanged()
-                performClick()
-                return true
+                performClick(); return true
             }
         }
         return true
     }
-
     override fun performClick(): Boolean { super.performClick(); return true }
 }
