@@ -54,8 +54,9 @@ private class RifeMotionBlurShaderProgram(
     private var engineReady = false
     private var frameWidth = 1
     private var frameHeight = 1
-    private val frameHistory = ArrayDeque<Bitmap>()
+    private val frameHistory = ArrayDeque<File>()
     private val maxHistoryFrames = 6
+    private var historyFileIndex = 0
     private var lastTimestampUs = Long.MIN_VALUE
     private var blurTexture = 0
     private var processedPairs = 0
@@ -107,9 +108,12 @@ private class RifeMotionBlurShaderProgram(
                 (presentationTimeUs <= lastTimestampUs || presentationTimeUs - lastTimestampUs > 250_000L)
             ) clearFrameHistory()
             val current = readTexture(inputTexId)
+            val historyFile = File(workDirectory, "history_${historyFileIndex++ % maxHistoryFrames}.jpg")
+            historyFile.outputStream().use { current.compress(Bitmap.CompressFormat.JPEG, 94, it) }
             val ready = createTemporalAverage(current)
-            frameHistory.addLast(current)
-            while (frameHistory.size > maxHistoryFrames) frameHistory.removeFirst().recycle()
+            current.recycle()
+            frameHistory.addLast(historyFile)
+            while (frameHistory.size > maxHistoryFrames) frameHistory.removeFirst().delete()
             lastTimestampUs = presentationTimeUs
 
             program.use()
@@ -150,21 +154,22 @@ private class RifeMotionBlurShaderProgram(
         }
 
         val pixelCount = frameWidth * frameHeight
-        val redSum = LongArray(pixelCount)
-        val greenSum = LongArray(pixelCount)
-        val blueSum = LongArray(pixelCount)
+        val redSum = IntArray(pixelCount)
+        val greenSum = IntArray(pixelCount)
+        val blueSum = IntArray(pixelCount)
         val currentPixels = IntArray(pixelCount)
         current.getPixels(currentPixels, 0, frameWidth, 0, 0, frameWidth, frameHeight)
         for (i in 0 until pixelCount) {
-            redSum[i] = ((currentPixels[i] shr 16) and 255).toLong() * 1000L
-            greenSum[i] = ((currentPixels[i] shr 8) and 255).toLong() * 1000L
-            blueSum[i] = (currentPixels[i] and 255).toLong() * 1000L
+            redSum[i] = ((currentPixels[i] shr 16) and 255) * 1000
+            greenSum[i] = ((currentPixels[i] shr 8) and 255) * 1000
+            blueSum[i] = (currentPixels[i] and 255) * 1000
         }
-        var totalWeight = 1000L
+        var totalWeight = 1000
         var successfulSamples = 0
 
         selectedFrames.forEachIndexed { index, historical ->
-            inputPrevious.outputStream().use { historical.compress(Bitmap.CompressFormat.JPEG, 94, it) }
+            inputPrevious.delete()
+            if (!historical.copyTo(inputPrevious, overwrite = true).exists()) return@forEachIndexed
             outputFrame.delete()
             val ok = RifeNative.interpolate(inputPrevious.absolutePath, inputCurrent.absolutePath,
                 timestep, outputFrame.absolutePath)
@@ -182,9 +187,9 @@ private class RifeMotionBlurShaderProgram(
             val weightInt = (weight * 1000f).roundToInt()
             for (i in 0 until pixelCount) {
                 val p = pixels[i]
-                redSum[i] += ((p shr 16) and 255).toLong() * weightInt
-                greenSum[i] += ((p shr 8) and 255).toLong() * weightInt
-                blueSum[i] += (p and 255).toLong() * weightInt
+                redSum[i] += ((p shr 16) and 255) * weightInt
+                greenSum[i] += ((p shr 8) and 255) * weightInt
+                blueSum[i] += (p and 255) * weightInt
             }
             totalWeight += weightInt
             successfulSamples++
@@ -216,7 +221,7 @@ private class RifeMotionBlurShaderProgram(
     }
 
     private fun clearFrameHistory() {
-        while (frameHistory.isNotEmpty()) frameHistory.removeFirst().recycle()
+        while (frameHistory.isNotEmpty()) frameHistory.removeFirst().delete()
     }
 
     private fun readTexture(textureId: Int): Bitmap {
