@@ -1604,6 +1604,23 @@ class MainActivity : AppCompatActivity() {
             overlay.volume = 0f
             overlayPreviewPlayerView?.player = overlay
             overlay.addListener(object : androidx.media3.common.Player.Listener {
+                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                    val clip = overlayVideoClips.firstOrNull { it.id == activeOverlayPreviewId } ?: return
+                    var width = videoSize.width
+                    var height = videoSize.height
+                    if (videoSize.unappliedRotationDegrees == 90 || videoSize.unappliedRotationDegrees == 270) {
+                        val swap = width; width = height; height = swap
+                    }
+                    if (width > 0 && height > 0 &&
+                        (clip.videoWidth != width || clip.videoHeight != height)
+                    ) {
+                        clip.videoWidth = width
+                        clip.videoHeight = height
+                        overlaySelectionOverlay?.postInvalidateOnAnimation()
+                        recordPlaybackDiagnostic("OVERLAY_VIDEO_SIZE clip=" + clip.id.take(8) + " size=" + width + "x" + height)
+                    }
+                }
+
                 override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
                     overlayPreviewFailed = true
                     recordPlaybackDiagnostic("OVERLAY_PLAYER_ERROR code=${error.errorCodeName} message=${error.message}")
@@ -2213,6 +2230,8 @@ class MainActivity : AppCompatActivity() {
                 updateTime()
             },
             onTap = { tappedClip ->
+                selectedOverlayVideoClipId = null
+                overlaySelectionOverlay?.invalidate()
                 selectedAudioClipId = null
                 clearAudioTrackSelection()
                 selectedTextClipId = null
@@ -2670,6 +2689,8 @@ class MainActivity : AppCompatActivity() {
         // PREVIEW SELECTION
 
         playerView.setOnClickListener {
+            selectedOverlayVideoClipId = null
+            overlaySelectionOverlay?.invalidate()
             selectedAudioClipId = null
             clearAudioTrackSelection()
             selectedVideoClipId = activeVideoClip()?.id
@@ -5229,6 +5250,10 @@ class MainActivity : AppCompatActivity() {
                 selectedOverlayVideoClipId = clip?.id
                 selectedAudioClipId = null; selectedTextClipId = null; selectedEffectClipId = null
                 selectedVideoClipId = null; videoSelected = false
+                timeline.selectClip(null)
+                timeline.updateSelection(false)
+                playerView.foreground = null
+                if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
                 activeLayerGroup = "OVERLAY"
                 updateLayerGroupVisibility(); updateToolMenu()
                 syncOverlayVideoPreview()
