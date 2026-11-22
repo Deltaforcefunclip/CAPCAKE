@@ -351,6 +351,26 @@ class MainActivity : AppCompatActivity() {
     private var dreamyIntensity = 0f
     private val dreamyPreviewState = DreamyPreviewState()
     private val motionBlurPreviewState = MotionBlurPreviewState()
+
+    // Motion Blur prerender cache: render once, reuse in preview and final export.
+    private var motionBlurRenderTransformer: Transformer? = null
+    private var motionBlurRenderDialog: androidx.appcompat.app.AlertDialog? = null
+    private var motionBlurRenderProgress: ProgressBar? = null
+    private var motionBlurRenderText: TextView? = null
+    private val motionBlurRenderHolder = ProgressHolder()
+    private var motionBlurRenderGeneration = 0
+    private var pendingMotionBlurClipId: String? = null
+    private val motionBlurRenderRunnable = object : Runnable {
+        override fun run() {
+            val active = motionBlurRenderTransformer ?: return
+            val state = active.getProgress(motionBlurRenderHolder)
+            if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
+                motionBlurRenderProgress?.progress = motionBlurRenderHolder.progress
+                motionBlurRenderText?.text = "Merender Motion Blur • ${motionBlurRenderHolder.progress}%"
+            }
+            if (motionBlurRenderTransformer != null) handler.postDelayed(this, 350L)
+        }
+    }
     private var liveColorGradingPreview: ColorGrading? = null
     private var dreamyPreviewOverlay: View? = null
     private var proxyCompletedCount = 0
@@ -2832,13 +2852,16 @@ class MainActivity : AppCompatActivity() {
         val groups = mutableListOf<PlaybackGroup>()
 
         for (clip in videoClipManager.clips) {
-            val cachedProxy = if (previewQualityShortSide > 0) {
+            val cachedMotionBlur = motionBlurCacheFile(clip)
+                .takeIf { clip.motionBlurIntensity > 0.001f && it.exists() && it.length() >= 1024L }
+            val cachedProxy = if (cachedMotionBlur == null && previewQualityShortSide > 0) {
                 previewProxyFile(clip, previewQualityShortSide, previewProxyFps)
                     .takeIf { it.exists() && it.length() >= 1024L }
             } else null
 
-            val mediaUri = cachedProxy?.let { Uri.fromFile(it).toString() } ?: clip.sourceUri
-            val usesProxy = cachedProxy != null
+            val cachedMedia = cachedMotionBlur ?: cachedProxy
+            val mediaUri = cachedMedia?.let { Uri.fromFile(it).toString() } ?: clip.sourceUri
+            val usesProxy = cachedMedia != null
             val mediaStart = if (usesProxy) 0L else clip.sourceStartMs
             val mediaEnd = if (usesProxy) clip.durationMs else clip.sourceEndMs
             val previous = groups.lastOrNull()
@@ -6455,6 +6478,157 @@ class MainActivity : AppCompatActivity() {
     }
 
 
+
+    private fun motionBlurCacheFile(clip: VideoClip): File {
+        val identity = listOf(
+            clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
+            clip.motionBlurIntensity, clip.motionBlurBlend,
+            clip.motionBlurDirection, clip.motionBlurTimes
+        ).joinToString("|")
+        val digest = MessageDigest.getInstance("SHA-256")
+            .digest(identity.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+        val directory = File(filesDir, "motion_blur_cache").apply { mkdirs() }
+        return File(directory, "$digest.mp4")
+    }
+
+    private fun startMotionBlurPreRender(clip: VideoClip) {
+        if (motionBlurRenderTransformer != null) {
+            showMessage("Motion Blur sedang diproses.")
+            return
+        }
+        val target = motionBlurCacheFile(clip)
+        if (target.exists() && target.length() >= 1024L) {
+            refreshEditedPreview(currentTimelinePosition())
+            showMessage("Hasil Motion Blur sudah tersedia.")
+            return
+        }
+
+        val generation = ++motionBlurRenderGeneration
+        pendingMotionBlurClipId = clip.id
+        val temp = File(target.parentFile, "${target.nameWithoutExtension}_tmp_$generation.mp4")
+        temp.delete()
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+        }
+        motionBlurRenderText = TextView(this).apply {
+            text = "Menyiapkan Motion Blur..."
+            setTextColor(Color.WHITE)
+            textSize = 13f
+        }
+        motionBlurRenderProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+        }
+        content.addView(motionBlurRenderText)
+        content.addView(motionBlurRenderProgress, LinearLayout.LayoutParams(-1, dp(8)).apply {
+            topMargin = dp(12)
+        })
+        motionBlurRenderDialog = androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Memproses Motion Blur")
+            .setMessage("Pemrosesan berjalan di background. Preview akan diperbarui setelah selesai.")
+            .setView(content)
+            .setNegativeButton("JALAN DI BACKGROUND", null)
+            .setCancelable(false)
+            .create()
+        motionBlurRenderDialog?.show()
+
+        try {
+            val item = MediaItem.Builder()
+                .setUri(Uri.parse(clip.sourceUri))
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                        .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(clip.sourceStartMs + 1L))
+                        .build()
+                )
+                .build()
+            val edited = EditedMediaItem.Builder(item)
+                .setEffects(
+                    Effects(
+                        emptyList(),
+                        listOf(MotionBlurGlEffect(
+                            blur = clip.motionBlurIntensity,
+                            blend = clip.motionBlurBlend,
+                            direction = clip.motionBlurDirection,
+                            times = clip.motionBlurTimes
+                        ))
+                    )
+                )
+                .build()
+            val composition = Composition.Builder(
+                listOf(EditedMediaItemSequence.Builder(listOf(edited)).build())
+            ).build()
+            val listener = object : Transformer.Listener {
+                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
+                    if (generation != motionBlurRenderGeneration) {
+                        temp.delete()
+                        return
+                    }
+                    motionBlurRenderTransformer = null
+                    handler.removeCallbacks(motionBlurRenderRunnable)
+                    try {
+                        target.delete()
+                        if (!temp.renameTo(target)) {
+                            temp.copyTo(target, overwrite = true)
+                            temp.delete()
+                        }
+                    } catch (_: Exception) {
+                        target.delete()
+                    }
+                    val success = target.exists() && target.length() >= 1024L
+                    motionBlurRenderDialog?.dismiss()
+                    motionBlurRenderDialog = null
+                    motionBlurRenderProgress = null
+                    motionBlurRenderText = null
+                    pendingMotionBlurClipId = null
+                    if (success) {
+                        refreshEditedPreview(currentTimelinePosition())
+                        showMessage("Motion Blur selesai. Preview diperbarui.")
+                    } else {
+                        temp.delete()
+                        refreshEditedPreview(currentTimelinePosition())
+                        showMessage("Motion Blur gagal dibuat. Preview memakai pemrosesan langsung.")
+                    }
+                }
+
+                override fun onError(
+                    composition: Composition,
+                    exportResult: ExportResult,
+                    exportException: ExportException
+                ) {
+                    if (generation != motionBlurRenderGeneration) return
+                    motionBlurRenderTransformer = null
+                    handler.removeCallbacks(motionBlurRenderRunnable)
+                    temp.delete()
+                    motionBlurRenderDialog?.dismiss()
+                    motionBlurRenderDialog = null
+                    motionBlurRenderProgress = null
+                    motionBlurRenderText = null
+                    pendingMotionBlurClipId = null
+                    refreshEditedPreview(currentTimelinePosition())
+                    showMessage("Motion Blur gagal: ${exportException.message}")
+                }
+            }
+            motionBlurRenderHolder.progress = 0
+            motionBlurRenderTransformer = Transformer.Builder(this).addListener(listener).build()
+            motionBlurRenderTransformer?.start(composition, temp.absolutePath)
+            handler.post(motionBlurRenderRunnable)
+        } catch (error: Exception) {
+            motionBlurRenderTransformer = null
+            handler.removeCallbacks(motionBlurRenderRunnable)
+            temp.delete()
+            motionBlurRenderDialog?.dismiss()
+            motionBlurRenderDialog = null
+            motionBlurRenderProgress = null
+            motionBlurRenderText = null
+            pendingMotionBlurClipId = null
+            showMessage("Tidak dapat memproses Motion Blur: ${error.message}")
+        }
+    }
+
     private fun showVideoMotionBlurDialog(clip: VideoClip) {
         val originalBlur = clip.motionBlurIntensity.coerceIn(0f, 1f)
         val originalBlend = clip.motionBlurBlend.coerceIn(0f, 1f)
@@ -6587,6 +6761,11 @@ class MainActivity : AppCompatActivity() {
                     clip.motionBlurDirection = direction
                     clip.motionBlurTimes = times
                     saveCurrentProject()
+                    if (blur > 0.001f && blend > 0.001f) {
+                        startMotionBlurPreRender(clip)
+                    } else {
+                        refreshEditedPreview(currentTimelinePosition())
+                    }
                 }
                 dialog.dismiss()
             }
@@ -7282,12 +7461,17 @@ class MainActivity : AppCompatActivity() {
 
         val editedItems = try {
             videoClipManager.clips.map { clip ->
+                val cachedMotionBlur = motionBlurCacheFile(clip)
+                    .takeIf { clip.motionBlurIntensity > 0.001f && it.exists() && it.length() >= 1024L }
+                val exportSourceUri = cachedMotionBlur?.let { Uri.fromFile(it) } ?: Uri.parse(clip.sourceUri)
+                val exportSourceStart = if (cachedMotionBlur != null) 0L else clip.sourceStartMs
+                val exportSourceEnd = if (cachedMotionBlur != null) clip.durationMs else clip.sourceStartMs + clip.durationMs
                 val mediaItem = MediaItem.Builder()
-                    .setUri(Uri.parse(clip.sourceUri))
+                    .setUri(exportSourceUri)
                     .setClippingConfiguration(
                         MediaItem.ClippingConfiguration.Builder()
-                            .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
-                            .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(1L))
+                            .setStartPositionMs(exportSourceStart.coerceAtLeast(0L))
+                            .setEndPositionMs(exportSourceEnd.coerceAtLeast(exportSourceStart + 1L))
                             .build()
                     )
                     .build()
@@ -7399,7 +7583,7 @@ class MainActivity : AppCompatActivity() {
                                 if (dreamyIntensity > 0.001f) add(buildDreamyColorMatrix(dreamyIntensity))
 
                                 // Motion Blur diterapkan langsung pada frame clip, bukan layer/transisi.
-                                if (clip.motionBlurIntensity > 0.001f) {
+                                if (clip.motionBlurIntensity > 0.001f && cachedMotionBlur == null) {
                                     add(MotionBlurGlEffect(blur = clip.motionBlurIntensity, blend = clip.motionBlurBlend, direction = clip.motionBlurDirection, times = clip.motionBlurTimes))
                                 }
 
