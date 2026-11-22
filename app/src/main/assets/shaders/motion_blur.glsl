@@ -114,35 +114,56 @@ vec3 estimateSmoothedFlow(vec2 uv, sampler2D previousFrame) {
     vec3 center = estimateFlow(uv, previousFrame);
     float centerLuma = luma(texture2D(sTexture, uv).rgb);
 
-    vec2 offsets[4];
-    offsets[0] = vec2(-2.0, 0.0);
-    offsets[1] = vec2( 2.0, 0.0);
-    offsets[2] = vec2(0.0, -2.0);
-    offsets[3] = vec2(0.0,  2.0);
-
+    // Explicit constant offsets instead of an indexed local array.
+    // Some GLES2 mobile shader compilers miscompile dynamic array indexing
+    // in fragment shaders, even when the loop bounds are constant.
     vec2 weightedFlow = center.xy * 2.0;
     float weightedConfidence = center.z * 2.0;
     float totalWeight = 2.0;
 
-    for (int i = 0; i < 4; i++) {
-        vec2 sampleUv = clamp(
-            uv + offsets[i] * uTexelSize,
-            uTexelSize * 2.0,
-            vec2(1.0) - uTexelSize * 2.0
-        );
-        vec3 neighbor = estimateFlow(sampleUv, previousFrame);
-        float neighborLuma = luma(texture2D(sTexture, sampleUv).rgb);
-        float edgeDifference = abs(neighborLuma - centerLuma);
-        float edgeWeight = 1.0 - smoothstep(0.07, 0.24, edgeDifference);
-        float directionDifference = length(neighbor.xy - center.xy);
-        float motionWeight = 1.0 - smoothstep(3.0, 14.0, directionDifference);
-        float confidenceWeight = mix(0.25, 1.0, neighbor.z);
-        float weight = edgeWeight * motionWeight * confidenceWeight;
+    vec2 uvL = clamp(uv + vec2(-2.0, 0.0) * uTexelSize,
+                     uTexelSize * 2.0, vec2(1.0) - uTexelSize * 2.0);
+    vec3 flowL = estimateFlow(uvL, previousFrame);
+    float lumL = luma(texture2D(sTexture, uvL).rgb);
+    float edgeL = 1.0 - smoothstep(0.07, 0.24, abs(lumL - centerLuma));
+    float motionL = 1.0 - smoothstep(3.0, 14.0, length(flowL.xy - center.xy));
+    float weightL = edgeL * motionL * mix(0.25, 1.0, flowL.z);
+    weightedFlow += flowL.xy * weightL;
+    weightedConfidence += flowL.z * weightL;
+    totalWeight += weightL;
 
-        weightedFlow += neighbor.xy * weight;
-        weightedConfidence += neighbor.z * weight;
-        totalWeight += weight;
-    }
+    vec2 uvR = clamp(uv + vec2(2.0, 0.0) * uTexelSize,
+                     uTexelSize * 2.0, vec2(1.0) - uTexelSize * 2.0);
+    vec3 flowR = estimateFlow(uvR, previousFrame);
+    float lumR = luma(texture2D(sTexture, uvR).rgb);
+    float edgeR = 1.0 - smoothstep(0.07, 0.24, abs(lumR - centerLuma));
+    float motionR = 1.0 - smoothstep(3.0, 14.0, length(flowR.xy - center.xy));
+    float weightR = edgeR * motionR * mix(0.25, 1.0, flowR.z);
+    weightedFlow += flowR.xy * weightR;
+    weightedConfidence += flowR.z * weightR;
+    totalWeight += weightR;
+
+    vec2 uvU = clamp(uv + vec2(0.0, -2.0) * uTexelSize,
+                     uTexelSize * 2.0, vec2(1.0) - uTexelSize * 2.0);
+    vec3 flowU = estimateFlow(uvU, previousFrame);
+    float lumU = luma(texture2D(sTexture, uvU).rgb);
+    float edgeU = 1.0 - smoothstep(0.07, 0.24, abs(lumU - centerLuma));
+    float motionU = 1.0 - smoothstep(3.0, 14.0, length(flowU.xy - center.xy));
+    float weightU = edgeU * motionU * mix(0.25, 1.0, flowU.z);
+    weightedFlow += flowU.xy * weightU;
+    weightedConfidence += flowU.z * weightU;
+    totalWeight += weightU;
+
+    vec2 uvD = clamp(uv + vec2(0.0, 2.0) * uTexelSize,
+                     uTexelSize * 2.0, vec2(1.0) - uTexelSize * 2.0);
+    vec3 flowD = estimateFlow(uvD, previousFrame);
+    float lumD = luma(texture2D(sTexture, uvD).rgb);
+    float edgeD = 1.0 - smoothstep(0.07, 0.24, abs(lumD - centerLuma));
+    float motionD = 1.0 - smoothstep(3.0, 14.0, length(flowD.xy - center.xy));
+    float weightD = edgeD * motionD * mix(0.25, 1.0, flowD.z);
+    weightedFlow += flowD.xy * weightD;
+    weightedConfidence += flowD.z * weightD;
+    totalWeight += weightD;
 
     return vec3(weightedFlow / max(totalWeight, 0.0001),
                 weightedConfidence / max(totalWeight, 0.0001));
