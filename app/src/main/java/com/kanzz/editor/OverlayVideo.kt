@@ -159,7 +159,8 @@ class OverlayVideoTrackView(
     private val clips: MutableList<OverlayVideoClip>,
     private val onSelect: (OverlayVideoClip?) -> Unit,
     private val onEditStart: () -> Unit,
-    private val onChanged: () -> Unit
+    private val onChanged: () -> Unit,
+    private val onTimelineScrolled: (Long) -> Unit
 ) : View(context) {
     private val density = resources.displayMetrics.density
     private val rowHeight = 42f * density
@@ -183,6 +184,18 @@ class OverlayVideoTrackView(
     private var dragging = false
     private val gestureHandler = Handler(Looper.getMainLooper())
     private var movedBeforeLongPress = false
+    private var panningTimeline = false
+    private var lastPanX = 0f
+    private val touchSlop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+    private fun panTimeline(deltaX: Float) {
+        if (deltaX == 0f) return
+        controller.offsetPx -= deltaX
+        controller.clampOffset()
+        val position = controller.xToTime(width / 2f)
+        controller.positionMs = position
+        onTimelineScrolled(position)
+        invalidate()
+    }
     private val longPressDrag = Runnable {
         if (touched != null && !movedBeforeLongPress) {
             dragging = true
@@ -233,7 +246,7 @@ class OverlayVideoTrackView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                downX = event.x; downY = event.y
+                downX = event.x; downY = event.y; lastPanX = event.x
                 val lane = (event.y / rowHeight).toInt().coerceAtLeast(0)
                 touched = clips.lastOrNull {
                     it.trackIndex == lane && event.x >= controller.timeToX(it.startTimeMs) &&
@@ -245,19 +258,35 @@ class OverlayVideoTrackView(
                 lastDrawnTrack = originTrack
                 dragging = false
                 movedBeforeLongPress = false
+                panningTimeline = false
                 gestureHandler.removeCallbacks(longPressDrag)
                 if (touched != null) gestureHandler.postDelayed(longPressDrag, 420L)
-                onSelect(touched); invalidate()
+                onSelect(touched)
+                parent?.requestDisallowInterceptTouchEvent(true)
+                invalidate()
                 return true
             }
             MotionEvent.ACTION_MOVE -> {
-                val clip = touched ?: return true
-                val dx = event.x - downX; val dy = event.y - downY
-                if (!dragging && (kotlin.math.abs(dx) > 8f * density || kotlin.math.abs(dy) > 8f * density)) {
+                val clip = touched
+                val dx = event.x - downX
+                val dy = event.y - downY
+                if (!dragging && !panningTimeline &&
+                    (kotlin.math.abs(dx) > touchSlop || kotlin.math.abs(dy) > touchSlop)
+                ) {
                     movedBeforeLongPress = true
                     gestureHandler.removeCallbacks(longPressDrag)
+                    // Geser horizontal sebelum long-press = geser seluruh timeline.
+                    // Drag clip hanya dimulai setelah long-press timer terpenuhi.
+                    if (kotlin.math.abs(dx) > touchSlop &&
+                        kotlin.math.abs(dx) >= kotlin.math.abs(dy) * 0.8f
+                    ) panningTimeline = true
                 }
-                if (dragging) {
+                if (panningTimeline) {
+                    panTimeline(event.x - lastPanX)
+                    lastPanX = event.x
+                    return true
+                }
+                if (dragging && clip != null) {
                     val candidateStart = if (controller.pixelsPerMs > 0f) {
                         (originStart + (dx / controller.pixelsPerMs).toLong()).coerceAtLeast(0L)
                     } else clip.startTimeMs
@@ -282,13 +311,13 @@ class OverlayVideoTrackView(
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 gestureHandler.removeCallbacks(longPressDrag)
-                if (dragging) {
-                    runCatching { onChanged() }
-                }
+                if (dragging) runCatching { onChanged() }
                 parent?.requestDisallowInterceptTouchEvent(false)
                 touched = null
                 dragging = false
-                performClick(); return true
+                panningTimeline = false
+                performClick()
+                return true
             }
         }
         return true
