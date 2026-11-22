@@ -108,7 +108,7 @@ private class RifeMotionBlurShaderProgram(
                 (presentationTimeUs <= lastTimestampUs || presentationTimeUs - lastTimestampUs > 250_000L)
             ) clearFrameHistory()
             val current = readTexture(inputTexId)
-            val historyFile = File(workDirectory, "history_${historyFileIndex++ % maxHistoryFrames}.jpg")
+            val historyFile = File(workDirectory, "history_${historyFileIndex++}.jpg")
             historyFile.outputStream().use { current.compress(Bitmap.CompressFormat.JPEG, 94, it) }
             val ready = createTemporalAverage(current)
             current.recycle()
