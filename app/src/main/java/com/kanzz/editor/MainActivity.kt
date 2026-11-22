@@ -3221,9 +3221,13 @@ class MainActivity : AppCompatActivity() {
     // =====================================
 
     private fun showPlaybackDiagnosticsDialog() {
-        val report = synchronized(playbackDiagnosticEntries) {
+        val playbackReport = synchronized(playbackDiagnosticEntries) {
             playbackDiagnosticEntries.joinToString("\n")
         }
+        val glReport = CapcakeGlDiagnostics.snapshot()
+        val report = listOf(playbackReport, glReport)
+            .filter { it.isNotBlank() }
+            .joinToString("\n")
         val content = TextView(this).apply {
             text = if (report.isBlank()) {
                 "Belum ada data. Putar project sampai melewati beberapa pergantian klip, lalu buka Diagnostik."
