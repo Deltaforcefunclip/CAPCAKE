@@ -2284,6 +2284,8 @@ class MainActivity : AppCompatActivity() {
                 previewClipMoveAt(clipId, targetStartMs)
             },
             onMoveClip = { clipId, targetStartMs ->
+                selectedOverlayVideoClipId = null
+                overlaySelectionOverlay?.invalidate()
                 val current = videoClipManager.find(clipId)
                 if (current != null) {
                     selectedVideoClipId = clipId
