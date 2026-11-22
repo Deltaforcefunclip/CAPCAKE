@@ -397,12 +397,38 @@ class MainActivity : AppCompatActivity() {
     // Scrubbing preview memakai optimasi decoder bawaan Media3.
     private var pendingScrubPositionMs = 0L
     private var isTimelineScrubbing = false
+    private var lastScrubSeekAtMs = 0L
+    private var scrubSeekScheduled = false
+    private val scrubSeekIntervalMs = 60L
+    private val scrubSeekRunnable = Runnable {
+        scrubSeekScheduled = false
+        if (isTimelineScrubbing) {
+            lastScrubSeekAtMs = SystemClock.elapsedRealtime()
+            recordPlaybackDiagnostic("SCRUB_SEEK_EXECUTED target=${pendingScrubPositionMs}ms")
+            seekTimelinePosition(pendingScrubPositionMs)
+        }
+    }
     private val scrubFinishRunnable = Runnable {
         if (isTimelineScrubbing) {
-            // Keluar dari mode scrubbing, lalu lakukan seek akhir yang presisi.
+            handler.removeCallbacks(scrubSeekRunnable)
+            scrubSeekScheduled = false
+            // Akhiri mode cepat, lalu lakukan seek presisi hanya jika masih diperlukan.
             player.setScrubbingModeEnabled(false)
             player.setSeekParameters(SeekParameters.EXACT)
-            seekTimelinePosition(pendingScrubPositionMs)
+            val finalTarget = pendingScrubPositionMs.coerceIn(0L, videoClipManager.durationMs)
+            val currentPosition = currentTimelinePosition()
+            val difference = abs(currentPosition - finalTarget)
+            if (difference > 20L) {
+                recordPlaybackDiagnostic(
+                    "SCRUB_FINAL_SEEK target=${finalTarget}ms current=${currentPosition}ms delta=${difference}ms"
+                )
+                seekTimelinePosition(finalTarget)
+            } else {
+                recordPlaybackDiagnostic(
+                    "SCRUB_FINAL_SEEK_SKIPPED target=${finalTarget}ms current=${currentPosition}ms delta=${difference}ms"
+                )
+            }
+            lastScrubSeekAtMs = 0L
 
             // Tahan indikator waktu pada target jari sampai seek akhir diproses.
             handler.postDelayed({
@@ -2224,13 +2250,8 @@ class MainActivity : AppCompatActivity() {
                 // Media3 Scrubbing Mode mengelola seek cepat dan membuang target
                 // lama yang sudah tidak relevan. Kirim posisi terbaru langsung.
                 pendingScrubPositionMs = position
-                if (!isTimelineScrubbing) {
-                    isTimelineScrubbing = true
-                    if (player.isPlaying) player.pause()
-                    player.setScrubbingModeEnabled(true)
-                    updatePlayButton()
-                }
-                seekTimelinePosition(position)
+                beginTimelineScrubbing()
+                requestScrubSeek(position)
 
                 handler.removeCallbacks(scrubFinishRunnable)
                 handler.postDelayed(scrubFinishRunnable, 140L)
@@ -2439,13 +2460,8 @@ class MainActivity : AppCompatActivity() {
                 val position = timelineController.xToTime(width / 2f)
                 timelineController.positionMs = position
                 pendingScrubPositionMs = position
-                if (!isTimelineScrubbing) {
-                    isTimelineScrubbing = true
-                    if (player.isPlaying) player.pause()
-                    player.setScrubbingModeEnabled(true)
-                    updatePlayButton()
-                }
-                seekTimelinePosition(position)
+                beginTimelineScrubbing()
+                requestScrubSeek(position)
                 handler.removeCallbacks(scrubFinishRunnable)
                 handler.postDelayed(scrubFinishRunnable, 140L)
                 updateTime()
@@ -3184,6 +3200,36 @@ class MainActivity : AppCompatActivity() {
             }
         }
         return timelineController.positionMs
+    }
+
+    /** Mulai scrubbing dengan seek sinkron terdekat agar decoder tidak dibebani seek presisi berulang. */
+    private fun beginTimelineScrubbing() {
+        if (isTimelineScrubbing) return
+        isTimelineScrubbing = true
+        lastScrubSeekAtMs = 0L
+        scrubSeekScheduled = false
+        player.setSeekParameters(SeekParameters.CLOSEST_SYNC)
+        if (player.isPlaying) player.pause()
+        player.setScrubbingModeEnabled(true)
+        updatePlayButton()
+    }
+
+    /** Gabungkan target scrub yang datang rapat; hanya kirim seek maksimal setiap 60 ms. */
+    private fun requestScrubSeek(positionMs: Long) {
+        pendingScrubPositionMs = positionMs.coerceIn(0L, videoClipManager.durationMs)
+        if (!isTimelineScrubbing || scrubSeekScheduled) return
+
+        val now = SystemClock.elapsedRealtime()
+        val elapsed = if (lastScrubSeekAtMs == 0L) scrubSeekIntervalMs else now - lastScrubSeekAtMs
+        val delayMs = (scrubSeekIntervalMs - elapsed).coerceAtLeast(0L)
+        if (delayMs == 0L) {
+            lastScrubSeekAtMs = now
+            recordPlaybackDiagnostic("SCRUB_SEEK_EXECUTED target=${pendingScrubPositionMs}ms")
+            seekTimelinePosition(pendingScrubPositionMs)
+        } else {
+            scrubSeekScheduled = true
+            handler.postDelayed(scrubSeekRunnable, delayMs)
+        }
     }
 
     /** Memetakan waktu timeline ke grup playback dan offset sumber yang benar. */
@@ -5397,13 +5443,8 @@ class MainActivity : AppCompatActivity() {
                 },
                 onTimelineScrolled = { position ->
                     pendingScrubPositionMs = position
-                    if (!isTimelineScrubbing) {
-                        isTimelineScrubbing = true
-                        if (player.isPlaying) player.pause()
-                        player.setScrubbingModeEnabled(true)
-                        updatePlayButton()
-                    }
-                    seekTimelinePosition(position)
+                    beginTimelineScrubbing()
+                    requestScrubSeek(position)
                     handler.removeCallbacks(scrubFinishRunnable)
                     handler.postDelayed(scrubFinishRunnable, 140L)
                     updateTime()
@@ -5463,13 +5504,8 @@ class MainActivity : AppCompatActivity() {
                 },
                 onTimelineScrolled = { position ->
                     pendingScrubPositionMs = position
-                    if (!isTimelineScrubbing) {
-                        isTimelineScrubbing = true
-                        if (player.isPlaying) player.pause()
-                        player.setScrubbingModeEnabled(true)
-                        updatePlayButton()
-                    }
-                    seekTimelinePosition(position)
+                    beginTimelineScrubbing()
+                    requestScrubSeek(position)
                     handler.removeCallbacks(scrubFinishRunnable)
                     handler.postDelayed(scrubFinishRunnable, 140L)
                     updateTime()
@@ -6838,13 +6874,8 @@ class MainActivity : AppCompatActivity() {
                 },
                 onTimelineScrolled = { position ->
                     pendingScrubPositionMs = position
-                    if (!isTimelineScrubbing) {
-                        isTimelineScrubbing = true
-                        if (player.isPlaying) player.pause()
-                        player.setScrubbingModeEnabled(true)
-                        updatePlayButton()
-                    }
-                    seekTimelinePosition(position)
+                    beginTimelineScrubbing()
+                    requestScrubSeek(position)
                     handler.removeCallbacks(scrubFinishRunnable)
                     handler.postDelayed(scrubFinishRunnable, 140L)
                     updateTime()
