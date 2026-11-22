@@ -37,6 +37,24 @@ data class OverlayVideoClip(
 }
 
 /** Cari lane overlay yang tidak bertabrakan dengan clip lain. */
+internal fun isOverlayTrackAvailable(
+    clips: List<OverlayVideoClip>,
+    startTimeMs: Long,
+    durationMs: Long,
+    trackIndex: Int,
+    excludeId: String? = null
+): Boolean {
+    if (durationMs <= 0L || trackIndex < 0) return false
+    val start = startTimeMs.coerceAtLeast(0L)
+    val end = start + durationMs
+    return clips.none { other ->
+        other.id != excludeId &&
+            other.trackIndex == trackIndex &&
+            start < other.endTimeMs &&
+            end > other.startTimeMs
+    }
+}
+
 internal fun findAvailableOverlayTrack(
     clips: List<OverlayVideoClip>,
     startTimeMs: Long,
@@ -45,16 +63,8 @@ internal fun findAvailableOverlayTrack(
     maxTrackIndex: Int = 31
 ): Int? {
     if (durationMs <= 0L) return null
-    val start = startTimeMs.coerceAtLeast(0L)
-    val end = start + durationMs
     for (lane in 0..maxTrackIndex) {
-        val occupied = clips.any { other ->
-            other.id != excludeId &&
-                other.trackIndex == lane &&
-                start < other.endTimeMs &&
-                end > other.startTimeMs
-        }
-        if (!occupied) return lane
+        if (isOverlayTrackAvailable(clips, startTimeMs, durationMs, lane, excludeId)) return lane
     }
     return null
 }
@@ -111,7 +121,7 @@ object OverlayVideoCodec {
                     durationMs = duration,
                     sourceDurationMs = o.optLong("sourceDurationMs", duration).coerceAtLeast(duration),
                     name = o.optString("name", "Overlay Video"),
-                    trackIndex = o.optInt("trackIndex", 0).coerceIn(0, 7),
+                    trackIndex = o.optInt("trackIndex", 0).coerceIn(0, 31),
                     transformScale = o.optDouble("transformScale", 1.0).toFloat().coerceIn(0.2f, 4f),
                     rotationDegrees = o.optDouble("rotationDegrees", 0.0).toFloat(),
                     transformX = o.optDouble("transformX", 0.0).toFloat(),
@@ -239,11 +249,11 @@ class OverlayVideoTrackView(
                         (originStart + (dx / controller.pixelsPerMs).toLong()).coerceAtLeast(0L)
                     } else clip.startTimeMs
                     val nextTrack = (originTrack + (dy / rowHeight).toInt()).coerceIn(0, 31)
-                    val availableTrack = findAvailableOverlayTrack(
-                        clips, candidateStart, clip.durationMs, excludeId = clip.id, maxTrackIndex = 31
+                    val targetLaneAvailable = isOverlayTrackAvailable(
+                        clips, candidateStart, clip.durationMs, nextTrack, excludeId = clip.id
                     )
                     // Posisi terakhir yang valid dipertahankan jika tujuan bertabrakan.
-                    if (availableTrack == nextTrack) {
+                    if (targetLaneAvailable) {
                         clip.startTimeMs = candidateStart
                         if (clip.trackIndex != nextTrack) {
                             clip.trackIndex = nextTrack
