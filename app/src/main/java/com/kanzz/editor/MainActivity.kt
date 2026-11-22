@@ -357,6 +357,7 @@ class MainActivity : AppCompatActivity() {
     private var motionBlurRenderDialog: androidx.appcompat.app.AlertDialog? = null
     private var motionBlurRenderProgress: ProgressBar? = null
     private var motionBlurRenderText: TextView? = null
+    private var motionBlurFloatingProgress: View? = null
     private val motionBlurRenderHolder = ProgressHolder()
     private var motionBlurRenderGeneration = 0
     private var pendingMotionBlurClipId: String? = null
@@ -367,6 +368,10 @@ class MainActivity : AppCompatActivity() {
             if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
                 motionBlurRenderProgress?.progress = motionBlurRenderHolder.progress
                 motionBlurRenderText?.text = "Merender Motion Blur • ${motionBlurRenderHolder.progress}%"
+                (motionBlurFloatingProgress?.tag as? Pair<*, *>)?.let { pair ->
+                    (pair.first as? TextView)?.text = "Motion Blur • ${motionBlurRenderHolder.progress}%"
+                    (pair.second as? ProgressBar)?.progress = motionBlurRenderHolder.progress
+                }
             }
             if (motionBlurRenderTransformer != null) handler.postDelayed(this, 350L)
         }
@@ -6484,6 +6489,46 @@ class MainActivity : AppCompatActivity() {
 
 
 
+
+    private fun showMotionBlurFloatingProgress() {
+        hideMotionBlurFloatingProgress()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(14), dp(9), dp(14), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(35, 38, 43))
+                cornerRadius = dp(12).toFloat()
+                setStroke(dp(1), Color.rgb(85, 90, 98))
+            }
+            elevation = dp(10).toFloat()
+        }
+        val title = TextView(this).apply {
+            text = "Motion Blur • 0%"
+            setTextColor(Color.WHITE)
+            textSize = 12f
+        }
+        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
+            max = 100
+            progress = 0
+        }
+        container.addView(title)
+        container.addView(bar, LinearLayout.LayoutParams(-1, dp(5)).apply { topMargin = dp(7) })
+        container.tag = Pair(title, bar)
+        val params = android.widget.FrameLayout.LayoutParams(dp(250), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+            gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
+            topMargin = dp(42)
+        }
+        val decor = window.decorView as? android.widget.FrameLayout ?: return
+        decor.addView(container, params)
+        motionBlurFloatingProgress = container
+    }
+
+    private fun hideMotionBlurFloatingProgress() {
+        val view = motionBlurFloatingProgress ?: return
+        (view.parent as? android.view.ViewGroup)?.removeView(view)
+        motionBlurFloatingProgress = null
+    }
+
     private fun motionBlurCacheFile(clip: VideoClip): File {
         val identity = listOf(
             clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
@@ -6539,6 +6584,7 @@ class MainActivity : AppCompatActivity() {
             .setCancelable(false)
             .create()
         motionBlurRenderDialog?.show()
+        showMotionBlurFloatingProgress()
 
         try {
             val item = MediaItem.Builder()
@@ -6585,6 +6631,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     val success = target.exists() && target.length() >= 1024L
                     motionBlurRenderDialog?.dismiss()
+                    hideMotionBlurFloatingProgress()
                     motionBlurRenderDialog = null
                     motionBlurRenderProgress = null
                     motionBlurRenderText = null
@@ -6626,6 +6673,7 @@ class MainActivity : AppCompatActivity() {
             handler.removeCallbacks(motionBlurRenderRunnable)
             temp.delete()
             motionBlurRenderDialog?.dismiss()
+            hideMotionBlurFloatingProgress()
             motionBlurRenderDialog = null
             motionBlurRenderProgress = null
             motionBlurRenderText = null
