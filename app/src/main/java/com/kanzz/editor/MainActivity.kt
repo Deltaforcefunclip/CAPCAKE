@@ -939,6 +939,10 @@ class MainActivity : AppCompatActivity() {
         effectClipManager.clips.clear()
         overlayVideoClips.clear()
         selectedOverlayVideoClipId = null
+        activeOverlayPreviewId = null
+        overlayPreviewPlayer?.stop()
+        overlayPreviewPlayer?.clearMediaItems()
+        overlayPreviewPlayerView?.visibility = View.GONE
         selectedEffectClipId = null
         selectedTextClipId = null
         activeLayerGroup = "AUDIO"
@@ -4848,7 +4852,8 @@ class MainActivity : AppCompatActivity() {
             overlayPlayer.prepare()
         } else {
             val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
-            if (kotlin.math.abs(overlayPlayer.currentPosition - localPosition) > 280L) {
+            val seekThreshold = if (player.isPlaying && !isTimelineScrubbing) 280L else 45L
+            if (kotlin.math.abs(overlayPlayer.currentPosition - localPosition) > seekThreshold) {
                 overlayPlayer.seekTo(localPosition)
             }
         }
@@ -7327,7 +7332,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun analyzeExportSources(onComplete: (List<ExportSourceProfile>) -> Unit) {
-        val sourceUris = videoClipManager.clips.map { it.sourceUri }.distinct()
+        val sourceUris = (videoClipManager.clips.map { it.sourceUri } + overlayVideoClips.map { it.sourceUri }).distinct()
         Thread {
             val profiles = sourceUris.mapNotNull { inspectExportSource(it) }
             runOnUiThread { onComplete(profiles) }
