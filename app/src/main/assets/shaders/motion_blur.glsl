@@ -21,20 +21,25 @@ float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 // Lucas-Kanade flow with a texture-structure confidence score.
 // Flat areas and single-direction edges are rejected: their motion estimate
 // is ambiguous and was the main source of patchy/blotchy trails.
-vec3 estimateFlow(vec2 uv, sampler2D previousFrame) {
+// One Lucas-Kanade refinement level. stepPixels controls the spacing
+// between gradient samples; initialFlow warps the previous frame before
+// solving the residual displacement at this scale.
+vec3 estimateFlowLevel(vec2 uv, sampler2D previousFrame, vec2 initialFlow, float stepPixels) {
     float xx=0.0, yy=0.0, xy=0.0, xt=0.0, yt=0.0;
     for (int y=-2; y<=2; y++) {
         for (int x=-2; x<=2; x++) {
-            vec2 p=clamp(uv+vec2(float(x),float(y))*uTexelSize,
-                         uTexelSize*2.0,vec2(1.0)-uTexelSize*2.0);
-            float l=luma(texture2D(sTexture,p-vec2(uTexelSize.x,0.0)).rgb);
-            float r=luma(texture2D(sTexture,p+vec2(uTexelSize.x,0.0)).rgb);
-            float d=luma(texture2D(sTexture,p-vec2(0.0,uTexelSize.y)).rgb);
-            float u=luma(texture2D(sTexture,p+vec2(0.0,uTexelSize.y)).rgb);
+            vec2 delta=vec2(float(x),float(y))*stepPixels*uTexelSize;
+            vec2 p=clamp(uv+delta,uTexelSize*2.0,vec2(1.0)-uTexelSize*2.0);
+            float l=luma(texture2D(sTexture,p-vec2(stepPixels*uTexelSize.x,0.0)).rgb);
+            float r=luma(texture2D(sTexture,p+vec2(stepPixels*uTexelSize.x,0.0)).rgb);
+            float d=luma(texture2D(sTexture,p-vec2(0.0,stepPixels*uTexelSize.y)).rgb);
+            float u=luma(texture2D(sTexture,p+vec2(0.0,stepPixels*uTexelSize.y)).rgb);
             float now=luma(texture2D(sTexture,p).rgb);
-            float prev=luma(texture2D(previousFrame,p).rgb);
-            float gx=(r-l)*0.5;
-            float gy=(u-d)*0.5;
+            vec2 previousUv=clamp(p-initialFlow*uTexelSize,0.0,1.0);
+            float prev=luma(texture2D(previousFrame,previousUv).rgb);
+            float invStep=0.5/stepPixels;
+            float gx=(r-l)*invStep;
+            float gy=(u-d)*invStep;
             float gt=now-prev;
             xx+=gx*gx;
             yy+=gy*gy;
@@ -47,26 +52,37 @@ vec3 estimateFlow(vec2 uv, sampler2D previousFrame) {
     float trace=xx+yy;
     float discriminant=sqrt(max((xx-yy)*(xx-yy)+4.0*xy*xy,0.0));
     float minEigen=0.5*(trace-discriminant);
-    float structureConfidence=smoothstep(0.00035,0.006,minEigen);
+    float structureConfidence=smoothstep(0.00020,0.0035,minEigen);
 
     float a=xx+0.00001;
     float c=yy+0.00001;
     float det=a*c-xy*xy;
-    vec2 flow=vec2(0.0);
+    vec2 correction=vec2(0.0);
     if(det>1.0e-10) {
-        flow.x=-(c*xt-xy*yt)/det;
-        flow.y=-(-xy*xt+a*yt)/det;
+        correction.x=-(c*xt-xy*yt)/det;
+        correction.y=-(-xy*xt+a*yt)/det;
     }
-    float magnitude=length(flow);
-    if(magnitude>28.0) flow*=28.0/magnitude;
+    float correctionLength=length(correction);
+    if(correctionLength>20.0) correction*=20.0/correctionLength;
+    return vec3(correction,structureConfidence);
+}
 
-    // Reject vectors that do not actually explain the temporal brightness
-    // change at the warped location (occlusions / unrelated texture changes).
+// Coarse-to-fine flow: large sampling spacing captures fast game motion,
+// then progressively smaller levels refine edges and local object detail.
+vec3 estimateFlow(vec2 uv, sampler2D previousFrame) {
+    vec3 coarse=estimateFlowLevel(uv,previousFrame,vec2(0.0),4.0);
+    vec3 medium=estimateFlowLevel(uv,previousFrame,coarse.xy,2.0);
+    vec3 fine=estimateFlowLevel(uv,previousFrame,coarse.xy+medium.xy,1.0);
+    vec2 flow=coarse.xy+medium.xy+fine.xy;
+    float magnitude=length(flow);
+    if(magnitude>48.0) flow*=48.0/magnitude;
+
     vec2 warped=clamp(uv-flow*uTexelSize,0.0,1.0);
     float nowCenter=luma(texture2D(sTexture,uv).rgb);
     float previousWarped=luma(texture2D(previousFrame,warped).rgb);
     float residual=abs(nowCenter-previousWarped);
-    float consistencyConfidence=1.0-smoothstep(0.035,0.18,residual);
+    float consistencyConfidence=1.0-smoothstep(0.055,0.24,residual);
+    float structureConfidence=max(coarse.z,max(medium.z,fine.z));
     return vec3(flow,structureConfidence*consistencyConfidence);
 }
 vec4 historySample(float ageIndex, vec2 coord) {
@@ -118,8 +134,8 @@ void main() {
     accumulated+=current.rgb*currentWeight;
     totalWeight+=currentWeight;
 
-    for(int i=0;i<16;i++) {
-        float t=(float(i)+0.5)/16.0;
+    for(int i=0;i<24;i++) {
+        float t=(float(i)+0.5)/24.0;
         float age=t*maxAge;
         float ageWeight=1.0;
         vec2 offset=motionUv*(age*trailScale);
