@@ -103,6 +103,48 @@ vec3 smoothHistory(float age, vec2 coord) {
     vec3 b=historySample(min(baseAge+1.0,5.0),coord).rgb;
     return mix(a,b,fraction);
 }
+
+// Edge-aware vector smoothing. Neighbor vectors are blended only when
+// they belong to a similarly lit region and point in a compatible direction.
+// This reduces pixel-level flow noise without bleeding motion across object edges.
+vec3 estimateSmoothedFlow(vec2 uv, sampler2D previousFrame) {
+    vec3 center = estimateFlow(uv, previousFrame);
+    float centerLuma = luma(texture2D(sTexture, uv).rgb);
+
+    vec2 offsets[4];
+    offsets[0] = vec2(-2.0, 0.0);
+    offsets[1] = vec2( 2.0, 0.0);
+    offsets[2] = vec2(0.0, -2.0);
+    offsets[3] = vec2(0.0,  2.0);
+
+    vec2 weightedFlow = center.xy * 2.0;
+    float weightedConfidence = center.z * 2.0;
+    float totalWeight = 2.0;
+
+    for (int i = 0; i < 4; i++) {
+        vec2 sampleUv = clamp(
+            uv + offsets[i] * uTexelSize,
+            uTexelSize * 2.0,
+            vec2(1.0) - uTexelSize * 2.0
+        );
+        vec3 neighbor = estimateFlow(sampleUv, previousFrame);
+        float neighborLuma = luma(texture2D(sTexture, sampleUv).rgb);
+        float edgeDifference = abs(neighborLuma - centerLuma);
+        float edgeWeight = 1.0 - smoothstep(0.07, 0.24, edgeDifference);
+        float directionDifference = length(neighbor.xy - center.xy);
+        float motionWeight = 1.0 - smoothstep(3.0, 14.0, directionDifference);
+        float confidenceWeight = mix(0.25, 1.0, neighbor.z);
+        float weight = edgeWeight * motionWeight * confidenceWeight;
+
+        weightedFlow += neighbor.xy * weight;
+        weightedConfidence += neighbor.z * weight;
+        totalWeight += weight;
+    }
+
+    return vec3(weightedFlow / max(totalWeight, 0.0001),
+                weightedConfidence / max(totalWeight, 0.0001));
+}
+
 void main() {
     vec4 current=texture2D(sTexture,vTextureCoord);
     if(uBlur<=0.001 || uBlend<=0.001 || uHistoryCount<1.0) {
@@ -110,7 +152,7 @@ void main() {
         return;
     }
 
-    vec3 flowEstimate=estimateFlow(vTextureCoord,uHistory0);
+    vec3 flowEstimate=estimateSmoothedFlow(vTextureCoord,uHistory0);
     vec2 flow=flowEstimate.xy;
     float flowLength=length(flow);
     float confidence=flowEstimate.z*smoothstep(0.015,0.35,flowLength);
