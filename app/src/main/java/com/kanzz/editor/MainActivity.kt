@@ -8423,7 +8423,19 @@ class MainActivity : AppCompatActivity() {
                 exportDialog = null
                 exportProgressBar = null
                 exportProgressText = null
-                showMessage("Ekspor gagal: ${exportException.message ?: "Kesalahan tidak diketahui"}")
+                val causeDetails = generateSequence<Throwable>(exportException) { it.cause }
+                    .take(8)
+                    .joinToString(" <- ") { cause ->
+                        "${cause.javaClass.simpleName}: ${cause.message ?: "tanpa pesan"}"
+                    }
+                recordPlaybackDiagnostic(
+                    "EXPORT_FAILED code=${exportException.errorCode} causes=$causeDetails"
+                )
+                Log.e("CAPCAKE_EXPORT", "Export gagal: $causeDetails", exportException)
+                showMessage(
+                    "Ekspor gagal (kode ${exportException.errorCode}): " +
+                        (exportException.cause?.message ?: exportException.message ?: "Kesalahan tidak diketahui")
+                )
             }
         }
 
@@ -8472,11 +8484,20 @@ class MainActivity : AppCompatActivity() {
                     val sinA = kotlin.math.sin(radians).toFloat()
                     val tx = 2f * overlayClip.transformX / frameW
                     val ty = -2f * overlayClip.transformY / frameH
-                    val matrix = Matrix().apply { setValues(floatArrayOf(
+                    val matrixValues = floatArrayOf(
                         scale * cosA, scale * sinA / aspect, tx,
                         -scale * sinA * aspect, scale * cosA, ty,
                         0f, 0f, 1f
-                    )) }
+                    )
+                    recordPlaybackDiagnostic(
+                        "EXPORT_OVERLAY id=${overlayClip.id.take(8)} " +
+                            "scale=$scale rotation=${overlayClip.rotationDegrees} " +
+                            "x=${overlayClip.transformX} y=${overlayClip.transformY} " +
+                            "frame=${frameW.toInt()}x${frameH.toInt()} " +
+                            "canvas=${canvasWidth}x${canvasHeight} " +
+                            "matrix=${matrixValues.joinToString(",")}"
+                    )
+                    val matrix = Matrix().apply { setValues(matrixValues) }
                     add(androidx.media3.effect.MatrixTransformation { Matrix(matrix) })
                     if (overlayClip.chromaKeyEnabled) add(
                         ChromaKeyGlEffect(
