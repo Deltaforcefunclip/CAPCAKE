@@ -8445,8 +8445,11 @@ class MainActivity : AppCompatActivity() {
             // sequence berikutnya. Video utama harus menjadi sequence video terakhir.
             val sequences = mutableListOf<EditedMediaItemSequence>()
 
+            // Urutan ini harus sama dengan urutan input video compositor.
+            val exportOverlayClips = overlayVideoClips.filter { it.durationMs > 0L }
+
             // Setiap klip overlay video menjadi sequence video paralel.
-            overlayVideoClips.filter { it.durationMs > 0L }.forEach { overlayClip ->
+            exportOverlayClips.forEach { overlayClip ->
                 val overlayStart = overlayClip.startTimeMs.coerceAtLeast(0L)
                 val overlayItem = MediaItem.Builder()
                     .setUri(Uri.parse(overlayClip.sourceUri))
@@ -8470,7 +8473,6 @@ class MainActivity : AppCompatActivity() {
                     // dapat menghasilkan ukuran output berbeda antar-sumber overlay.
                     val canvasWidth = (outputWidth ?: frameW.toInt()).coerceAtLeast(2)
                     val canvasHeight = (outputHeight ?: frameH.toInt()).coerceAtLeast(2)
-                    val aspect = canvasWidth.toFloat() / canvasHeight.toFloat()
                     add(
                         Presentation.createForWidthAndHeight(
                             canvasWidth,
@@ -8479,26 +8481,18 @@ class MainActivity : AppCompatActivity() {
                         )
                     )
                     val scale = overlayClip.transformScale.coerceIn(0.2f, 4f)
-                    val radians = Math.toRadians(overlayClip.rotationDegrees.toDouble())
-                    val cosA = kotlin.math.cos(radians).toFloat()
-                    val sinA = kotlin.math.sin(radians).toFloat()
-                    val tx = 2f * overlayClip.transformX / frameW
-                    val ty = -2f * overlayClip.transformY / frameH
-                    val matrixValues = floatArrayOf(
-                        scale * cosA, scale * sinA / aspect, tx,
-                        -scale * sinA * aspect, scale * cosA, ty,
-                        0f, 0f, 1f
-                    )
+                    val tx = (2f * overlayClip.transformX / frameW).coerceIn(-1f, 1f)
+                    val ty = (-2f * overlayClip.transformY / frameH).coerceIn(-1f, 1f)
                     recordPlaybackDiagnostic(
                         "EXPORT_OVERLAY id=${overlayClip.id.take(8)} " +
                             "scale=$scale rotation=${overlayClip.rotationDegrees} " +
                             "x=${overlayClip.transformX} y=${overlayClip.transformY} " +
                             "frame=${frameW.toInt()}x${frameH.toInt()} " +
                             "canvas=${canvasWidth}x${canvasHeight} " +
-                            "matrix=${matrixValues.joinToString(",")}"
+                            "compositorAnchor=$tx,$ty"
                     )
-                    val matrix = Matrix().apply { setValues(matrixValues) }
-                    add(androidx.media3.effect.MatrixTransformation { Matrix(matrix) })
+                    // Transformasi dipindahkan ke compositor. Ini menghindari satu
+                    // tahap MatrixTransformation/GL texture tambahan per overlay.
                     if (overlayClip.chromaKeyEnabled) add(
                         ChromaKeyGlEffect(
                             overlayClip.chromaKeyColor,
@@ -8594,14 +8588,25 @@ class MainActivity : AppCompatActivity() {
                         return inputSizes.last()
                     }
 
-                    // Posisi dan skala klip sudah diproses oleh MatrixTransformation
-                    // pada masing-masing overlay. Di compositor, tampilkan setiap input
-                    // pada kanvas penuh tanpa mengubah posisi lagi.
+                    // Transformasi overlay dilakukan compositor agar tidak membuat
+                    // rantai efek GL tambahan yang menghabiskan texture pool.
                     override fun getOverlaySettings(
                         inputId: Int,
                         presentationTimeUs: Long
                     ): OverlaySettings {
-                        return StaticOverlaySettings.Builder().build()
+                        val overlayClip = exportOverlayClips.getOrNull(inputId)
+                            ?: return StaticOverlaySettings.Builder().build()
+                        val frameW = playerView.width.coerceAtLeast(1).toFloat()
+                        val frameH = playerView.height.coerceAtLeast(1).toFloat()
+                        val scale = overlayClip.transformScale.coerceIn(0.2f, 4f)
+                        val tx = (2f * overlayClip.transformX / frameW).coerceIn(-1f, 1f)
+                        val ty = (-2f * overlayClip.transformY / frameH).coerceIn(-1f, 1f)
+                        return StaticOverlaySettings.Builder()
+                            .setScale(scale, scale)
+                            .setRotationDegrees(overlayClip.rotationDegrees)
+                            .setBackgroundFrameAnchor(tx, ty)
+                            .setOverlayFrameAnchor(0f, 0f)
+                            .build()
                     }
                 })
                 .build()
