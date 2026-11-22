@@ -34,6 +34,9 @@ import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.C
 import androidx.media3.common.Player
+import androidx.media3.common.OverlaySettings
+import androidx.media3.common.VideoCompositorSettings
+import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.ExperimentalApi
 import androidx.media3.exoplayer.SeekParameters
@@ -52,6 +55,7 @@ import androidx.media3.transformer.Transformer
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.effect.Presentation
+import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.Crop
 import androidx.media3.effect.FrameDropEffect
 import androidx.media3.effect.CanvasOverlay
@@ -8394,12 +8398,12 @@ class MainActivity : AppCompatActivity() {
         }
 
         try {
-            // Urutan utama berisi video beserta audio asli dari setiap klip video.
+            // Sequence overlay ditambahkan lebih dahulu agar berada di lapisan depan.
+            // Pada Media3, input sequence dengan inputId lebih kecil digambar di atas
+            // sequence berikutnya. Video utama harus menjadi sequence video terakhir.
             val sequences = mutableListOf<EditedMediaItemSequence>()
-            sequences.add(EditedMediaItemSequence.withAudioAndVideoFrom(editedItems))
 
-            // Setiap klip overlay video menjadi sequence video paralel, sehingga
-            // Transformer mengompositkannya di atas video utama pada waktu yang tepat.
+            // Setiap klip overlay video menjadi sequence video paralel.
             overlayVideoClips.filter { it.durationMs > 0L }.forEach { overlayClip ->
                 val overlayStart = overlayClip.startTimeMs.coerceAtLeast(0L)
                 val overlayItem = MediaItem.Builder()
@@ -8463,6 +8467,11 @@ class MainActivity : AppCompatActivity() {
                 sequences.add(overlaySequence.build())
             }
 
+            // Video utama menjadi background compositor. Penempatannya setelah seluruh
+            // overlay penting: sebelumnya video utama berada di inputId 0 dan menutupi
+            // semua overlay yang berada di sequence berikutnya.
+            sequences.add(EditedMediaItemSequence.withAudioAndVideoFrom(editedItems))
+
             // Setiap layer audio menjadi sequence terpisah agar beberapa layer dapat
             // bercampur bersamaan, sementara addGap menjaga posisi klip di timeline.
             audioClipManager.lanes.forEach { lane ->
@@ -8524,7 +8533,25 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            val composition = Composition.Builder(sequences).build()
+            val composition = Composition.Builder(sequences)
+                .setVideoCompositorSettings(object : VideoCompositorSettings {
+                    // Ukuran output harus mengikuti video utama, bukan file overlay
+                    // yang kebetulan menjadi input pertama compositor.
+                    override fun getOutputSize(inputSizes: List<Size>): Size {
+                        return inputSizes.last()
+                    }
+
+                    // Posisi dan skala klip sudah diproses oleh MatrixTransformation
+                    // pada masing-masing overlay. Di compositor, tampilkan setiap input
+                    // pada kanvas penuh tanpa mengubah posisi lagi.
+                    override fun getOverlaySettings(
+                        inputId: Int,
+                        presentationTimeUs: Long
+                    ): OverlaySettings {
+                        return StaticOverlaySettings.Builder().build()
+                    }
+                })
+                .build()
             // Encode portrait frames in portrait dimensions instead of relying
             // only on a 90-degree rotation flag in MP4 metadata.
             val transformer = Transformer.Builder(this)
