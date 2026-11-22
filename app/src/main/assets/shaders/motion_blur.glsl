@@ -167,33 +167,35 @@ void main() {
     }
 
     float times = clamp(uTimes, 1.0, 6.0);
-    float fastMotion = smoothstep(0.8, 5.0, flowLength);
+    float fastMotion = smoothstep(0.65, 4.0, flowLength);
 
-    // Blur slider controls streak length; movement speed and Times extend it.
-    // Limit the radius to avoid sampling across the entire frame on outliers.
-    float radiusPixels = flowLength * (0.45 + 1.65 * uBlur) * times;
-    radiusPixels = clamp(radiusPixels, 0.0, 96.0);
+    // Make blur grow aggressively with actual movement. At high speed,
+    // fine texture should merge into a continuous directional smear.
+    // "Kabur" controls spatial reach; "Times" multiplies the integration span.
+    float blurReach = mix(0.85, 4.25, uBlur);
+    float radiusPixels = flowLength * blurReach * times * 1.35;
+    radiusPixels = clamp(radiusPixels, 0.0, 144.0);
     vec2 motionUv = normalize(flow + vec2(0.00001)) * radiusPixels * uTexelSize;
 
     vec3 streakColor = vec3(0.0);
     float totalWeight = 0.0;
 
-    // Dense directional integration of the current frame. 32 taps form one
-    // continuous streak rather than six separate historical silhouettes.
-    for (int i = 0; i < 32; i++) {
-        float t = (float(i) + 0.5) / 32.0;
+    // 48 evenly distributed taps avoid visible separated blobs and produce
+    // a smoother continuous streak even on fast, high-detail gameplay.
+    for (int i = 0; i < 48; i++) {
+        float t = (float(i) + 0.5) / 48.0;
         float position;
         float weight;
 
         if (uDirection < 0.5) {
             position = t * 2.0 - 1.0;
-            weight = exp(-2.2 * position * position);
+            weight = exp(-1.65 * position * position);
         } else if (uDirection < 1.5) {
             position = -t;
-            weight = exp(-1.35 * t);
+            weight = exp(-1.10 * t);
         } else {
             position = t;
-            weight = exp(-1.35 * t);
+            weight = exp(-1.10 * t);
         }
 
         vec2 sampleUv = clamp(
@@ -208,11 +210,10 @@ void main() {
 
     streakColor /= max(totalWeight, 0.0001);
 
-    // Fast movement deliberately loses fine detail into a smooth streak.
-    float strength = clamp(
-        uBlend * confidence * (0.72 + 0.28 * fastMotion),
-        0.0,
-        1.0
-    );
+    // Blend remains independently adjustable. Faster movement and higher
+    // blur strength suppress more of the original sharp detail.
+    float detailLoss = smoothstep(0.75, 6.0, flowLength) * uBlur;
+    float motionStrength = mix(0.78, 1.0, max(fastMotion, detailLoss));
+    float strength = clamp(uBlend * confidence * motionStrength, 0.0, 1.0);
     gl_FragColor = vec4(mix(current.rgb, streakColor, strength), current.a);
 }
