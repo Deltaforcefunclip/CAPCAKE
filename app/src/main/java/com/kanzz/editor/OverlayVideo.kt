@@ -36,6 +36,47 @@ data class OverlayVideoClip(
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
 
+/** Cari lane overlay yang tidak bertabrakan dengan clip lain. */
+internal fun findAvailableOverlayTrack(
+    clips: List<OverlayVideoClip>,
+    startTimeMs: Long,
+    durationMs: Long,
+    excludeId: String? = null,
+    maxTrackIndex: Int = 31
+): Int? {
+    if (durationMs <= 0L) return null
+    val start = startTimeMs.coerceAtLeast(0L)
+    val end = start + durationMs
+    for (lane in 0..maxTrackIndex) {
+        val occupied = clips.any { other ->
+            other.id != excludeId &&
+                other.trackIndex == lane &&
+                start < other.endTimeMs &&
+                end > other.startTimeMs
+        }
+        if (!occupied) return lane
+    }
+    return null
+}
+
+/** Memperbaiki project lama yang menyimpan clip bertumpuk pada lane yang sama. */
+private fun normalizeOverlayTrackConflicts(clips: MutableList<OverlayVideoClip>) {
+    val placed = mutableListOf<OverlayVideoClip>()
+    clips.sortedWith(compareBy<OverlayVideoClip> { it.startTimeMs }.thenBy { it.trackIndex })
+        .forEach { clip ->
+            val preferredLane = clip.trackIndex.coerceIn(0, 31)
+            val preferredFree = placed.none { other ->
+                other.trackIndex == preferredLane &&
+                    clip.startTimeMs < other.endTimeMs &&
+                    clip.endTimeMs > other.startTimeMs
+            }
+            clip.trackIndex = if (preferredFree) preferredLane else {
+                findAvailableOverlayTrack(placed, clip.startTimeMs, clip.durationMs, maxTrackIndex = 31) ?: 32
+            }
+            placed.add(clip)
+        }
+}
+
 object OverlayVideoCodec {
     fun encode(clips: List<OverlayVideoClip>): String = JSONArray().apply {
         clips.forEach { clip ->
@@ -84,6 +125,7 @@ object OverlayVideoCodec {
                 ))
             }
         }
+        normalizeOverlayTrackConflicts(target)
     }
 }
 
@@ -193,14 +235,22 @@ class OverlayVideoTrackView(
                     gestureHandler.removeCallbacks(longPressDrag)
                 }
                 if (dragging) {
-                    if (controller.pixelsPerMs > 0f) clip.startTimeMs =
+                    val candidateStart = if (controller.pixelsPerMs > 0f) {
                         (originStart + (dx / controller.pixelsPerMs).toLong()).coerceAtLeast(0L)
-                    val nextTrack = (originTrack + (dy / rowHeight).toInt()).coerceIn(0, 7)
-                    if (clip.trackIndex != nextTrack) {
-                        clip.trackIndex = nextTrack
-                        if (clip.trackIndex != lastDrawnTrack) {
-                            lastDrawnTrack = clip.trackIndex
-                            requestLayout()
+                    } else clip.startTimeMs
+                    val nextTrack = (originTrack + (dy / rowHeight).toInt()).coerceIn(0, 31)
+                    val availableTrack = findAvailableOverlayTrack(
+                        clips, candidateStart, clip.durationMs, excludeId = clip.id, maxTrackIndex = 31
+                    )
+                    // Posisi terakhir yang valid dipertahankan jika tujuan bertabrakan.
+                    if (availableTrack == nextTrack) {
+                        clip.startTimeMs = candidateStart
+                        if (clip.trackIndex != nextTrack) {
+                            clip.trackIndex = nextTrack
+                            if (clip.trackIndex != lastDrawnTrack) {
+                                lastDrawnTrack = clip.trackIndex
+                                requestLayout()
+                            }
                         }
                     }
                     invalidate()
