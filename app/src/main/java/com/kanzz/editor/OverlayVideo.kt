@@ -7,6 +7,8 @@ import android.graphics.Paint
 import android.graphics.RectF
 import android.view.MotionEvent
 import android.view.View
+import android.os.Handler
+import android.os.Looper
 import java.util.UUID
 import org.json.JSONArray
 import org.json.JSONObject
@@ -108,6 +110,15 @@ class OverlayVideoTrackView(
     private var originStart = 0L
     private var originTrack = 0
     private var dragging = false
+    private val gestureHandler = Handler(Looper.getMainLooper())
+    private var movedBeforeLongPress = false
+    private val longPressDrag = Runnable {
+        if (touched != null && !movedBeforeLongPress) {
+            dragging = true
+            parent?.requestDisallowInterceptTouchEvent(true)
+            onEditStart()
+        }
+    }
 
     fun select(id: String?) { selectedId = id; invalidate() }
     private fun laneCount() = maxOf(3, (clips.maxOfOrNull { it.trackIndex } ?: 0) + 2)
@@ -151,7 +162,6 @@ class OverlayVideoTrackView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
-                parent?.requestDisallowInterceptTouchEvent(true)
                 downX = event.x; downY = event.y
                 val lane = (event.y / rowHeight).toInt().coerceAtLeast(0)
                 touched = clips.lastOrNull {
@@ -162,6 +172,9 @@ class OverlayVideoTrackView(
                 originStart = touched?.startTimeMs ?: 0L
                 originTrack = touched?.trackIndex ?: lane
                 dragging = false
+                movedBeforeLongPress = false
+                gestureHandler.removeCallbacks(longPressDrag)
+                if (touched != null) gestureHandler.postDelayed(longPressDrag, 420L)
                 onSelect(touched); invalidate()
                 return true
             }
@@ -169,7 +182,8 @@ class OverlayVideoTrackView(
                 val clip = touched ?: return true
                 val dx = event.x - downX; val dy = event.y - downY
                 if (!dragging && (kotlin.math.abs(dx) > 8f * density || kotlin.math.abs(dy) > 8f * density)) {
-                    dragging = true; onEditStart()
+                    movedBeforeLongPress = true
+                    gestureHandler.removeCallbacks(longPressDrag)
                 }
                 if (dragging) {
                     if (controller.pixelsPerMs > 0f) clip.startTimeMs =
@@ -180,6 +194,7 @@ class OverlayVideoTrackView(
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                gestureHandler.removeCallbacks(longPressDrag)
                 if (dragging) onChanged()
                 parent?.requestDisallowInterceptTouchEvent(false)
                 performClick(); return true

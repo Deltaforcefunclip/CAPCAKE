@@ -128,6 +128,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var overlayVideoTracksContainer: LinearLayout
     private val overlayVideoClips = mutableListOf<OverlayVideoClip>()
     private var selectedOverlayVideoClipId: String? = null
+    private var overlaySelectionOverlay: OverlayVideoSelectionView? = null
     private lateinit var audioTimelineFrame: FrameLayout
     private lateinit var previewTextOverlay: TextView
     private lateinit var textSelectionOverlay: View
@@ -414,9 +415,10 @@ class MainActivity : AppCompatActivity() {
     // Dipisah dari sinkronisasi audio/properti agar pekerjaan berat tetap 10 kali/detik.
     private val timelineFrameUpdater = object : Runnable {
         override fun run() {
-            if (::timeLabel.isInitialized && player.isPlaying) {
-                updateTime()
-            }
+            if (::timeLabel.isInitialized && player.isPlaying) updateTime()
+            if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.invalidate()
+            overlaySelectionOverlay?.invalidate()
+            if (isTimelineScrubbing) syncOverlayVideoPreview()
             handler.postDelayed(this, 33L)
         }
     }
@@ -1961,6 +1963,15 @@ class MainActivity : AppCompatActivity() {
             }
         }
         previewFrame.addView(textSelectionOverlay, FrameLayout.LayoutParams(-1, -1))
+        overlaySelectionOverlay = OverlayVideoSelectionView(
+            this,
+            clipProvider = { overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } },
+            previewVisible = { clip -> overlayPreviewPlayerView?.visibility == View.VISIBLE && activeOverlayPreviewId == clip.id },
+            onGestureStart = { pushUndoSnapshot() },
+            onTransformChanged = { clip -> applyOverlayPreviewTransform(clip); syncOverlayVideoPreview() },
+            onGestureEnd = { saveCurrentProject() }
+        ).apply { elevation = dp(18).toFloat() }
+        previewFrame.addView(overlaySelectionOverlay, FrameLayout.LayoutParams(-1, -1))
         setupPreviewTransformGesture(ratioOverlay)
         applyPreviewTransform()
 
@@ -4814,6 +4825,7 @@ class MainActivity : AppCompatActivity() {
             view.translationX = clip.transformX
             view.translationY = clip.transformY
         }
+        overlaySelectionOverlay?.invalidate()
     }
 
     private fun syncOverlayVideoPreview() {
@@ -4836,9 +4848,9 @@ class MainActivity : AppCompatActivity() {
             else -> timelineController.positionMs
         }.coerceAtLeast(0L)
 
-        val clip = overlayVideoClips
-            .filter { position >= it.startTimeMs && position < it.endTimeMs }
-            .maxByOrNull { it.trackIndex }
+        val timelineClip = overlayVideoClips.filter { position >= it.startTimeMs && position < it.endTimeMs }.maxByOrNull { it.trackIndex }
+        val selectedPreviewOnly = timelineClip == null && !player.isPlaying && !isTimelineScrubbing
+        val clip = timelineClip ?: if (selectedPreviewOnly) overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } else null
         if (clip == null) {
             overlayPlayer.pause()
             overlayView.visibility = View.GONE
@@ -4865,7 +4877,7 @@ class MainActivity : AppCompatActivity() {
             activeOverlayPreviewEffectSignature = effectSignature
         }
 
-        val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
+        val localPosition = if (selectedPreviewOnly) 0L else (position - clip.startTimeMs).coerceAtLeast(0L)
         if (activeOverlayPreviewId != clip.id) {
             val item = MediaItem.Builder()
                 .setUri(Uri.parse(clip.sourceUri))
@@ -4889,8 +4901,9 @@ class MainActivity : AppCompatActivity() {
             if (drift > seekThreshold) overlayPlayer.seekTo(localPosition)
         }
 
-        overlayPlayer.playWhenReady = player.isPlaying && !isTimelineScrubbing
-        if (!player.isPlaying || isTimelineScrubbing) overlayPlayer.pause()
+        overlayPlayer.playWhenReady = player.isPlaying && !isTimelineScrubbing && !selectedPreviewOnly
+        if (!player.isPlaying || isTimelineScrubbing || selectedPreviewOnly) overlayPlayer.pause()
+        overlaySelectionOverlay?.invalidate()
     }
 
     private fun showOverlayChromaKeyDialog() {
@@ -5065,14 +5078,28 @@ class MainActivity : AppCompatActivity() {
             .show()
     }
 
+    private fun readOverlayVideoDimensions(uri: Uri): Pair<Int, Int> {
+        val retriever = android.media.MediaMetadataRetriever()
+        return try {
+            retriever.setDataSource(this, uri)
+            var w = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toIntOrNull() ?: 0
+            var h = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toIntOrNull() ?: 0
+            val rotation = retriever.extractMetadata(android.media.MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+            if (rotation == 90 || rotation == 270) { val tmp = w; w = h; h = tmp }
+            w to h
+        } catch (_: Exception) { 0 to 0 } finally { runCatching { retriever.release() } }
+    }
+
     private fun addOverlayVideoClip(uri: Uri) {
         try { contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
         val duration = readVideoDurationMs(uri)
         if (duration <= 0L) { showMessage("Durasi video overlay tidak dapat dibaca."); return }
         pushUndoSnapshot()
         val name = runCatching { uri.lastPathSegment?.substringAfterLast("/") }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Overlay Video"
+        val dimensions = readOverlayVideoDimensions(uri)
         val clip = OverlayVideoClip(sourceUri = uri.toString(), startTimeMs = timelineController.positionMs.coerceAtLeast(0L),
-            durationMs = duration, sourceDurationMs = duration, name = name)
+            durationMs = duration, sourceDurationMs = duration, name = name,
+            videoWidth = dimensions.first, videoHeight = dimensions.second)
         overlayVideoClips.add(clip)
         selectedOverlayVideoClipId = clip.id
         activeLayerGroup = "OVERLAY"
@@ -5091,12 +5118,16 @@ class MainActivity : AppCompatActivity() {
                 selectedVideoClipId = null; videoSelected = false
                 activeLayerGroup = "OVERLAY"
                 updateLayerGroupVisibility(); updateToolMenu()
+                syncOverlayVideoPreview()
+                overlaySelectionOverlay?.invalidate()
             },
             onEditStart = { pushUndoSnapshot() },
             onChanged = { refreshOverlayVideoTracks(); saveCurrentProject() }
         )
         view.select(selectedOverlayVideoClipId)
         overlayVideoTracksContainer.addView(view, LinearLayout.LayoutParams(-1, -2))
+        overlayVideoTracksContainer.invalidate()
+        overlaySelectionOverlay?.invalidate()
     }
 
     private fun restoreOverlayVideoClips(raw: String?) = OverlayVideoCodec.decode(raw, overlayVideoClips)
