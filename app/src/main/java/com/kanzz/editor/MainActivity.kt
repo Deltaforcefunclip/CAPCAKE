@@ -361,6 +361,7 @@ class MainActivity : AppCompatActivity() {
     private val motionBlurRenderHolder = ProgressHolder()
     private var motionBlurRenderGeneration = 0
     private var pendingMotionBlurClipId: String? = null
+    private var motionBlurModelPreparing = false
     private val motionBlurRenderRunnable = object : Runnable {
         override fun run() {
             val active = motionBlurRenderTransformer ?: return
@@ -6587,7 +6588,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun motionBlurCacheFile(clip: VideoClip): File {
         val identity = listOf(
-            "motion_blur_streak_v3", clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
+            "motion_blur_neuflow_ai_v1", clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
             clip.motionBlurIntensity, clip.motionBlurBlend,
             clip.motionBlurDirection, clip.motionBlurTimes
         ).joinToString("|")
@@ -6599,6 +6600,31 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun startMotionBlurPreRender(clip: VideoClip) {
+        if (motionBlurModelPreparing) {
+            showMessage("Model AI Motion Blur sedang disiapkan.")
+            return
+        }
+        val aiModel = NeuFlowV2Model.modelFile(this)
+        if (!aiModel.isFile || aiModel.length() != NeuFlowV2Model.MODEL_SIZE_BYTES) {
+            motionBlurModelPreparing = true
+            showMessage("Mengunduh model AI Motion Blur (sekitar 42 MB)...")
+            Thread {
+                try {
+                    NeuFlowV2Model.ensureDownloaded(this)
+                    handler.post {
+                        motionBlurModelPreparing = false
+                        showMessage("Model AI siap. Memulai render Motion Blur.")
+                        startMotionBlurPreRender(clip)
+                    }
+                } catch (error: Exception) {
+                    handler.post {
+                        motionBlurModelPreparing = false
+                        showMessage("Model AI gagal diunduh: ${error.message}")
+                    }
+                }
+            }.start()
+            return
+        }
         if (motionBlurRenderTransformer != null) {
             showMessage("Motion Blur sedang diproses.")
             return
@@ -6656,11 +6682,12 @@ class MainActivity : AppCompatActivity() {
                 .setEffects(
                     Effects(
                         emptyList(),
-                        listOf(MotionBlurGlEffect(
+                        listOf(AiMotionBlurGlEffect(
                             blur = clip.motionBlurIntensity,
                             blend = clip.motionBlurBlend,
                             direction = clip.motionBlurDirection,
-                            times = clip.motionBlurTimes
+                            times = clip.motionBlurTimes,
+                            modelFile = aiModel
                         ))
                     )
                 )
