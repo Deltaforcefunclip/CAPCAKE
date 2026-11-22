@@ -43,25 +43,18 @@ object VideoDiagnostics {
     )
 
     fun showMenu(context: Context, onPickVideo: (Boolean) -> Unit) {
-        val checked = BooleanArray(categories.size) { true }
+        val list = categories.mapIndexed { index, label -> "${index + 1}. $label" }.joinToString("\\n")
         AlertDialog.Builder(context)
             .setTitle("Diagnostik Video")
-            .setMessage("Pilih jenis analisis. Metadata dasar dan dukungan decoder selalu diperiksa. Memilih FPS, timestamp, GOP, ukuran sample, atau integritas akan menjalankan Full Scan. Video tidak diimpor atau diubah.")
-            .setMultiChoiceItems(categories, checked) { _, which, isChecked ->
-                checked[which] = isChecked
-            }
-            .setPositiveButton("PILIH VIDEO") { _, _ ->
-                if (checked.none { it }) {
-                    AlertDialog.Builder(context)
-                        .setMessage("Pilih minimal satu jenis analisis.")
-                        .setPositiveButton("OK", null).show()
-                } else {
-                    val full = checked[2] || checked[3] || checked[4] || checked[5] || checked[7]
-                    onPickVideo(full)
-                }
-            }
+            .setMessage(
+                "JENIS ANALISIS\\n$list\\n\\n" +
+                    "QUICK SCAN: metadata, codec, audio, decoder, beban decoding, HDR, dan kompatibilitas.\\n\\n" +
+                    "FULL SCAN: semua pemeriksaan Quick Scan ditambah pemindaian timestamp, FPS aktual, keyframe/GOP, ukuran sample, dan integritas pembacaan.\\n\\n" +
+                    "Video hanya dibaca. Tidak diimpor atau diubah."
+            )
+            .setPositiveButton("FULL SCAN") { _, _ -> onPickVideo(true) }
+            .setNegativeButton("QUICK SCAN") { _, _ -> onPickVideo(false) }
             .setNeutralButton("RIWAYAT") { _, _ -> showHistory(context) }
-            .setNegativeButton("BATAL", null)
             .show()
     }
 
