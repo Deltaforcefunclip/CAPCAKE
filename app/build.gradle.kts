@@ -13,7 +13,13 @@ android {
         targetSdk = 35
         versionCode = 1
         versionName = "1.0"
+        ndk { abiFilters += "arm64-v8a" }
+        externalNativeBuild { cmake { cppFlags += "-std=c++17"; arguments += listOf("-DANDROID_STL=c++_shared", "-DANDROID_ARM_NEON=ON") } }
     }
+
+    ndkVersion = "26.1.10909125"
+    externalNativeBuild { cmake { path = file("src/main/cpp/CMakeLists.txt"); version = "3.22.1" } }
+    packaging { jniLibs.pickFirsts += "**/libc++_shared.so" }
 
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
