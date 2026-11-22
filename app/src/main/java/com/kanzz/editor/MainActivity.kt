@@ -453,7 +453,7 @@ class MainActivity : AppCompatActivity() {
                     motionPosition >= it.timelineStartMs && motionPosition < it.timelineEndMs
                 }
                 motionBlurPreviewState.blur = motionClip?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
-                motionBlurPreviewState.blend = motionClip?.motionBlurBlend?.coerceIn(0f, 1f) ?: 0.30f
+                motionBlurPreviewState.blend = motionClip?.motionBlurBlend?.coerceIn(0f, 1f) ?: 0f
                 motionBlurPreviewState.direction = motionClip?.motionBlurDirection?.coerceIn(0, 2) ?: 0
                 motionBlurPreviewState.times = motionClip?.motionBlurTimes?.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 } ?: 4
                 updateTextPreview(force = false)
@@ -3687,7 +3687,7 @@ class MainActivity : AppCompatActivity() {
         } == true
         motionBlurPreviewState.blur = if (activeMotionBlurCached) 0f
             else activeVideo?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
-        motionBlurPreviewState.blend = activeVideo?.motionBlurBlend?.coerceIn(0f, 1f) ?: 0.30f
+        motionBlurPreviewState.blend = activeVideo?.motionBlurBlend?.coerceIn(0f, 1f) ?: 0f
         motionBlurPreviewState.direction = activeVideo?.motionBlurDirection?.coerceIn(0, 2) ?: 0
         motionBlurPreviewState.times = activeVideo?.motionBlurTimes?.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 } ?: 4
 

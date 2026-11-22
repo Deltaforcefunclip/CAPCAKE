@@ -94,6 +94,15 @@ object TimelineStateCodec {
             val clips = root.optJSONArray("clips") ?: JSONArray()
             for (i in 0 until clips.length()) {
                 val item = clips.getJSONObject(i)
+                var motionBlurIntensity = item.optDouble("motionBlurIntensity", 0.0).toFloat().coerceIn(0f, 1f)
+                var motionBlurBlend = item.optDouble("motionBlurBlend", 0.0).toFloat().coerceIn(0f, 1f)
+                // Migrasi nilai bawaan lama yang aktif otomatis (30% + 30%) menjadi OFF.
+                if (kotlin.math.abs(motionBlurIntensity - 0.30f) < 0.0001f &&
+                    kotlin.math.abs(motionBlurBlend - 0.30f) < 0.0001f
+                ) {
+                    motionBlurIntensity = 0f
+                    motionBlurBlend = 0f
+                }
                 manager.clips.add(VideoClip(
                     id = item.optString("id"),
                     sourceUri = item.getString("sourceUri"),
@@ -111,8 +120,8 @@ object TimelineStateCodec {
                     transformScale = item.optDouble("transformScale", 1.0).toFloat().coerceIn(0.35f, 5f),
                     transformX = item.optDouble("transformX", 0.0).toFloat(),
                     transformY = item.optDouble("transformY", 0.0).toFloat(),
-                    motionBlurIntensity = item.optDouble("motionBlurIntensity", 0.0).toFloat().coerceIn(0f, 1f),
-                    motionBlurBlend = item.optDouble("motionBlurBlend", 0.65).toFloat().coerceIn(0f, 1f),
+                    motionBlurIntensity = motionBlurIntensity,
+                    motionBlurBlend = motionBlurBlend,
                     motionBlurDirection = item.optInt("motionBlurDirection", 0).coerceIn(0, 2),
                     motionBlurTimes = item.optInt("motionBlurTimes", 4).let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 },
                     colorGrading = item.optJSONObject("colorGrading")?.let { grade ->
