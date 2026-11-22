@@ -120,15 +120,17 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var player: ExoPlayer
     private lateinit var playerView: PlayerView
-    private var overlayPreviewPlayerView: PlayerView? = null
-    private var overlayPreviewPlayer: ExoPlayer? = null
-    private var activeOverlayPreviewId: String? = null
-    private var lastOverlayClockSyncAtMs = 0L
-    private var lastOverlayHardSeekAtMs = 0L
-    private var lastOverlayAppliedSpeed = 1f
-    private var lastOverlayMasterSpeed = 1f
-    private var overlayPreviewFailed = false
-    private var activeOverlayPreviewEffectSignature: String? = null
+    private data class OverlayPreviewSession(
+        val player: ExoPlayer,
+        val view: PlayerView,
+        var preparedClipId: String? = null,
+        var lastClockSyncAtMs: Long = 0L,
+        var lastHardSeekAtMs: Long = 0L,
+        var lastMasterSpeed: Float = 1f,
+        var effectSignature: String? = null,
+        var failed: Boolean = false
+    )
+    private val overlayPreviewSessions = linkedMapOf<String, OverlayPreviewSession>()
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
     private lateinit var audioTracksContainer: LinearLayout
@@ -515,11 +517,7 @@ class MainActivity : AppCompatActivity() {
                     effectClipManager.clips.clear()
                     overlayVideoClips.clear()
                     selectedOverlayVideoClipId = null
-                    activeOverlayPreviewId = null
-                    overlayPreviewFailed = false
-                    overlayPreviewPlayer?.stop()
-                    overlayPreviewPlayer?.clearMediaItems()
-                    overlayPreviewPlayerView?.visibility = View.GONE
+                    clearOverlayPreviewSessions()
                     undoStack.clear()
                     redoStack.clear()
                     if (::overlayVideoTracksContainer.isInitialized) refreshOverlayVideoTracks()
@@ -990,10 +988,7 @@ class MainActivity : AppCompatActivity() {
         effectClipManager.clips.clear()
         overlayVideoClips.clear()
         selectedOverlayVideoClipId = null
-        activeOverlayPreviewId = null
-        overlayPreviewPlayer?.stop()
-        overlayPreviewPlayer?.clearMediaItems()
-        overlayPreviewPlayerView?.visibility = View.GONE
+        clearOverlayPreviewSessions()
         selectedEffectClipId = null
         selectedTextClipId = null
         activeLayerGroup = "AUDIO"
@@ -1635,48 +1630,6 @@ class MainActivity : AppCompatActivity() {
             playerView,
             FrameLayout.LayoutParams(-1, -1)
         )
-        overlayPreviewPlayerView = (android.view.LayoutInflater.from(this)
-            .inflate(R.layout.preview_player_view, previewFrame, false) as PlayerView).apply {
-            useController = false
-            setBackgroundColor(Color.TRANSPARENT)
-            setShutterBackgroundColor(Color.TRANSPARENT)
-            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
-            setKeepContentOnPlayerReset(true)
-            visibility = View.GONE
-        }
-        overlayPreviewPlayer = ExoPlayer.Builder(this).build().also { overlay ->
-            overlay.volume = 0f
-            overlayPreviewPlayerView?.player = overlay
-            overlay.addListener(object : androidx.media3.common.Player.Listener {
-                override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
-                    val clip = overlayVideoClips.firstOrNull { it.id == activeOverlayPreviewId } ?: return
-                    var width = videoSize.width
-                    var height = videoSize.height
-                    if (videoSize.unappliedRotationDegrees == 90 || videoSize.unappliedRotationDegrees == 270) {
-                        val swap = width; width = height; height = swap
-                    }
-                    if (width > 0 && height > 0 &&
-                        (clip.videoWidth != width || clip.videoHeight != height)
-                    ) {
-                        clip.videoWidth = width
-                        clip.videoHeight = height
-                        // Perbarui ukuran PlayerView overlay sesuai rasio video yang benar.
-                        applyOverlayPreviewTransform(clip)
-                        overlaySelectionOverlay?.postInvalidateOnAnimation()
-                        recordPlaybackDiagnostic("OVERLAY_VIDEO_SIZE clip=" + clip.id.take(8) + " size=" + width + "x" + height)
-                    }
-                }
-
-                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
-                    overlayPreviewFailed = true
-                    recordPlaybackDiagnostic("OVERLAY_PLAYER_ERROR code=${error.errorCodeName} message=${error.message}")
-                    overlay.pause()
-                    overlayPreviewPlayerView?.visibility = View.GONE
-                }
-            })
-        }
-        previewFrame.addView(overlayPreviewPlayerView, FrameLayout.LayoutParams(-1, -1))
-
         dreamyPreviewOverlay = View(this).apply {
             isClickable = false
             isFocusable = false
@@ -2041,7 +1994,7 @@ class MainActivity : AppCompatActivity() {
         overlaySelectionOverlay = OverlayVideoSelectionView(
             this,
             clipProvider = { overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } },
-            previewVisible = { clip -> overlayPreviewPlayerView?.visibility == View.VISIBLE && activeOverlayPreviewId == clip.id },
+            previewVisible = { clip -> overlayPreviewSessions[clip.id]?.view?.visibility == View.VISIBLE },
             onGestureStart = { pushUndoSnapshot() },
             onTransformChanged = { clip -> applyOverlayPreviewTransform(clip); syncOverlayVideoPreview() },
             onGestureEnd = { saveCurrentProject() }
@@ -4979,179 +4932,206 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
-        overlayPreviewPlayerView?.let { view ->
-            // PlayerView overlay sebelumnya memenuhi kotak preview 1:1.
-            // Ukur ulang wadahnya agar mengikuti rasio sumber video, lalu
-            // biarkan RESIZE_MODE_FIT menangani ukuran frame di dalamnya.
-            val parentView = view.parent as? View
-            val parentWidth = parentView?.width ?: 0
-            val parentHeight = parentView?.height ?: 0
-            val videoWidth = clip.videoWidth
-            val videoHeight = clip.videoHeight
-            if (parentWidth > 0 && parentHeight > 0 && videoWidth > 0 && videoHeight > 0) {
-                val aspect = videoWidth.toFloat() / videoHeight.toFloat()
-                val fittedWidth: Int
-                val fittedHeight: Int
-                if (aspect >= parentWidth.toFloat() / parentHeight.toFloat()) {
-                    fittedWidth = parentWidth
-                    fittedHeight = (parentWidth / aspect).toInt().coerceAtLeast(1)
-                } else {
-                    fittedHeight = parentHeight
-                    fittedWidth = (parentHeight * aspect).toInt().coerceAtLeast(1)
-                }
-                val params = view.layoutParams as? FrameLayout.LayoutParams
-                if (params == null || params.width != fittedWidth || params.height != fittedHeight ||
-                    params.gravity != Gravity.CENTER
-                ) {
-                    view.layoutParams = FrameLayout.LayoutParams(
-                        fittedWidth, fittedHeight, Gravity.CENTER
-                    )
-                }
+        val view = overlayPreviewSessions[clip.id]?.view ?: return
+        val parentWidth = previewFrame.width
+        val parentHeight = previewFrame.height
+        val videoWidth = clip.videoWidth
+        val videoHeight = clip.videoHeight
+        if (parentWidth > 0 && parentHeight > 0 && videoWidth > 0 && videoHeight > 0) {
+            val aspect = videoWidth.toFloat() / videoHeight.toFloat()
+            val fittedWidth: Int
+            val fittedHeight: Int
+            if (aspect >= parentWidth.toFloat() / parentHeight.toFloat()) {
+                fittedWidth = parentWidth
+                fittedHeight = (parentWidth / aspect).toInt().coerceAtLeast(1)
+            } else {
+                fittedHeight = parentHeight
+                fittedWidth = (parentHeight * aspect).toInt().coerceAtLeast(1)
             }
-            view.pivotX = view.width / 2f
-            view.pivotY = view.height / 2f
-            view.scaleX = clip.transformScale.coerceIn(0.2f, 4f)
-            view.scaleY = clip.transformScale.coerceIn(0.2f, 4f)
-            view.rotation = clip.rotationDegrees
-            view.translationX = clip.transformX
-            view.translationY = clip.transformY
+            val params = view.layoutParams as? FrameLayout.LayoutParams
+            if (params == null || params.width != fittedWidth || params.height != fittedHeight || params.gravity != Gravity.CENTER) {
+                view.layoutParams = FrameLayout.LayoutParams(fittedWidth, fittedHeight, Gravity.CENTER)
+            }
         }
+        view.pivotX = view.width / 2f
+        view.pivotY = view.height / 2f
+        view.scaleX = clip.transformScale.coerceIn(0.2f, 4f)
+        view.scaleY = clip.transformScale.coerceIn(0.2f, 4f)
+        view.rotation = clip.rotationDegrees
+        view.translationX = clip.transformX
+        view.translationY = clip.transformY
         overlaySelectionOverlay?.invalidate()
     }
 
+    private fun createOverlayPreviewSession(clip: OverlayVideoClip): OverlayPreviewSession {
+        val view = (android.view.LayoutInflater.from(this)
+            .inflate(R.layout.preview_player_view, previewFrame, false) as PlayerView).apply {
+            useController = false
+            setBackgroundColor(Color.TRANSPARENT)
+            setShutterBackgroundColor(Color.TRANSPARENT)
+            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+            setKeepContentOnPlayerReset(true)
+            visibility = View.VISIBLE
+        }
+        val overlay = ExoPlayer.Builder(this).build().apply { volume = 0f }
+        view.player = overlay
+        val session = OverlayPreviewSession(overlay, view)
+        overlay.addListener(object : androidx.media3.common.Player.Listener {
+            override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
+                val currentClip = overlayVideoClips.firstOrNull { it.id == clip.id } ?: return
+                var width = videoSize.width
+                var height = videoSize.height
+                if (videoSize.unappliedRotationDegrees == 90 || videoSize.unappliedRotationDegrees == 270) {
+                    val swap = width; width = height; height = swap
+                }
+                if (width > 0 && height > 0 &&
+                    (currentClip.videoWidth != width || currentClip.videoHeight != height)
+                ) {
+                    currentClip.videoWidth = width
+                    currentClip.videoHeight = height
+                    applyOverlayPreviewTransform(currentClip)
+                    overlaySelectionOverlay?.postInvalidateOnAnimation()
+                    recordPlaybackDiagnostic("OVERLAY_VIDEO_SIZE clip=${currentClip.id.take(8)} size=${width}x${height}")
+                }
+            }
+            override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                session.failed = true
+                recordPlaybackDiagnostic("OVERLAY_PLAYER_ERROR clip=${clip.id.take(8)} code=${error.errorCodeName} message=${error.message}")
+                overlay.pause()
+                view.visibility = View.GONE
+            }
+        })
+        previewFrame.addView(view, FrameLayout.LayoutParams(-1, -1))
+        view.elevation = dp(4).toFloat() + clip.trackIndex
+        return session
+    }
+
+    private fun clearOverlayPreviewSessions() {
+        overlayPreviewSessions.values.toList().forEach { session ->
+            runCatching { session.player.stop() }
+            session.view.player = null
+            session.player.release()
+            (session.view.parent as? android.view.ViewGroup)?.removeView(session.view)
+        }
+        overlayPreviewSessions.clear()
+    }
+
     private fun syncOverlayVideoPreview() {
-        val overlayView = overlayPreviewPlayerView ?: return
-        val overlayPlayer = overlayPreviewPlayer ?: return
         if (isFinishing || isDestroyed || !editorOpen || overlayVideoClips.isEmpty()) {
-            overlayPlayer.pause()
-            overlayView.visibility = View.GONE
-            activeOverlayPreviewId = null
-            activeOverlayPreviewEffectSignature = null
-            lastOverlayClockSyncAtMs = 0L
-            lastOverlayHardSeekAtMs = 0L
-            runCatching { overlayPlayer.setVideoEffects(emptyList()) }
+            clearOverlayPreviewSessions()
             return
         }
-
-        // Saat playback, ambil jam timeline dari pemetaan player utama (bukan jam
-        // player overlay). Saat scrub, posisi jari adalah sumber kebenaran.
         val position = when {
             isTimelineScrubbing -> pendingScrubPositionMs
             player.isPlaying -> currentTimelinePosition()
             else -> timelineController.positionMs
         }.coerceAtLeast(0L)
 
-        val timelineClip = overlayVideoClips.filter { position >= it.startTimeMs && position < it.endTimeMs }.maxByOrNull { it.trackIndex }
-        val selectedPreviewOnly = timelineClip == null && !player.isPlaying && !isTimelineScrubbing
-        val clip = timelineClip ?: if (selectedPreviewOnly) overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } else null
-        if (clip == null) {
-            overlayPlayer.pause()
-            overlayView.visibility = View.GONE
-            activeOverlayPreviewId = null
-            activeOverlayPreviewEffectSignature = null
-            overlayPlayer.setVideoEffects(emptyList())
-            return
+        val activeClips = overlayVideoClips
+            .filter { position >= it.startTimeMs && position < it.endTimeMs }
+            .sortedBy { it.trackIndex }
+        val selectedPreviewOnly = activeClips.isEmpty() && !player.isPlaying && !isTimelineScrubbing
+        val desiredClips = if (activeClips.isNotEmpty()) activeClips else {
+            if (selectedPreviewOnly) listOfNotNull(overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId }) else emptyList()
+        }
+        val desiredIds = desiredClips.map { it.id }.toSet()
+
+        // Batasi decoder/tekstur hanya untuk clip yang sedang tampil.
+        overlayPreviewSessions.keys.toList().filter { it !in desiredIds }.forEach { id ->
+            val old = overlayPreviewSessions.remove(id) ?: return@forEach
+            runCatching { old.player.stop() }
+            old.view.player = null
+            old.player.release()
+            (old.view.parent as? android.view.ViewGroup)?.removeView(old.view)
         }
 
-        overlayView.visibility = View.VISIBLE
-        applyOverlayPreviewTransform(clip)
+        val masterSpeed = player.playbackParameters.speed
+        val now = android.os.SystemClock.elapsedRealtime()
+        desiredClips.forEach { clip ->
+            val session = overlayPreviewSessions.getOrPut(clip.id) { createOverlayPreviewSession(clip) }
+            val overlayPlayer = session.player
+            val overlayView = session.view
+            overlayView.visibility = View.VISIBLE
+            overlayView.elevation = dp(4).toFloat() + clip.trackIndex
+            applyOverlayPreviewTransform(clip)
 
-        val effectSignature = "${clip.chromaKeyEnabled}:${clip.chromaKeyColor}:" +
-            "${clip.chromaKeyThreshold}:${clip.chromaKeySoftness}"
-        if (activeOverlayPreviewEffectSignature != effectSignature) {
-            val effects = if (clip.chromaKeyEnabled) listOf(
-                ChromaKeyGlEffect(
-                    clip.chromaKeyColor,
-                    clip.chromaKeyThreshold,
-                    clip.chromaKeySoftness
-                )
-            ) else emptyList()
-            runCatching { overlayPlayer.setVideoEffects(effects) }
-                .onFailure { recordPlaybackDiagnostic("OVERLAY_EFFECT_ERROR ${it.javaClass.simpleName}: ${it.message}") }
-            activeOverlayPreviewEffectSignature = effectSignature
-        }
+            val effectSignature = "${clip.chromaKeyEnabled}:${clip.chromaKeyColor}:${clip.chromaKeyThreshold}:${clip.chromaKeySoftness}"
+            if (session.effectSignature != effectSignature) {
+                val effects = if (clip.chromaKeyEnabled) listOf(
+                    ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
+                ) else emptyList()
+                runCatching { overlayPlayer.setVideoEffects(effects) }
+                    .onFailure { recordPlaybackDiagnostic("OVERLAY_EFFECT_ERROR clip=${clip.id.take(8)} ${it.javaClass.simpleName}: ${it.message}") }
+                session.effectSignature = effectSignature
+            }
 
-        val localPosition = if (selectedPreviewOnly) 0L else (position - clip.startTimeMs).coerceAtLeast(0L)
-        if (activeOverlayPreviewId != clip.id) {
-            val item = MediaItem.Builder()
-                .setUri(Uri.parse(clip.sourceUri))
-                .setClippingConfiguration(
-                    MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
-                        .setEndPositionMs((clip.sourceStartMs + clip.durationMs)
-                            .coerceAtLeast(clip.sourceStartMs + 1L))
-                        .build()
-                ).build()
-            activeOverlayPreviewId = clip.id
-            try {
-                overlayPlayer.volume = 0f
-                overlayPlayer.setMediaItem(item, localPosition)
-                overlayPlayer.prepare()
-                lastOverlayClockSyncAtMs = android.os.SystemClock.elapsedRealtime()
-                lastOverlayHardSeekAtMs = lastOverlayClockSyncAtMs
-                lastOverlayAppliedSpeed = player.playbackParameters.speed
-                lastOverlayMasterSpeed = player.playbackParameters.speed
-                overlayPreviewFailed = false
-            } catch (error: RuntimeException) {
-                overlayPreviewFailed = true
-                recordPlaybackDiagnostic("OVERLAY_PREPARE_ERROR ${error.javaClass.simpleName}: ${error.message}")
-                overlayPlayer.pause()
-                overlayView.visibility = View.GONE
-                return
-            }
-        } else {
-            // Hindari seek berkala: koreksi kecil menggunakan laju playback.
-            val now = android.os.SystemClock.elapsedRealtime()
-            val masterSpeed = player.playbackParameters.speed
-            if (kotlin.math.abs(masterSpeed - lastOverlayMasterSpeed) > 0.01f) {
-                overlayPlayer.setPlaybackSpeed(masterSpeed)
-                lastOverlayMasterSpeed = masterSpeed
-                lastOverlayAppliedSpeed = masterSpeed
-            }
-            if (player.isPlaying && !isTimelineScrubbing && now - lastOverlayClockSyncAtMs >= 500L) {
-                lastOverlayClockSyncAtMs = now
-                val drift = localPosition - overlayPlayer.currentPosition
-                when {
-                    kotlin.math.abs(drift) in 70L..350L -> {
-                        val correction = (1f + drift.toFloat() / 5000f).coerceIn(0.96f, 1.04f)
-                        overlayPlayer.setPlaybackSpeed(masterSpeed * correction)
-                        lastOverlayAppliedSpeed = masterSpeed * correction
-                    }
-                    kotlin.math.abs(drift) > 350L && now - lastOverlayHardSeekAtMs >= 1800L -> {
-                        overlayPlayer.seekTo(localPosition)
-                        overlayPlayer.setPlaybackSpeed(masterSpeed)
-                        lastOverlayAppliedSpeed = masterSpeed
-                        lastOverlayHardSeekAtMs = now
-                    }
-                    kotlin.math.abs(drift) < 45L && kotlin.math.abs(overlayPlayer.playbackParameters.speed - masterSpeed) > 0.005f -> {
-                        overlayPlayer.setPlaybackSpeed(masterSpeed)
-                        lastOverlayAppliedSpeed = masterSpeed
-                    }
+            val localPosition = if (selectedPreviewOnly) 0L else (position - clip.startTimeMs).coerceAtLeast(0L)
+            if (session.preparedClipId != clip.id) {
+                val item = MediaItem.Builder()
+                    .setUri(Uri.parse(clip.sourceUri))
+                    .setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                            .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(clip.sourceStartMs + 1L))
+                            .build()
+                    ).build()
+                try {
+                    overlayPlayer.volume = 0f
+                    overlayPlayer.setMediaItem(item, localPosition)
+                    overlayPlayer.prepare()
+                    session.preparedClipId = clip.id
+                    session.lastClockSyncAtMs = now
+                    session.lastHardSeekAtMs = now
+                    session.lastMasterSpeed = masterSpeed
+                    session.failed = false
+                } catch (error: RuntimeException) {
+                    session.failed = true
+                    recordPlaybackDiagnostic("OVERLAY_PREPARE_ERROR clip=${clip.id.take(8)} ${error.javaClass.simpleName}: ${error.message}")
+                    overlayPlayer.pause()
+                    overlayView.visibility = View.GONE
+                    return@forEach
                 }
-            } else if (isTimelineScrubbing) {
-                // Saat scrub, jangan membanjiri decoder dengan seek tiap frame.
-                // Batasi koreksi maksimal sekitar 10 kali/detik.
-                if (now - lastOverlayHardSeekAtMs >= 100L) {
-                    val drift = kotlin.math.abs(overlayPlayer.currentPosition - localPosition)
-                    if (drift > 55L) {
-                        overlayPlayer.seekTo(localPosition)
-                        lastOverlayHardSeekAtMs = now
-                    }
+            } else if (!session.failed) {
+                if (kotlin.math.abs(masterSpeed - session.lastMasterSpeed) > 0.01f) {
+                    overlayPlayer.setPlaybackSpeed(masterSpeed)
+                    session.lastMasterSpeed = masterSpeed
                 }
-                if (kotlin.math.abs(overlayPlayer.playbackParameters.speed - masterSpeed) > 0.005f) {
+                if (player.isPlaying && !isTimelineScrubbing && now - session.lastClockSyncAtMs >= 500L) {
+                    session.lastClockSyncAtMs = now
+                    val drift = localPosition - overlayPlayer.currentPosition
+                    when {
+                        kotlin.math.abs(drift) in 70L..350L -> {
+                            val correction = (1f + drift.toFloat() / 5000f).coerceIn(0.96f, 1.04f)
+                            overlayPlayer.setPlaybackSpeed(masterSpeed * correction)
+                        }
+                        kotlin.math.abs(drift) > 350L && now - session.lastHardSeekAtMs >= 1800L -> {
+                            overlayPlayer.seekTo(localPosition)
+                            overlayPlayer.setPlaybackSpeed(masterSpeed)
+                            session.lastHardSeekAtMs = now
+                        }
+                        kotlin.math.abs(drift) < 45L && kotlin.math.abs(overlayPlayer.playbackParameters.speed - masterSpeed) > 0.005f ->
+                            overlayPlayer.setPlaybackSpeed(masterSpeed)
+                    }
+                } else if (isTimelineScrubbing) {
+                    if (now - session.lastHardSeekAtMs >= 100L &&
+                        kotlin.math.abs(overlayPlayer.currentPosition - localPosition) > 55L
+                    ) {
+                        overlayPlayer.seekTo(localPosition)
+                        session.lastHardSeekAtMs = now
+                    }
+                    if (kotlin.math.abs(overlayPlayer.playbackParameters.speed - masterSpeed) > 0.005f) {
+                        overlayPlayer.setPlaybackSpeed(masterSpeed)
+                    }
+                } else if (!player.isPlaying) {
+                    if (kotlin.math.abs(overlayPlayer.currentPosition - localPosition) > 45L) overlayPlayer.seekTo(localPosition)
                     overlayPlayer.setPlaybackSpeed(masterSpeed)
                 }
-            } else if (!player.isPlaying) {
-                val drift = kotlin.math.abs(overlayPlayer.currentPosition - localPosition)
-                if (drift > 45L) overlayPlayer.seekTo(localPosition)
-                overlayPlayer.setPlaybackSpeed(masterSpeed)
-                lastOverlayAppliedSpeed = masterSpeed
             }
-        }
-
-        if (!overlayPreviewFailed) {
-            overlayPlayer.playWhenReady = player.isPlaying && !isTimelineScrubbing && !selectedPreviewOnly
-            if (!player.isPlaying || isTimelineScrubbing || selectedPreviewOnly) overlayPlayer.pause()
+            if (!session.failed) {
+                val shouldPlay = player.isPlaying && !isTimelineScrubbing && !selectedPreviewOnly
+                overlayPlayer.playWhenReady = shouldPlay
+                if (!shouldPlay) overlayPlayer.pause()
+            }
         }
         overlaySelectionOverlay?.postInvalidateOnAnimation()
     }
@@ -7672,7 +7652,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
 
         recordPlaybackDiagnostic("APP_ON_PAUSE isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
-        overlayPreviewPlayer?.pause()
+        overlayPreviewSessions.values.forEach { it.player.pause() }
         saveCurrentProject()
 
         super.onPause()
@@ -9027,9 +9007,7 @@ class MainActivity : AppCompatActivity() {
 
         audioPlayers.values.forEach { it.release() }
         audioPlayers.clear()
-        overlayPreviewPlayerView?.player = null
-        overlayPreviewPlayer?.release()
-        overlayPreviewPlayer = null
+        clearOverlayPreviewSessions()
         player.release()
 
         super.onDestroy()
