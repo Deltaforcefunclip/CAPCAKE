@@ -8446,16 +8446,9 @@ class MainActivity : AppCompatActivity() {
                             overlayClip.chromaKeySoftness
                         )
                     )
-                    // Samakan ukuran output layer overlay dengan kanvas export utama.
-                    if (outputWidth != null && outputHeight != null) {
-                        add(
-                            Presentation.createForWidthAndHeight(
-                                outputWidth,
-                                outputHeight,
-                                Presentation.LAYOUT_SCALE_TO_FIT
-                            )
-                        )
-                    }
+                    // Jangan paksa layer overlay melewati Presentation output kedua.
+                    // Ukuran kanvas akhir sudah ditentukan oleh video utama pada compositor.
+                    // Resize kedua dengan SCALE_TO_FIT membuat isi overlay mengecil lagi.
                 }
                 val overlayEdited = EditedMediaItem.Builder(overlayItem)
                     .setRemoveAudio(true)
