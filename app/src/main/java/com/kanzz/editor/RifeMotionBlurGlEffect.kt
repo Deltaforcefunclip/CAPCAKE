@@ -17,8 +17,6 @@ import androidx.media3.effect.GlShaderProgram
 import java.io.File
 import java.nio.ByteBuffer
 import java.util.Locale
-import java.util.ArrayDeque
-import kotlin.math.roundToInt
 
 /** Offline RIFE temporal-sampling renderer. */
 @UnstableApi
@@ -54,9 +52,7 @@ private class RifeMotionBlurShaderProgram(
     private var engineReady = false
     private var frameWidth = 1
     private var frameHeight = 1
-    private val frameHistory = ArrayDeque<File>()
-    private val maxHistoryFrames = 6
-    private var historyFileIndex = 0
+    private var previousFrame: Bitmap? = null
     private var lastTimestampUs = Long.MIN_VALUE
     private var blurTexture = 0
     private var processedPairs = 0
@@ -106,14 +102,17 @@ private class RifeMotionBlurShaderProgram(
         try {
             if (lastTimestampUs != Long.MIN_VALUE &&
                 (presentationTimeUs <= lastTimestampUs || presentationTimeUs - lastTimestampUs > 250_000L)
-            ) clearFrameHistory()
+            ) {
+                previousFrame?.recycle()
+                previousFrame = null
+            }
             val current = readTexture(inputTexId)
-            val historyFile = File(workDirectory, "history_${historyFileIndex++}.jpg")
-            historyFile.outputStream().use { current.compress(Bitmap.CompressFormat.JPEG, 94, it) }
-            val ready = createTemporalAverage(current)
-            current.recycle()
-            frameHistory.addLast(historyFile)
-            while (frameHistory.size > maxHistoryFrames) frameHistory.removeFirst().delete()
+            val previous = previousFrame
+            val ready = previous != null &&
+                previous.width == current.width && previous.height == current.height &&
+                createTemporalAverage(previous, current)
+            previousFrame?.recycle()
+            previousFrame = current
             lastTimestampUs = presentationTimeUs
 
             program.use()
@@ -131,97 +130,71 @@ private class RifeMotionBlurShaderProgram(
         }
     }
 
-    private fun createTemporalAverage(current: Bitmap): Boolean {
-        if (frameHistory.isEmpty()) return false
-        val available = frameHistory.toList()
-        val historyDepth = (1f + blur.coerceIn(0f, 1f) * (maxHistoryFrames - 1)).roundToInt()
-            .coerceIn(1, maxHistoryFrames)
-        val candidates = available.takeLast(historyDepth)
-        val requestedSamples = if (times == 1 || times == 2 || times == 4 || times == 6) times else 4
-        val sampleCount = minOf(requestedSamples, candidates.size)
-        if (sampleCount == 0) return false
+    private fun createTemporalAverage(previous: Bitmap, current: Bitmap): Boolean {
+        inputPrevious.outputStream().use { previous.compress(Bitmap.CompressFormat.JPEG, 94, it) }
         inputCurrent.outputStream().use { current.compress(Bitmap.CompressFormat.JPEG, 94, it) }
-
-        val selectedFrames = (0 until sampleCount).map { index ->
-            val candidateIndex = if (sampleCount == 1) 0 else
-                (index.toFloat() * (candidates.size - 1) / (sampleCount - 1)).roundToInt()
-            candidates[candidateIndex]
-        }
-        val timestep = when (direction.coerceIn(0, 2)) {
-            1 -> 0.68f
-            2 -> 0.32f
-            else -> 0.50f
-        }
-
-        val pixelCount = frameWidth * frameHeight
-        val redSum = IntArray(pixelCount)
-        val greenSum = IntArray(pixelCount)
-        val blueSum = IntArray(pixelCount)
-        val currentPixels = IntArray(pixelCount)
+        val sampleCount = times.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 }
+        val window = (0.08f + blur.coerceIn(0f, 1f) * 0.84f).coerceIn(0.08f, 0.92f)
+        val start = when (direction.coerceIn(0, 2)) {
+            1 -> 0.02f
+            2 -> 0.98f - window
+            else -> 0.5f - window / 2f
+        }.coerceIn(0f, 1f - window)
+        val sum = LongArray(frameWidth * frameHeight)
+        val currentPixels = IntArray(frameWidth * frameHeight)
         current.getPixels(currentPixels, 0, frameWidth, 0, 0, frameWidth, frameHeight)
-        for (i in 0 until pixelCount) {
-            redSum[i] = ((currentPixels[i] shr 16) and 255) * 1000
-            greenSum[i] = ((currentPixels[i] shr 8) and 255) * 1000
-            blueSum[i] = (currentPixels[i] and 255) * 1000
+        for (i in sum.indices) {
+            val p = currentPixels[i]
+            sum[i] = ((((p shr 16) and 255).toLong()) shl 22) or
+                ((((p shr 8) and 255).toLong()) shl 11) or (p and 255).toLong()
         }
-        var totalWeight = 1000
         var successfulSamples = 0
-
-        selectedFrames.forEachIndexed { index, historical ->
-            inputPrevious.delete()
-            if (!historical.copyTo(inputPrevious, overwrite = true).exists()) return@forEachIndexed
+        for (sample in 0 until sampleCount) {
+            val fraction = (sample + 1f) / (sampleCount + 1f)
+            val timestep = (start + window * fraction).coerceIn(0.001f, 0.999f)
             outputFrame.delete()
             val ok = RifeNative.interpolate(inputPrevious.absolutePath, inputCurrent.absolutePath,
                 timestep, outputFrame.absolutePath)
-            if (!ok || !outputFrame.isFile || outputFrame.length() < 128L) return@forEachIndexed
-            val bitmap = BitmapFactory.decodeFile(outputFrame.absolutePath) ?: return@forEachIndexed
+            if (!ok || !outputFrame.isFile || outputFrame.length() < 128L) continue
+            val bitmap = BitmapFactory.decodeFile(outputFrame.absolutePath) ?: continue
             if (bitmap.width != frameWidth || bitmap.height != frameHeight) {
                 bitmap.recycle()
-                return@forEachIndexed
+                continue
             }
-            val pixels = IntArray(pixelCount)
+            val pixels = IntArray(frameWidth * frameHeight)
             bitmap.getPixels(pixels, 0, frameWidth, 0, 0, frameWidth, frameHeight)
             bitmap.recycle()
-            val recency = (index + 1f) / sampleCount
-            val weight = (0.55f + recency * 0.45f)
-            val weightInt = (weight * 1000f).roundToInt()
-            for (i in 0 until pixelCount) {
+            for (i in sum.indices) {
                 val p = pixels[i]
-                redSum[i] += ((p shr 16) and 255) * weightInt
-                greenSum[i] += ((p shr 8) and 255) * weightInt
-                blueSum[i] += (p and 255) * weightInt
+                sum[i] += ((((p shr 16) and 255).toLong()) shl 22) or
+                    ((((p shr 8) and 255).toLong()) shl 11) or (p and 255).toLong()
             }
-            totalWeight += weightInt
             successfulSamples++
         }
         if (successfulSamples == 0) return false
-
-        val averaged = IntArray(pixelCount)
-        for (i in 0 until pixelCount) {
-            val r = (redSum[i] / totalWeight).toInt().coerceIn(0, 255)
-            val g = (greenSum[i] / totalWeight).toInt().coerceIn(0, 255)
-            val b = (blueSum[i] / totalWeight).toInt().coerceIn(0, 255)
-            averaged[i] = (0xFF shl 24) or (r shl 16) or (g shl 8) or b
+        val divisor = successfulSamples + 1
+        val averaged = IntArray(sum.size)
+        for (i in sum.indices) {
+            val packed = sum[i]
+            val red = (((packed ushr 22) and 2047L) / divisor).toInt().coerceIn(0, 255)
+            val green = (((packed ushr 11) and 2047L) / divisor).toInt().coerceIn(0, 255)
+            val blue = ((packed and 2047L) / divisor).toInt().coerceIn(0, 255)
+            averaged[i] = (0xFF shl 24) or (red shl 16) or (green shl 8) or blue
         }
         val result = Bitmap.createBitmap(averaged, frameWidth, frameHeight, Bitmap.Config.ARGB_8888)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, blurTexture)
         GLUtils.texImage2D(GLES20.GL_TEXTURE_2D, 0, result, 0)
         GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, 0)
         result.recycle()
-
         processedPairs++
         val now = android.os.SystemClock.elapsedRealtime()
         if (processedPairs == 1 || now - lastLogAt > 5000L) {
             lastLogAt = now
             Log.i("CAPCAKE_RIFE_BLUR", String.format(Locale.US,
-                "temporalFrames=%d samples=%d/%d depth=%d frame=%dx%d",
-                frameHistory.size, successfulSamples, sampleCount, historyDepth, frameWidth, frameHeight))
+                "pairs=%d samples=%d/%d frame=%dx%d", processedPairs, successfulSamples,
+                sampleCount, frameWidth, frameHeight))
         }
         return true
-    }
-
-    private fun clearFrameHistory() {
-        while (frameHistory.isNotEmpty()) frameHistory.removeFirst().delete()
     }
 
     private fun readTexture(textureId: Int): Bitmap {
@@ -255,7 +228,8 @@ private class RifeMotionBlurShaderProgram(
     override fun release() {
         try {
             super.release()
-            clearFrameHistory()
+            previousFrame?.recycle()
+            previousFrame = null
             if (blurTexture != 0) GLES20.glDeleteTextures(1, intArrayOf(blurTexture), 0)
             if (engineReady) runCatching { RifeNative.release() }
             engineReady = false
