@@ -573,10 +573,11 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = bg
         window.navigationBarColor = bg
 
-        // Aktifkan kembali decoder prewarming untuk menyiapkan renderer video lebih awal.
+        // Nonaktifkan experimental decoder prewarming untuk mencegah codec video
+        // dilepas/dibuat ulang berulang saat berpindah antar-MediaItem dari sumber berbeda.
+        // Klip dari sumber sama tetap digabung menjadi satu MediaItem di buildEditedVideoItems().
         videoGainProcessor = GainAudioProcessor()
         val renderersFactory = createGainRenderersFactory(videoGainProcessor!!)
-            .experimentalSetEnableMediaCodecVideoRendererPrewarming(true)
 
         player = ExoPlayer.Builder(this, renderersFactory).build().apply {
             // Semua efek visual preview dimulai dalam keadaan OFF.
