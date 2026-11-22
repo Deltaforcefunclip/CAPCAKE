@@ -6884,6 +6884,7 @@ class MainActivity : AppCompatActivity() {
                     handler.removeCallbacks(motionBlurRenderRunnable)
                     temp.delete()
                     motionBlurRenderDialog?.dismiss()
+                    hideMotionBlurFloatingProgress()
                     motionBlurRenderDialog = null
                     motionBlurRenderProgress = null
                     motionBlurRenderText = null
