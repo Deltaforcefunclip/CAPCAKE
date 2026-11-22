@@ -132,6 +132,7 @@ class MainActivity : AppCompatActivity() {
     )
     private val overlayPreviewSessions = linkedMapOf<String, OverlayPreviewSession>()
     private var overlayPreviewSuspendedForExport = false
+    private var overlayCropModeEnabled = false
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
     private lateinit var audioTracksContainer: LinearLayout
@@ -989,6 +990,8 @@ class MainActivity : AppCompatActivity() {
         effectClipManager.clips.clear()
         overlayVideoClips.clear()
         selectedOverlayVideoClipId = null
+        overlayCropModeEnabled = false
+        overlaySelectionOverlay?.setCropMode(false)
         clearOverlayPreviewSessions()
         selectedEffectClipId = null
         selectedTextClipId = null
@@ -3420,7 +3423,7 @@ class MainActivity : AppCompatActivity() {
                 "P̲T̲" to "Preset Text"
             )
         } else if (selectedOverlayVideoClipId != null) {
-            listOf("♫" to "Volume", "⚙" to "Modifikasi", "🟩" to "Chroma Key", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
+            listOf("♫" to "Volume", "⚙" to "Modifikasi", "🟩" to "Chroma Key", "▱" to if (overlayCropModeEnabled) "Selesai Crop" else "Crop", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3571,6 +3574,7 @@ class MainActivity : AppCompatActivity() {
                     }
                     "Modifikasi" -> showOverlayVideoModifyDialog()
                     "Chroma Key" -> showOverlayChromaKeyDialog()
+                    "Crop", "Selesai Crop" -> toggleOverlayCropMode()
                     "Edit Text" -> editSelectedText()
                     "Font" -> showTextFontPicker()
                     "Preset Text" -> showPresetTextPanel()
@@ -4982,6 +4986,8 @@ class MainActivity : AppCompatActivity() {
         }
         val overlay = ExoPlayer.Builder(this).build().apply { volume = 0f }
         view.player = overlay
+        // Chroma key menghasilkan alpha transparan; TextureView harus mengizinkan komposisi alpha.
+        (view.videoSurfaceView as? android.view.TextureView)?.isOpaque = false
         val session = OverlayPreviewSession(overlay, view)
         overlay.addListener(object : androidx.media3.common.Player.Listener {
             override fun onVideoSizeChanged(videoSize: androidx.media3.common.VideoSize) {
@@ -5023,6 +5029,21 @@ class MainActivity : AppCompatActivity() {
         overlayPreviewSessions.clear()
     }
 
+    private fun buildOverlayPreviewEffects(clip: OverlayVideoClip): List<androidx.media3.common.Effect> {
+        val effects = mutableListOf<androidx.media3.common.Effect>()
+        if (clip.cropLeft > 0f || clip.cropTop > 0f || clip.cropRight > 0f || clip.cropBottom > 0f) {
+            val left = -1f + 2f * clip.cropLeft.coerceIn(0f, 0.97f)
+            val right = 1f - 2f * clip.cropRight.coerceIn(0f, 0.97f)
+            val bottom = -1f + 2f * clip.cropBottom.coerceIn(0f, 0.97f)
+            val top = 1f - 2f * clip.cropTop.coerceIn(0f, 0.97f)
+            if (left < right && bottom < top) effects.add(Crop(left, right, bottom, top))
+        }
+        if (clip.chromaKeyEnabled) {
+            effects.add(ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness))
+        }
+        return effects
+    }
+
     private fun syncOverlayVideoPreview() {
         if (overlayPreviewSuspendedForExport || isFinishing || isDestroyed || !editorOpen || overlayVideoClips.isEmpty()) {
             clearOverlayPreviewSessions()
@@ -5062,7 +5083,7 @@ class MainActivity : AppCompatActivity() {
             overlayView.elevation = dp(4).toFloat() + clip.trackIndex
             applyOverlayPreviewTransform(clip)
 
-            val effectSignature = "${clip.chromaKeyEnabled}:${clip.chromaKeyColor}:${clip.chromaKeyThreshold}:${clip.chromaKeySoftness}"
+            val effectSignature = "${clip.chromaKeyEnabled}:${clip.chromaKeyColor}:${clip.chromaKeyThreshold}:${clip.chromaKeySoftness}:${clip.cropLeft}:${clip.cropTop}:${clip.cropRight}:${clip.cropBottom}"
             val localPosition = if (selectedPreviewOnly) 0L else (position - clip.startTimeMs).coerceAtLeast(0L)
             if (session.preparedClipId != clip.id) {
                 val item = MediaItem.Builder()
@@ -5075,10 +5096,7 @@ class MainActivity : AppCompatActivity() {
                     ).build()
                 try {
                     overlayPlayer.setMediaItem(item, localPosition)
-                    val effects = if (clip.chromaKeyEnabled) listOf(
-                        ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
-                    ) else emptyList()
-                    overlayPlayer.setVideoEffects(effects)
+                    overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip))
                     session.effectSignature = effectSignature
                     overlayPlayer.volume = clip.volume.coerceIn(0f, 2f)
                     overlayPlayer.prepare()
@@ -5096,11 +5114,8 @@ class MainActivity : AppCompatActivity() {
                 }
             } else if (!session.failed) {
                 if (session.effectSignature != effectSignature) {
-                    val effects = if (clip.chromaKeyEnabled) listOf(
-                        ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
-                    ) else emptyList()
                     runCatching {
-                        overlayPlayer.setVideoEffects(effects)
+                        overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip))
                         session.effectSignature = effectSignature
                         overlayPlayer.seekTo(localPosition)
                         recordPlaybackDiagnostic("OVERLAY_EFFECT_UPDATED clip=${clip.id.take(8)} enabled=${clip.chromaKeyEnabled}")
@@ -5151,6 +5166,20 @@ class MainActivity : AppCompatActivity() {
             }
         }
         overlaySelectionOverlay?.postInvalidateOnAnimation()
+    }
+
+    private fun toggleOverlayCropMode() {
+        val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return
+        overlayCropModeEnabled = !overlayCropModeEnabled
+        overlaySelectionOverlay?.setCropMode(overlayCropModeEnabled)
+        if (overlayCropModeEnabled) {
+            Toast.makeText(this, "Geser titik putih untuk memotong overlay.", Toast.LENGTH_SHORT).show()
+        } else {
+            saveCurrentProject()
+            Toast.makeText(this, "Crop overlay diterapkan.", Toast.LENGTH_SHORT).show()
+        }
+        updateToolMenu()
+        overlaySelectionOverlay?.invalidate()
     }
 
     private fun showOverlayChromaKeyDialog() {
@@ -5448,6 +5477,8 @@ class MainActivity : AppCompatActivity() {
         val view = OverlayVideoTrackView(this, timelineController, overlayVideoClips,
             onSelect = { clip ->
                 selectedOverlayVideoClipId = clip?.id
+                overlayCropModeEnabled = false
+                overlaySelectionOverlay?.setCropMode(false)
                 selectedAudioClipId = null; selectedTextClipId = null; selectedEffectClipId = null
                 selectedVideoClipId = null; videoSelected = false
                 timeline.selectClip(null)
@@ -8669,6 +8700,17 @@ class MainActivity : AppCompatActivity() {
                     )
                     // Transformasi dipindahkan ke compositor. Ini menghindari satu
                     // tahap MatrixTransformation/GL texture tambahan per overlay.
+                    if (overlayClip.cropLeft > 0f || overlayClip.cropTop > 0f ||
+                        overlayClip.cropRight > 0f || overlayClip.cropBottom > 0f
+                    ) {
+                        val cropLeft = -1f + 2f * overlayClip.cropLeft.coerceIn(0f, 0.97f)
+                        val cropRight = 1f - 2f * overlayClip.cropRight.coerceIn(0f, 0.97f)
+                        val cropBottom = -1f + 2f * overlayClip.cropBottom.coerceIn(0f, 0.97f)
+                        val cropTop = 1f - 2f * overlayClip.cropTop.coerceIn(0f, 0.97f)
+                        if (cropLeft < cropRight && cropBottom < cropTop) {
+                            add(Crop(cropLeft, cropRight, cropBottom, cropTop))
+                        }
+                    }
                     if (overlayClip.chromaKeyEnabled) add(
                         ChromaKeyGlEffect(
                             overlayClip.chromaKeyColor,
