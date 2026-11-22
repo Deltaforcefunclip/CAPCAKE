@@ -3526,7 +3526,12 @@ class MainActivity : AppCompatActivity() {
         } ?: videoClipManager.clips.lastOrNull()?.takeIf { position >= it.timelineEndMs }
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
-        motionBlurPreviewState.blur = activeVideo?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
+        val activeMotionBlurCached = activeVideo?.let {
+            it.motionBlurIntensity > 0.001f &&
+                motionBlurCacheFile(it).let { file -> file.exists() && file.length() >= 1024L }
+        } == true
+        motionBlurPreviewState.blur = if (activeMotionBlurCached) 0f
+            else activeVideo?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
         motionBlurPreviewState.blend = activeVideo?.motionBlurBlend?.coerceIn(0f, 1f) ?: 0.65f
         motionBlurPreviewState.direction = activeVideo?.motionBlurDirection?.coerceIn(0, 2) ?: 0
         motionBlurPreviewState.times = activeVideo?.motionBlurTimes?.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 } ?: 4
@@ -6761,11 +6766,11 @@ class MainActivity : AppCompatActivity() {
                     clip.motionBlurDirection = direction
                     clip.motionBlurTimes = times
                     saveCurrentProject()
-                    if (blur > 0.001f && blend > 0.001f) {
-                        startMotionBlurPreRender(clip)
-                    } else {
-                        refreshEditedPreview(currentTimelinePosition())
-                    }
+                }
+                if (blur > 0.001f && blend > 0.001f) {
+                    startMotionBlurPreRender(clip)
+                } else {
+                    refreshEditedPreview(currentTimelinePosition())
                 }
                 dialog.dismiss()
             }
