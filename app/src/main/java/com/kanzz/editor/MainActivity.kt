@@ -582,19 +582,9 @@ class MainActivity : AppCompatActivity() {
         val renderersFactory = createGainRenderersFactory(videoGainProcessor!!)
 
         player = ExoPlayer.Builder(this, renderersFactory).build().apply {
-            // Kembalikan pipeline preview Dreamy yang sudah dioptimalkan.
-            // Pengujian tanpa GPU effect justru memperberat playback saat replay.
-            setVideoEffects(
-                listOf(
-                    DreamyGlEffect(
-                        intensity = 0f,
-                        glowSpread = 0.35f,
-                        warmth = 0.5f,
-                        previewState = dreamyPreviewState
-                    ),
-                    MotionBlurGlEffect(blur = 0f, previewState = motionBlurPreviewState)
-                )
-            )
+            // Semua efek visual preview dimulai dalam keadaan OFF.
+            // updatePreviewVisualPipeline() hanya memasang shader saat diperlukan.
+            setVideoEffects(emptyList())
             // Preload awal sengaja tidak diaktifkan untuk pengujian frame drop.
             addAnalyticsListener(playbackAnalyticsListener)
             addListener(object : Player.Listener {
@@ -3399,7 +3389,7 @@ class MainActivity : AppCompatActivity() {
 
                     "Atur" -> {
                         effectClipManager.find(selectedEffectClipId)?.let { clip ->
-                            if (clip.effectName == "Dreamy" || clip.effectName == "Cahaya Lembut") showEffectPanel()
+                            if (clip.effectName == "Cahaya Lembut") showEffectPanel()
                             else showMessage("Pengaturan ${clip.effectName} belum tersedia.")
                         }
                     }
@@ -3670,13 +3660,13 @@ class MainActivity : AppCompatActivity() {
     private fun updateDreamyPreviewOverlay() {
         val position = if (::timelineController.isInitialized) currentTimelinePosition() else 0L
         val activeEffect = effectClipManager.clips.firstOrNull {
-            (it.effectName == "Dreamy" || it.effectName == "Black & White" || it.effectName == "Cahaya Lembut") &&
+            (it.effectName == "Black & White" || it.effectName == "Cahaya Lembut") &&
                 position >= it.startTimeMs && position < it.endTimeMs
         }
         val strength = ((activeEffect?.intensity ?: 0f) *
             (activeEffect?.opacity ?: 0f)).coerceIn(0f, 1f)
 
-        // Mode 0 = Dreamy, mode 1 = Black & White.
+        // Mode 1 = Black & White, mode 2 = Cahaya Lembut.
         dreamyPreviewState.intensity = strength
         dreamyPreviewState.glowSpread = activeEffect?.glowSpread?.coerceIn(0f, 1f) ?: 0.35f
         dreamyPreviewState.warmth = activeEffect?.warmth?.coerceIn(0f, 1f) ?: 0.5f
@@ -3742,6 +3732,54 @@ class MainActivity : AppCompatActivity() {
 
         // Tidak memakai tint overlay; frame preview diproses oleh shader GPU.
         dreamyPreviewOverlay?.visibility = View.GONE
+        updatePreviewVisualPipeline()
+    }
+
+    /**
+     * Demand-based visual preview:
+     * shader hanya dipasang saat ada fitur visual aktif. Nilai slider tetap live
+     * melalui PreviewState; perubahan intensitas tidak membangun ulang pipeline.
+     */
+    private var previewVisualPipelineSignature: String = "OFF"
+
+    private fun updatePreviewVisualPipeline() {
+        if (!::player.isInitialized) return
+
+        val gradeActive = !dreamyPreviewState.colorGrading.isDefault
+        val effectActive = dreamyPreviewState.intensity > 0.001f &&
+            dreamyPreviewState.effectMode > 0.5f
+        val transitionActive = dreamyPreviewState.pullInFade > 0.001f ||
+            dreamyPreviewState.pullInBlur > 0.001f ||
+            dreamyPreviewState.pullInZoom > 1.001f
+        val motionBlurActive = motionBlurPreviewState.blur > 0.001f &&
+            motionBlurPreviewState.blend > 0.001f
+
+        val visualShaderActive = gradeActive || effectActive || transitionActive
+        val signature = "visual=" + visualShaderActive + ";motion=" + motionBlurActive
+        if (signature == previewVisualPipelineSignature) return
+
+        val effects = ArrayList<androidx.media3.common.Effect>(2)
+        if (visualShaderActive) {
+            effects.add(
+                DreamyGlEffect(
+                    intensity = 0f,
+                    glowSpread = 0.35f,
+                    warmth = 0.5f,
+                    previewState = dreamyPreviewState
+                )
+            )
+        }
+        if (motionBlurActive) {
+            effects.add(MotionBlurGlEffect(blur = 0f, previewState = motionBlurPreviewState))
+        }
+
+        player.setVideoEffects(effects)
+        previewVisualPipelineSignature = signature
+        recordPlaybackDiagnostic(
+            "VISUAL_PIPELINE signature=" + signature + " effects=" + effects.size +
+                " grade=" + gradeActive + " effect=" + effectActive +
+                " transition=" + transitionActive + " motionBlur=" + motionBlurActive
+        )
     }
     private fun buildDreamyColorMatrix(amount: Float): RgbMatrix {
         val strength = amount.coerceIn(0f, 1f)
@@ -3760,7 +3798,7 @@ class MainActivity : AppCompatActivity() {
         if (amount > 0.001f) listOf(buildDreamyColorMatrix(amount)) else emptyList()
 
     private fun showEffectPicker() {
-        val options = listOf("Cahaya Lembut", "Dreamy", "Vintage", "Black & White", "Warm", "Cool")
+        val options = listOf("Cahaya Lembut", "Vintage", "Black & White", "Warm", "Cool")
         var chosen = options.first()
         val dialog = android.app.Dialog(this)
         val root = LinearLayout(this).apply {
@@ -4263,8 +4301,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showEffectPanel() {
         val clip = effectClipManager.find(selectedEffectClipId)
-        if (clip == null || (clip.effectName != "Dreamy" && clip.effectName != "Cahaya Lembut")) {
-            showMessage("Pilih klip Dreamy atau Cahaya Lembut terlebih dahulu.")
+        if (clip == null || clip.effectName != "Cahaya Lembut") {
+            showMessage("Pilih klip Cahaya Lembut terlebih dahulu.")
             return
         }
         val panel = LinearLayout(this).apply {
@@ -7997,7 +8035,7 @@ class MainActivity : AppCompatActivity() {
                                 // Efek Dreamy mengikuti rentang klip pada timeline utama.
                                 effectClipManager.clips
                                     .filter {
-                                        (it.effectName == "Dreamy" || it.effectName == "Black & White" || it.effectName == "Cahaya Lembut") &&
+                                        (it.effectName == "Black & White" || it.effectName == "Cahaya Lembut") &&
                                             it.intensity * it.opacity > 0.001f
                                     }
                                     .forEach { effectClip ->
