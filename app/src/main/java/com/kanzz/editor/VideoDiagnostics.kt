@@ -46,7 +46,7 @@ object VideoDiagnostics {
         val checked = BooleanArray(categories.size) { true }
         AlertDialog.Builder(context)
             .setTitle("Diagnostik Video")
-            .setMessage("Pilih jenis analisis. Video hanya diperiksa, tidak diimpor atau diubah.")
+            .setMessage("Pilih jenis analisis. Metadata dasar dan dukungan decoder selalu diperiksa. Memilih FPS, timestamp, GOP, ukuran sample, atau integritas akan menjalankan Full Scan. Video tidak diimpor atau diubah.")
             .setMultiChoiceItems(categories, checked) { _, which, isChecked ->
                 checked[which] = isChecked
             }
@@ -303,8 +303,8 @@ object VideoDiagnostics {
         val median = sorted.takeIf { it.isNotEmpty() }?.let {
             if (it.size % 2 == 0) (it[it.size / 2 - 1] + it[it.size / 2]) / 2 else it[it.size / 2]
         }
-        val irregular = if (median != null) deltas.count { abs(it - median) > median * 0.10 }.toLong() else 0L
-        val gaps = if (median != null) deltas.count { it > median * 1.5 }.toLong() else 0L
+        val irregular = if (median != null) deltas.count { abs(it - median).toDouble() > median * 0.10 }.toLong() else 0L
+        val gaps = if (median != null) deltas.count { it.toDouble() > median * 1.5 }.toLong() else 0L
         val fps = if (count > 1 && lastPts > firstPts) (count - 1) * 1_000_000.0 / (lastPts - firstPts) else null
         return ScanResult(
             count, fps, median, sorted.minOrNull(), sorted.maxOrNull(), irregular,
