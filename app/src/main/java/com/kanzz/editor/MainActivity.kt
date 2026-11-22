@@ -539,16 +539,17 @@ class MainActivity : AppCompatActivity() {
         window.statusBarColor = bg
         window.navigationBarColor = bg
 
-        // Uji playback tanpa decoder prewarming. Renderer dibuat dengan konfigurasi
-        // standar agar kita bisa membandingkan kestabilan decoder saat play/resume.
+        // Aktifkan kembali decoder prewarming untuk menyiapkan renderer video lebih awal.
         videoGainProcessor = GainAudioProcessor()
         val renderersFactory = createGainRenderersFactory(videoGainProcessor!!)
+            .experimentalSetEnableMediaCodecVideoRendererPrewarming(true)
 
         player = ExoPlayer.Builder(this, renderersFactory).build().apply {
             // Semua efek visual preview dimulai dalam keadaan OFF.
             // updatePreviewVisualPipeline() hanya memasang shader saat diperlukan.
             setVideoEffects(emptyList())
-            // Preload awal sengaja tidak diaktifkan untuk pengujian frame drop.
+            // Siapkan hingga 5 detik media berikutnya agar perpindahan klip lebih siap.
+            preloadConfiguration = ExoPlayer.PreloadConfiguration(5_000_000L)
             addAnalyticsListener(playbackAnalyticsListener)
             addListener(object : Player.Listener {
                 override fun onPlaybackStateChanged(state: Int) {
