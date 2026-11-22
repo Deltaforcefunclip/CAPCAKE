@@ -3420,7 +3420,7 @@ class MainActivity : AppCompatActivity() {
                 "P̲T̲" to "Preset Text"
             )
         } else if (selectedOverlayVideoClipId != null) {
-            listOf("⚙" to "Modifikasi", "🟩" to "Chroma Key", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
+            listOf("♫" to "Volume", "⚙" to "Modifikasi", "🟩" to "Chroma Key", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3562,6 +3562,12 @@ class MainActivity : AppCompatActivity() {
                             if (clip.effectName == "Cahaya Lembut") showEffectPanel()
                             else showMessage("Pengaturan ${clip.effectName} belum tersedia.")
                         }
+                    }
+                    "Volume" -> {
+                        val overlayClip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId }
+                        if (overlayClip != null) showOverlayVideoVolume(overlayClip)
+                        else if (selectedAudioClipId != null) audioClipManager.clips.firstOrNull { it.id == selectedAudioClipId }?.let { showAudioClipVolume(it) }
+                        else videoClipManager.find(selectedVideoClipId)?.let { showVideoClipVolume(it) }
                     }
                     "Modifikasi" -> showOverlayVideoModifyDialog()
                     "Chroma Key" -> showOverlayChromaKeyDialog()
@@ -5245,6 +5251,49 @@ class MainActivity : AppCompatActivity() {
                 syncOverlayVideoPreview()
             }
             .show()
+    }
+
+    private fun showOverlayVideoVolume(clip: OverlayVideoClip) {
+        val dialog = android.app.Dialog(this)
+        val valueLabel = TextView(this).apply {
+            text = "Volume  ${(clip.volume * 100f).toInt()}%"
+            setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER
+        }
+        val seek = SeekBar(this).apply {
+            max = 200
+            progress = (clip.volume.coerceIn(0f, 2f) * 100f).toInt()
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(8))
+            setBackgroundColor(Color.rgb(25, 27, 29))
+            addView(valueLabel, LinearLayout.LayoutParams(-1, dp(24)))
+            addView(seek, LinearLayout.LayoutParams(-1, dp(42)))
+        }
+        fun applyVolume(progress: Int) {
+            clip.volume = (progress / 100f).coerceIn(0f, 2f)
+            valueLabel.text = "Volume  ${(clip.volume * 100f).toInt()}%"
+            overlayPreviewSessions[clip.id]?.player?.volume = clip.volume
+            saveCurrentProject()
+        }
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                if (fromUser) applyVolume(value)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        dialog.setContentView(content)
+        dialog.setOnDismissListener { saveCurrentProject() }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(-1, -2)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            attributes = attributes.apply { y = dp(94) }
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.12f)
+        }
     }
 
     private fun showOverlayVideoModifyDialog() {
