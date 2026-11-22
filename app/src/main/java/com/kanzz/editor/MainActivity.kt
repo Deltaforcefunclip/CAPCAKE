@@ -2141,6 +2141,7 @@ class MainActivity : AppCompatActivity() {
             addView(overlayVideoTracksContainer, android.view.ViewGroup.LayoutParams(-1, -2))
             visibility = View.GONE
         }
+        refreshOverlayVideoTracks()
 
         // VIDEO TIMELINE
 
@@ -6244,18 +6245,22 @@ class MainActivity : AppCompatActivity() {
 
     private fun encodeTextAndEffects(): String = JSONObject()
         .put("text", JSONArray(encodeTextClips()))
-        .put("effects", JSONArray(encodeEffectClips())).toString()
+        .put("effects", JSONArray(encodeEffectClips()))
+        .put("overlayVideo", JSONArray(OverlayVideoCodec.encode(overlayVideoClips))).toString()
 
     private fun restoreTextAndEffects(json: String?) {
-        if (json.isNullOrBlank()) { restoreTextClips(null); restoreEffectClips(null); return }
+        if (json.isNullOrBlank()) { restoreTextClips(null); restoreEffectClips(null); overlayVideoClips.clear(); return }
         runCatching {
             val root = JSONObject(json)
             restoreTextClips(root.optJSONArray("text")?.toString())
             restoreEffectClips(root.optJSONArray("effects")?.toString())
+            OverlayVideoCodec.decode(root.optJSONArray("overlayVideo")?.toString(), overlayVideoClips)
         }.onFailure {
             restoreTextClips(json)
             restoreEffectClips(null)
+            overlayVideoClips.clear()
         }
+        if (::overlayVideoTracksContainer.isInitialized) refreshOverlayVideoTracks()
     }
 
     private fun restoreTextClips(json: String?) {
@@ -6963,6 +6968,7 @@ class MainActivity : AppCompatActivity() {
         refreshAudioTracks()
         refreshTextTracks()
         refreshEffectTracks()
+        refreshOverlayVideoTracks()
         if (::timeline.isInitialized) {
             timeline.selectClip(selectedVideoClipId)
             // setDuration mempertahankan tingkat zoom yang sedang dipakai.
