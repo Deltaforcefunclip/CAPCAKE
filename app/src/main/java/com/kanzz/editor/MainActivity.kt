@@ -3044,10 +3044,17 @@ class MainActivity : AppCompatActivity() {
 
     /** Memetakan waktu timeline ke grup playback dan offset sumber yang benar. */
     private fun seekTimelinePosition(positionMs: Long) {
+        // Catat pemanggil seek agar feedback loop UI dapat dibuktikan tanpa mengubah perilaku player.
+        val seekCaller = Throwable().stackTrace.firstOrNull {
+            it.className.startsWith("com.kanzz.editor.") &&
+                it.methodName != "seekTimelinePosition"
+        }?.let { "${it.className.substringAfterLast('.') }#${it.methodName}:${it.lineNumber}" }
+            ?: "unknown"
         recordPlaybackDiagnostic(
-            "SEEK_REQUEST target=${positionMs.coerceAtLeast(0L)}ms state=${player.playbackState} " +
-                "playWhenReady=${player.playWhenReady} isPlaying=${player.isPlaying} " +
-                "item=${player.currentMediaItemIndex} position=${player.currentPosition}ms"
+            "SEEK_REQUEST target=${positionMs.coerceAtLeast(0L)}ms caller=$seekCaller " +
+                "state=${player.playbackState} playWhenReady=${player.playWhenReady} " +
+                "isPlaying=${player.isPlaying} item=${player.currentMediaItemIndex} " +
+                "position=${player.currentPosition}ms"
         )
         // ExoPlayer dapat tetap menyimpan playWhenReady=true setelah mencapai akhir.
         // Pause dahulu agar seek kembali dari STATE_ENDED tidak memulai video otomatis.
