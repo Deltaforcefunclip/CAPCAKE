@@ -2130,6 +2130,7 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
         thisTextTracksContainer = textTracksContainer
+        refreshOverlayVideoTracks()
         overlayVideoTracksContainer = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setBackgroundColor(bg)
@@ -3291,7 +3292,7 @@ class MainActivity : AppCompatActivity() {
                 "P̲T̲" to "Preset Text"
             )
         } else if (selectedOverlayVideoClipId != null) {
-            listOf("✂" to "Potong", "▣" to "Copy", "⌫" to "Hapus")
+            listOf("✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3437,7 +3438,15 @@ class MainActivity : AppCompatActivity() {
                     "Edit Text" -> editSelectedText()
                     "Font" -> showTextFontPicker()
                     "Preset Text" -> showPresetTextPanel()
-                    "Salin" -> duplicateSelectedText()
+                    "Salin" -> {
+                        if (selectedOverlayVideoClipId != null) {
+                            val original = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return@setOnClickListener
+                            pushUndoSnapshot()
+                            val copy = original.copy(id = java.util.UUID.randomUUID().toString(), startTimeMs = original.endTimeMs)
+                            overlayVideoClips.add(copy); selectedOverlayVideoClipId = copy.id
+                            refreshOverlayVideoTracks(); saveCurrentProject(); updateToolMenu()
+                        } else duplicateSelectedText()
+                    }
                     "Warna" -> showTextColorPicker()
                     "Gaya" -> toggleSelectedTextStyle()
                     "Animasi" -> Toast.makeText(this, "Pengaturan animasi teks akan ditambahkan berikutnya.", Toast.LENGTH_SHORT).show()
