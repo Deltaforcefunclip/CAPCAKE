@@ -44,7 +44,8 @@ class OverlayVideoSelectionView(
         val vw = c.videoWidth.takeIf { it > 0 }?.toFloat() ?: 16f
         val vh = c.videoHeight.takeIf { it > 0 }?.toFloat() ?: 9f
         val aspect = (vw / vh).coerceIn(0.1f, 10f)
-        val maxW = width.toFloat().coerceAtLeast(1f) * 0.92f
+        // Samakan batas bingkai dengan area video FIT yang benar-benar tampil di PlayerView.
+        val maxW = width.toFloat().coerceAtLeast(1f)
         val maxH = height.toFloat().coerceAtLeast(1f) * 0.92f
         val w: Float; val h: Float
         if (aspect >= maxW / maxH) { w = maxW; h = w / aspect } else { h = maxH; w = h * aspect }
