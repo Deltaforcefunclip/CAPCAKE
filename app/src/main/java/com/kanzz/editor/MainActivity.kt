@@ -509,10 +509,21 @@ class MainActivity : AppCompatActivity() {
 
                 if (isCreatingProject) {
 
-                    // Project baru dimulai tanpa audio clip lama.
+                    // Project baru harus terisolasi dari seluruh layer project sebelumnya.
                     audioClipManager.clear()
                     textClipManager.clips.clear()
                     effectClipManager.clips.clear()
+                    overlayVideoClips.clear()
+                    selectedOverlayVideoClipId = null
+                    activeOverlayPreviewId = null
+                    overlayPreviewFailed = false
+                    overlayPreviewPlayer?.stop()
+                    overlayPreviewPlayer?.clearMediaItems()
+                    overlayPreviewPlayerView?.visibility = View.GONE
+                    undoStack.clear()
+                    redoStack.clear()
+                    if (::overlayVideoTracksContainer.isInitialized) refreshOverlayVideoTracks()
+                    overlaySelectionOverlay?.invalidate()
                     selectedEffectClipId = null
                     selectedTextClipId = null
                     activeLayerGroup = "AUDIO"
@@ -902,6 +913,7 @@ class MainActivity : AppCompatActivity() {
                     .remove("audio_timeline_${project.id}")
                     .remove("text_timeline_${project.id}")
                     .remove("effect_timeline_${project.id}")
+                    .remove("overlay_video_timeline_${project.id}")
                     .apply()
 
                 saveProjects()
@@ -3606,7 +3618,19 @@ class MainActivity : AppCompatActivity() {
                         if (selectedOverlayVideoClipId != null) {
                             val original = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return@setOnClickListener
                             pushUndoSnapshot()
-                            val copy = original.copy(id = java.util.UUID.randomUUID().toString(), startTimeMs = original.endTimeMs)
+                            val copyStart = original.endTimeMs
+                            val copyTrack = findAvailableOverlayTrack(
+                                overlayVideoClips, copyStart, original.durationMs, maxTrackIndex = 31
+                            )
+                            if (copyTrack == null) {
+                                showMessage("Tidak ada layer overlay kosong pada posisi salinan.")
+                                return@setOnClickListener
+                            }
+                            val copy = original.copy(
+                                id = java.util.UUID.randomUUID().toString(),
+                                startTimeMs = copyStart,
+                                trackIndex = copyTrack
+                            )
                             overlayVideoClips.add(copy); selectedOverlayVideoClipId = copy.id
                             refreshOverlayVideoTracks(); saveCurrentProject(); updateToolMenu()
                         } else duplicateSelectedText()
@@ -3672,7 +3696,19 @@ class MainActivity : AppCompatActivity() {
                         if (selectedOverlayVideoClipId != null) {
                             val original = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return@setOnClickListener
                             pushUndoSnapshot()
-                            val copy = original.copy(id = java.util.UUID.randomUUID().toString(), startTimeMs = original.endTimeMs)
+                            val copyStart = original.endTimeMs
+                            val copyTrack = findAvailableOverlayTrack(
+                                overlayVideoClips, copyStart, original.durationMs, maxTrackIndex = 31
+                            )
+                            if (copyTrack == null) {
+                                showMessage("Tidak ada layer overlay kosong pada posisi salinan.")
+                                return@setOnClickListener
+                            }
+                            val copy = original.copy(
+                                id = java.util.UUID.randomUUID().toString(),
+                                startTimeMs = copyStart,
+                                trackIndex = copyTrack
+                            )
                             overlayVideoClips.add(copy); selectedOverlayVideoClipId = copy.id
                             refreshOverlayVideoTracks(); saveCurrentProject(); updateToolMenu()
                             return@setOnClickListener
@@ -5311,9 +5347,17 @@ class MainActivity : AppCompatActivity() {
         pushUndoSnapshot()
         val name = runCatching { uri.lastPathSegment?.substringAfterLast("/") }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Overlay Video"
         val dimensions = readOverlayVideoDimensions(uri)
-        val clip = OverlayVideoClip(sourceUri = uri.toString(), startTimeMs = timelineController.positionMs.coerceAtLeast(0L),
+        val startTime = timelineController.positionMs.coerceAtLeast(0L)
+        val availableTrack = findAvailableOverlayTrack(
+            overlayVideoClips, startTime, duration, maxTrackIndex = 31
+        )
+        if (availableTrack == null) {
+            showMessage("Semua 32 layer overlay sedang terisi pada waktu ini.")
+            return
+        }
+        val clip = OverlayVideoClip(sourceUri = uri.toString(), startTimeMs = startTime,
             durationMs = duration, sourceDurationMs = duration, name = name,
-            videoWidth = dimensions.first, videoHeight = dimensions.second)
+            trackIndex = availableTrack, videoWidth = dimensions.first, videoHeight = dimensions.second)
         overlayVideoClips.add(clip)
         selectedOverlayVideoClipId = clip.id
         activeLayerGroup = "OVERLAY"
