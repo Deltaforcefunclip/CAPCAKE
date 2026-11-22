@@ -232,6 +232,7 @@ class DreamyShaderProgram(
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
             val effectActiveForDiagnostic = (active && liveIntensity > 0.001f) || !grade.isDefault || pullBlur > 0.001f || pullFade > 0.001f || kotlin.math.abs(pullZoom - 1f) > 0.001f
             recordFrameTiming(System.nanoTime() - frameStartNs, effectActiveForDiagnostic)
+            CapcakeGlDiagnostics.record("DREAMY", System.nanoTime() - frameStartNs, effectActiveForDiagnostic)
             // Hindari glGetError pada setiap frame: pemeriksaan ini dapat memaksa sinkronisasi CPU-GPU.
         } catch (e: VideoFrameProcessingException) {
             throw e
