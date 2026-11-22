@@ -73,7 +73,7 @@ class DreamyShaderProgram(
     private val pullInStartUs: Long = -1L,
     private val pullInEndUs: Long = -1L,
     private val pullInFadeIn: Boolean = false
-) : BaseGlShaderProgram(useHdr, 2) {
+) : BaseGlShaderProgram(useHdr, 3) {
 
     private val glProgram = GlProgram(
         context,
