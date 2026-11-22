@@ -121,6 +121,7 @@ class MainActivity : AppCompatActivity() {
     private var lastOverlayClockSyncAtMs = 0L
     private var lastOverlayHardSeekAtMs = 0L
     private var lastOverlayAppliedSpeed = 1f
+    private var lastOverlayMasterSpeed = 1f
     private var overlayPreviewFailed = false
     private var activeOverlayPreviewEffectSignature: String? = null
     private lateinit var timeline: TimelineView
@@ -1602,6 +1603,14 @@ class MainActivity : AppCompatActivity() {
         overlayPreviewPlayer = ExoPlayer.Builder(this).build().also { overlay ->
             overlay.volume = 0f
             overlayPreviewPlayerView?.player = overlay
+            overlay.addListener(object : androidx.media3.common.Player.Listener {
+                override fun onPlayerError(error: androidx.media3.common.PlaybackException) {
+                    overlayPreviewFailed = true
+                    recordPlaybackDiagnostic("OVERLAY_PLAYER_ERROR code=${error.errorCodeName} message=${error.message}")
+                    overlay.pause()
+                    overlayPreviewPlayerView?.visibility = View.GONE
+                }
+            })
         }
         previewFrame.addView(overlayPreviewPlayerView, FrameLayout.LayoutParams(-1, -1))
 
@@ -2249,6 +2258,9 @@ class MainActivity : AppCompatActivity() {
             onViewportChanged = {
                 audioTrackViews.values.forEach { it.invalidate() }
                 invalidateTextTrackViews()
+                invalidateEffectTrackViews()
+                if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.postInvalidateOnAnimation()
+                overlaySelectionOverlay?.postInvalidateOnAnimation()
             },
             onPreviewMoveClip = { clipId, targetStartMs ->
                 previewClipMoveAt(clipId, targetStartMs)
@@ -4908,6 +4920,7 @@ class MainActivity : AppCompatActivity() {
                 lastOverlayClockSyncAtMs = android.os.SystemClock.elapsedRealtime()
                 lastOverlayHardSeekAtMs = lastOverlayClockSyncAtMs
                 lastOverlayAppliedSpeed = player.playbackParameters.speed
+                lastOverlayMasterSpeed = player.playbackParameters.speed
                 overlayPreviewFailed = false
             } catch (error: RuntimeException) {
                 overlayPreviewFailed = true
@@ -4920,8 +4933,9 @@ class MainActivity : AppCompatActivity() {
             // Hindari seek berkala: koreksi kecil menggunakan laju playback.
             val now = android.os.SystemClock.elapsedRealtime()
             val masterSpeed = player.playbackParameters.speed
-            if (kotlin.math.abs(masterSpeed - lastOverlayAppliedSpeed) > 0.01f) {
+            if (kotlin.math.abs(masterSpeed - lastOverlayMasterSpeed) > 0.01f) {
                 overlayPlayer.setPlaybackSpeed(masterSpeed)
+                lastOverlayMasterSpeed = masterSpeed
                 lastOverlayAppliedSpeed = masterSpeed
             }
             if (player.isPlaying && !isTimelineScrubbing && now - lastOverlayClockSyncAtMs >= 500L) {
