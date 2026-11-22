@@ -421,10 +421,7 @@ class MainActivity : AppCompatActivity() {
     private val timelineFrameUpdater = object : Runnable {
         override fun run() {
             if (::timeLabel.isInitialized && player.isPlaying) updateTime()
-            if (::overlayVideoTracksContainer.isInitialized) {
-                overlayVideoTracksContainer.postInvalidateOnAnimation()
-                overlayVideoTracksScroll.postInvalidateOnAnimation()
-            }
+            viewInvalidateOverlayTracks()
             overlaySelectionOverlay?.postInvalidateOnAnimation()
             if (isTimelineScrubbing) syncOverlayVideoPreview()
             handler.postDelayed(this, 33L)
@@ -2262,8 +2259,7 @@ class MainActivity : AppCompatActivity() {
                 audioTrackViews.values.forEach { it.invalidate() }
                 invalidateTextTrackViews()
                 invalidateEffectTrackViews()
-                if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.postInvalidateOnAnimation()
-                overlaySelectionOverlay?.postInvalidateOnAnimation()
+                viewInvalidateOverlayTracks()
             },
             onPreviewMoveClip = { clipId, targetStartMs ->
                 previewClipMoveAt(clipId, targetStartMs)
@@ -2412,10 +2408,7 @@ class MainActivity : AppCompatActivity() {
                 if (deltaX == 0f) return
                 timelineController.offsetPx -= deltaX
                 timelineController.clampOffset()
-                if (::overlayVideoTracksContainer.isInitialized) {
-                    overlayVideoTracksContainer.postInvalidateOnAnimation()
-                    overlayVideoTracksScroll.postInvalidateOnAnimation()
-                }
+                viewInvalidateOverlayTracks()
                 val position = timelineController.xToTime(width / 2f)
                 timelineController.positionMs = position
                 pendingScrubPositionMs = position
@@ -2433,11 +2426,7 @@ class MainActivity : AppCompatActivity() {
                 audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
                 invalidateTextTrackViews()
                 invalidateEffectTrackViews()
-                if (::overlayVideoTracksContainer.isInitialized) {
-                    overlayVideoTracksContainer.postInvalidateOnAnimation()
-                    overlayVideoTracksScroll.postInvalidateOnAnimation()
-                }
-                overlaySelectionOverlay?.postInvalidateOnAnimation()
+                viewInvalidateOverlayTracks()
             }
 
             private fun startPanFling(velocityX: Float) {
@@ -5199,9 +5188,17 @@ class MainActivity : AppCompatActivity() {
 
     private fun viewInvalidateOverlayTracks() {
         if (!::overlayVideoTracksContainer.isInitialized) return
-        overlayVideoTracksContainer.requestLayout()
+
+        // Sama seperti audio/text/effect: invalidate harus dikirim ke View
+        // track yang benar-benar menggambar clip, bukan hanya parent container.
+        // Parent invalidate saja tidak memaksa child custom View menjalankan onDraw().
+        for (index in 0 until overlayVideoTracksContainer.childCount) {
+            overlayVideoTracksContainer.getChildAt(index).postInvalidateOnAnimation()
+        }
         overlayVideoTracksContainer.postInvalidateOnAnimation()
-        if (::overlayVideoTracksScroll.isInitialized) overlayVideoTracksScroll.postInvalidateOnAnimation()
+        if (::overlayVideoTracksScroll.isInitialized) {
+            overlayVideoTracksScroll.postInvalidateOnAnimation()
+        }
         overlaySelectionOverlay?.postInvalidateOnAnimation()
     }
 
