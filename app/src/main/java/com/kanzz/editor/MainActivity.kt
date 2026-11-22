@@ -5063,15 +5063,6 @@ class MainActivity : AppCompatActivity() {
             applyOverlayPreviewTransform(clip)
 
             val effectSignature = "${clip.chromaKeyEnabled}:${clip.chromaKeyColor}:${clip.chromaKeyThreshold}:${clip.chromaKeySoftness}"
-            if (session.effectSignature != effectSignature) {
-                val effects = if (clip.chromaKeyEnabled) listOf(
-                    ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
-                ) else emptyList()
-                runCatching { overlayPlayer.setVideoEffects(effects) }
-                    .onFailure { recordPlaybackDiagnostic("OVERLAY_EFFECT_ERROR clip=${clip.id.take(8)} ${it.javaClass.simpleName}: ${it.message}") }
-                session.effectSignature = effectSignature
-            }
-
             val localPosition = if (selectedPreviewOnly) 0L else (position - clip.startTimeMs).coerceAtLeast(0L)
             if (session.preparedClipId != clip.id) {
                 val item = MediaItem.Builder()
@@ -5083,8 +5074,13 @@ class MainActivity : AppCompatActivity() {
                             .build()
                     ).build()
                 try {
-                    overlayPlayer.volume = 0f
                     overlayPlayer.setMediaItem(item, localPosition)
+                    val effects = if (clip.chromaKeyEnabled) listOf(
+                        ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
+                    ) else emptyList()
+                    overlayPlayer.setVideoEffects(effects)
+                    session.effectSignature = effectSignature
+                    overlayPlayer.volume = clip.volume.coerceIn(0f, 2f)
                     overlayPlayer.prepare()
                     session.preparedClipId = clip.id
                     session.lastClockSyncAtMs = now
@@ -5099,6 +5095,20 @@ class MainActivity : AppCompatActivity() {
                     return@forEach
                 }
             } else if (!session.failed) {
+                if (session.effectSignature != effectSignature) {
+                    val effects = if (clip.chromaKeyEnabled) listOf(
+                        ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
+                    ) else emptyList()
+                    runCatching {
+                        overlayPlayer.setVideoEffects(effects)
+                        session.effectSignature = effectSignature
+                        overlayPlayer.seekTo(localPosition)
+                        recordPlaybackDiagnostic("OVERLAY_EFFECT_UPDATED clip=${clip.id.take(8)} enabled=${clip.chromaKeyEnabled}")
+                    }.onFailure {
+                        recordPlaybackDiagnostic("OVERLAY_EFFECT_ERROR clip=${clip.id.take(8)} ${it.javaClass.simpleName}: ${it.message}")
+                    }
+                }
+                overlayPlayer.volume = clip.volume.coerceIn(0f, 2f)
                 if (kotlin.math.abs(masterSpeed - session.lastMasterSpeed) > 0.01f) {
                     overlayPlayer.setPlaybackSpeed(masterSpeed)
                     session.lastMasterSpeed = masterSpeed
@@ -8677,7 +8687,41 @@ class MainActivity : AppCompatActivity() {
                 val overlaySequence = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
                 if (overlayStart > 0L) overlaySequence.addGap(overlayStart * 1000L)
                 overlaySequence.addItem(overlayEdited)
+                val overlayEndMs = overlayStart + overlayClip.durationMs
+                val projectEndMs = maxOf(videoClipManager.durationMs, overlayEndMs)
+                val trailingGapMs = (projectEndMs - overlayEndMs).coerceAtLeast(0L)
+                if (trailingGapMs > 0L) overlaySequence.addGap(trailingGapMs * 1000L)
                 sequences.add(overlaySequence.build())
+
+                // Audio overlay dipisah dari input video compositor agar suara ikut timeline.
+                if (overlayClip.volume > 0f) {
+                    val overlayAudioSequence = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
+                    if (overlayStart > 0L) overlayAudioSequence.addGap(overlayStart * 1000L)
+                    val overlayAudioItem = EditedMediaItem.Builder(overlayItem)
+                        .setRemoveVideo(true)
+                        .setEffects(
+                            Effects(
+                                buildList<AudioProcessor> {
+                                    if (abs(overlayClip.volume - 1f) > 0.001f) {
+                                        val mixer = ChannelMixingAudioProcessor()
+                                        for (channelCount in 1..6) {
+                                            mixer.putChannelMixingMatrix(
+                                                ChannelMixingMatrix.createForConstantPower(
+                                                    channelCount, channelCount
+                                                ).scaleBy(overlayClip.volume.coerceIn(0f, 2f))
+                                            )
+                                        }
+                                        add(mixer)
+                                    }
+                                },
+                                emptyList()
+                            )
+                        )
+                        .build()
+                    overlayAudioSequence.addItem(overlayAudioItem)
+                    if (trailingGapMs > 0L) overlayAudioSequence.addGap(trailingGapMs * 1000L)
+                    sequences.add(overlayAudioSequence.build())
+                }
             }
 
             // Video utama menjadi background compositor. Penempatannya setelah seluruh
