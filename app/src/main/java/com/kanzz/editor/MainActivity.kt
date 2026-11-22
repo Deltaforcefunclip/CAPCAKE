@@ -513,9 +513,25 @@ class MainActivity : AppCompatActivity() {
         }
 
     // Picker khusus untuk menambahkan klip video baru ke main timeline.
+    // Log dan notifikasi sementara memastikan callback hasil picker benar-benar terpanggil.
     private val pickAdditionalVideo =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
-            if (uri != null) addVideoClip(uri)
+            android.util.Log.i("CAPCAKE_IMPORT", "Picker result diterima: $uri")
+            if (uri == null) {
+                Toast.makeText(this, "Pemilih video ditutup tanpa mengirim file.", Toast.LENGTH_LONG).show()
+            } else {
+                Toast.makeText(this, "File diterima, sedang memasukkan ke timeline…", Toast.LENGTH_SHORT).show()
+                try {
+                    addVideoClip(uri)
+                } catch (error: Exception) {
+                    android.util.Log.e("CAPCAKE_IMPORT", "Callback impor gagal", error)
+                    Toast.makeText(
+                        this,
+                        "Impor gagal: ${error.localizedMessage ?: error.javaClass.simpleName}",
+                        Toast.LENGTH_LONG
+                    ).show()
+                }
+            }
         }
 
     // =====================================
