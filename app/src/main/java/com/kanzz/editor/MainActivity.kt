@@ -508,6 +508,10 @@ class MainActivity : AppCompatActivity() {
 
     // Picker khusus untuk menambahkan klip video baru ke main timeline.
     // Log dan notifikasi sementara memastikan callback hasil picker benar-benar terpanggil.
+    private val pickOverlayVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri != null) addOverlayVideoClip(uri)
+    }
+
     private val pickAdditionalVideo =
         registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
             android.util.Log.i("CAPCAKE_IMPORT", "Picker result diterima: $uri")
@@ -956,6 +960,7 @@ class MainActivity : AppCompatActivity() {
         restoreTextClips(prefs.getString("text_timeline_${project.id}", null))
         restoreEffectClips(prefs.getString("effect_timeline_${project.id}", null))
         restoreOverlayVideoClips(prefs.getString("overlay_video_timeline_${project.id}", null))
+        if (::overlayVideoTracksContainer.isInitialized) refreshOverlayVideoTracks()
 
         try {
 
@@ -3285,6 +3290,8 @@ class MainActivity : AppCompatActivity() {
                 "✧" to "Animasi", "◐" to "Opasitas", "⌫" to "Hapus",
                 "P̲T̲" to "Preset Text"
             )
+        } else if (selectedOverlayVideoClipId != null) {
+            listOf("✂" to "Potong", "▣" to "Copy", "⌫" to "Hapus")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3368,6 +3375,24 @@ class MainActivity : AppCompatActivity() {
                 when (pair.second) {
 
                     "Potong" -> {
+                        if (selectedOverlayVideoClipId != null) {
+                            val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return@setOnClickListener
+                            val position = timelineController.positionMs
+                            if (position <= clip.startTimeMs || position >= clip.endTimeMs) {
+                                showMessage("Geser playhead ke dalam klip overlay untuk memotong.")
+                            } else {
+                                pushUndoSnapshot()
+                                val firstDuration = position - clip.startTimeMs
+                                val second = clip.copy(id = java.util.UUID.randomUUID().toString(),
+                                    startTimeMs = position, sourceStartMs = clip.sourceStartMs + firstDuration,
+                                    durationMs = clip.durationMs - firstDuration)
+                                clip.durationMs = firstDuration
+                                overlayVideoClips.add(second)
+                                selectedOverlayVideoClipId = second.id
+                                refreshOverlayVideoTracks(); saveCurrentProject(); updateToolMenu()
+                            }
+                            return@setOnClickListener
+                        }
                         if (selectedEffectClipId != null) {
                             val effect = effectClipManager.find(selectedEffectClipId) ?: return@setOnClickListener
                             pushUndoSnapshot()
@@ -3421,7 +3446,12 @@ class MainActivity : AppCompatActivity() {
                         else showTextOpacityDialog()
                     }
                     "Hapus" -> {
-                        if (selectedEffectClipId != null) {
+                        if (selectedOverlayVideoClipId != null) {
+                            pushUndoSnapshot()
+                            overlayVideoClips.removeAll { it.id == selectedOverlayVideoClipId }
+                            selectedOverlayVideoClipId = null
+                            refreshOverlayVideoTracks(); saveCurrentProject(); updateToolMenu()
+                        } else if (selectedEffectClipId != null) {
                             pushUndoSnapshot()
                             effectClipManager.remove(selectedEffectClipId)
                             selectedEffectClipId = null
@@ -3466,6 +3496,14 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Duplikat" -> {
+                        if (selectedOverlayVideoClipId != null) {
+                            val original = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return@setOnClickListener
+                            pushUndoSnapshot()
+                            val copy = original.copy(id = java.util.UUID.randomUUID().toString(), startTimeMs = original.endTimeMs)
+                            overlayVideoClips.add(copy); selectedOverlayVideoClipId = copy.id
+                            refreshOverlayVideoTracks(); saveCurrentProject(); updateToolMenu()
+                            return@setOnClickListener
+                        }
                         if (selectedEffectClipId != null) {
                             val originalEffect = effectClipManager.find(selectedEffectClipId) ?: return@setOnClickListener
                             pushUndoSnapshot()
@@ -3560,8 +3598,10 @@ class MainActivity : AppCompatActivity() {
                         selectedAudioClipId = null
                         selectedTextClipId = null
                         selectedEffectClipId = null
+                        selectedOverlayVideoClipId = null
                         updateLayerGroupVisibility()
                         updateToolMenu()
+                        if (pair.second == "Overlay") pickOverlayVideo.launch(arrayOf("video/*"))
                     }
 
                     "Pisah" -> {
@@ -3641,7 +3681,7 @@ class MainActivity : AppCompatActivity() {
         val toggle = TextView(this).apply {
 
             text = when {
-                selectedAudioClipId != null || selectedTextClipId != null || selectedEffectClipId != null || videoSelected -> "KEMBALI KE MENU UTAMA"
+                selectedAudioClipId != null || selectedTextClipId != null || selectedEffectClipId != null || selectedOverlayVideoClipId != null || videoSelected -> "KEMBALI KE MENU UTAMA"
                 else -> "MENU VIDEO"
             }
 
@@ -3651,7 +3691,10 @@ class MainActivity : AppCompatActivity() {
         }
 
         toggle.setOnClickListener {
-            if (selectedEffectClipId != null) {
+            if (selectedOverlayVideoClipId != null) {
+                selectedOverlayVideoClipId = null
+                refreshOverlayVideoTracks()
+            } else if (selectedEffectClipId != null) {
                 selectedEffectClipId = null
                 refreshEffectTracks()
             } else if (selectedAudioClipId != null) {
@@ -4725,6 +4768,41 @@ class MainActivity : AppCompatActivity() {
         }
         dialog.show()
     }
+
+    private fun addOverlayVideoClip(uri: Uri) {
+        try { contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
+        val duration = readVideoDurationMs(uri)
+        if (duration <= 0L) { showMessage("Durasi video overlay tidak dapat dibaca."); return }
+        pushUndoSnapshot()
+        val name = runCatching { uri.lastPathSegment?.substringAfterLast("/") }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Overlay Video"
+        val clip = OverlayVideoClip(sourceUri = uri.toString(), startTimeMs = timelineController.positionMs.coerceAtLeast(0L),
+            durationMs = duration, sourceDurationMs = duration, name = name)
+        overlayVideoClips.add(clip)
+        selectedOverlayVideoClipId = clip.id
+        activeLayerGroup = "OVERLAY"
+        refreshOverlayVideoTracks(); updateLayerGroupVisibility(); saveCurrentProject(); updateToolMenu()
+        Toast.makeText(this, "Overlay video ditambahkan ke timeline.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun refreshOverlayVideoTracks() {
+        if (!::overlayVideoTracksContainer.isInitialized) return
+        overlayVideoTracksContainer.removeAllViews()
+        val view = OverlayVideoTrackView(this, timelineController, overlayVideoClips,
+            onSelect = { clip ->
+                selectedOverlayVideoClipId = clip?.id
+                selectedAudioClipId = null; selectedTextClipId = null; selectedEffectClipId = null
+                selectedVideoClipId = null; videoSelected = false
+                activeLayerGroup = "OVERLAY"
+                updateLayerGroupVisibility(); updateToolMenu()
+            },
+            onEditStart = { pushUndoSnapshot() },
+            onChanged = { refreshOverlayVideoTracks(); saveCurrentProject() }
+        )
+        view.select(selectedOverlayVideoClipId)
+        overlayVideoTracksContainer.addView(view, LinearLayout.LayoutParams(-1, dp(38)))
+    }
+
+    private fun restoreOverlayVideoClips(raw: String?) = OverlayVideoCodec.decode(raw, overlayVideoClips)
 
     private fun updateLayerGroupVisibility() {
         if (!::audioTracksScroll.isInitialized || !::textTracksScroll.isInitialized) return
@@ -6938,6 +7016,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 .putString("text_timeline_${it.id}", encodeTextClips())
                 .putString("effect_timeline_${it.id}", encodeEffectClips())
+                .putString("overlay_video_timeline_${it.id}", OverlayVideoCodec.encode(overlayVideoClips))
                 .apply()
         }
 
