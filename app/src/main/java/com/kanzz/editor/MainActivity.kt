@@ -1358,6 +1358,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun addVideoClip(uri: Uri) {
+        // Simpan akses URI terlebih dahulu. Beberapa provider galeri tidak mendukung
+        // persistable permission, jadi kegagalannya tidak boleh menghentikan impor.
         try {
             contentResolver.takePersistableUriPermission(
                 uri,
@@ -1365,40 +1367,69 @@ class MainActivity : AppCompatActivity() {
             )
         } catch (_: Exception) {}
 
-        val durationMs = readVideoDurationMs(uri)
+        val durationMs = try {
+            readVideoDurationMs(uri)
+        } catch (error: Exception) {
+            android.util.Log.e("CAPCAKE_IMPORT", "Gagal membaca durasi video", error)
+            0L
+        }
 
         if (durationMs <= 0L) {
-            showMessage("File video tidak dapat dibaca.")
+            showMessage("Video terpilih, tetapi durasinya tidak bisa dibaca. Coba pilih file video lokal.")
             return
         }
         if (!::timeline.isInitialized || !::timelineController.isInitialized) {
-            showMessage("Timeline belum siap.")
+            showMessage("Timeline belum siap. Buka project lalu coba impor lagi.")
             return
         }
 
         val oldPosition = timelineController.positionMs
-        pushUndoSnapshot()
         val clip = VideoClip(
             sourceUri = uri.toString(),
             sourceStartMs = 0L,
             durationMs = durationMs
         )
-        videoClipManager.clips.add(clip)
-        videoClipManager.recalculateTimeline()
-        selectedVideoClipId = clip.id
-        selectedAudioClipId = null
-        videoSelected = true
-        timeline.selectClip(clip.id)
-        timeline.setDuration(videoClipManager.durationMs, oldPosition)
-        timeline.updateSelection(true)
-        if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
-        if (::playerView.isInitialized) playerView.foreground = null
-        refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
-        timeline.loadThumbnails(uri, durationMs)
-        saveCurrentProject()
-        updateToolMenu()
 
-        Toast.makeText(this, "Video berhasil ditambahkan ke timeline.", Toast.LENGTH_SHORT).show()
+        try {
+            pushUndoSnapshot()
+            videoClipManager.clips.add(clip)
+            videoClipManager.recalculateTimeline()
+            selectedVideoClipId = clip.id
+            selectedAudioClipId = null
+            videoSelected = true
+
+            // Simpan perubahan data lebih awal agar klip tidak hilang jika
+            // salah satu proses penyegaran preview/thumbnail gagal.
+            saveCurrentProject()
+
+            try {
+                timeline.selectClip(clip.id)
+                timeline.setDuration(videoClipManager.durationMs, oldPosition)
+                timeline.updateSelection(true)
+            } catch (error: Exception) {
+                android.util.Log.e("CAPCAKE_IMPORT", "Gagal memperbarui tampilan timeline", error)
+            }
+
+            try {
+                if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
+                if (::playerView.isInitialized) playerView.foreground = null
+                refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
+            } catch (error: Exception) {
+                android.util.Log.e("CAPCAKE_IMPORT", "Gagal memperbarui preview setelah impor", error)
+            }
+
+            try {
+                timeline.loadThumbnails(uri, durationMs)
+            } catch (error: Exception) {
+                android.util.Log.e("CAPCAKE_IMPORT", "Gagal memuat thumbnail video", error)
+            }
+
+            updateToolMenu()
+            Toast.makeText(this, "Video berhasil ditambahkan ke timeline.", Toast.LENGTH_SHORT).show()
+        } catch (error: Exception) {
+            android.util.Log.e("CAPCAKE_IMPORT", "Impor video gagal", error)
+            showMessage("Impor gagal: ${error.localizedMessage ?: error.javaClass.simpleName}")
+        }
     }
 
     // =====================================
