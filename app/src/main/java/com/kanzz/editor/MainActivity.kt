@@ -5204,6 +5204,26 @@ class MainActivity : AppCompatActivity() {
     private fun refreshOverlayVideoTracks() {
         if (!::overlayVideoTracksContainer.isInitialized) return
         overlayVideoTracksContainer.removeAllViews()
+
+        // Overlay mengikuti pola layer lain: tidak ada clip berarti tidak ada track.
+        // Ini juga mengosongkan ruang hitam agar area timeline utama bisa digeser.
+        if (overlayVideoClips.isEmpty()) {
+            if (::overlayVideoTracksScroll.isInitialized) {
+                overlayVideoTracksScroll.visibility = View.GONE
+            }
+            if (activeLayerGroup == "OVERLAY") activeLayerGroup = "AUDIO"
+            if (::audioTracksScroll.isInitialized && ::textTracksScroll.isInitialized) {
+                updateLayerGroupVisibility()
+            }
+            overlaySelectionOverlay?.visibility = View.GONE
+            return
+        }
+
+        if (::overlayVideoTracksScroll.isInitialized) {
+            overlayVideoTracksScroll.visibility =
+                if (activeLayerGroup == "OVERLAY") View.VISIBLE else View.GONE
+        }
+        overlaySelectionOverlay?.visibility = View.VISIBLE
         val view = OverlayVideoTrackView(this, timelineController, overlayVideoClips,
             onSelect = { clip ->
                 selectedOverlayVideoClipId = clip?.id
