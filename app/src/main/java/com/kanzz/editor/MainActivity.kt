@@ -8453,8 +8453,19 @@ class MainActivity : AppCompatActivity() {
                     // sumber overlay diperkecil proporsional agar muat di dalam kanvas.
                     val frameW = playerView.width.coerceAtLeast(1).toFloat()
                     val frameH = playerView.height.coerceAtLeast(1).toFloat()
-                    val aspect = exportCanvasAspect.coerceAtLeast(0.0001f)
-                    add(Presentation.createForAspectRatio(aspect, Presentation.LAYOUT_SCALE_TO_FIT))
+                    // Gunakan dimensi kanvas export yang PERSIS sama dengan sequence video utama.
+                    // Satu Presentation ukuran tetap menggantikan resize berbasis rasio yang
+                    // dapat menghasilkan ukuran output berbeda antar-sumber overlay.
+                    val canvasWidth = (outputWidth ?: frameW.toInt()).coerceAtLeast(2)
+                    val canvasHeight = (outputHeight ?: frameH.toInt()).coerceAtLeast(2)
+                    val aspect = canvasWidth.toFloat() / canvasHeight.toFloat()
+                    add(
+                        Presentation.createForWidthAndHeight(
+                            canvasWidth,
+                            canvasHeight,
+                            Presentation.LAYOUT_SCALE_TO_FIT
+                        )
+                    )
                     val scale = overlayClip.transformScale.coerceIn(0.2f, 4f)
                     val radians = Math.toRadians(overlayClip.rotationDegrees.toDouble())
                     val cosA = kotlin.math.cos(radians).toFloat()
