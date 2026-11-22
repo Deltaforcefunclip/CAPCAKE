@@ -3203,6 +3203,20 @@ class MainActivity : AppCompatActivity() {
         return timelineController.positionMs
     }
 
+    /**
+     * Navigasi pemilihan clip untuk SEMUA layer memakai satu controller timeline.
+     * Seek player hanya dilakukan sekali setelah animasi selesai agar pemilihan clip
+     * tidak memicu rangkaian seek/decoder restart seperti gesture scrubbing.
+     */
+    private fun navigateToLayerClipBoundary(startTimeMs: Long, endTimeMs: Long) {
+        if (endTimeMs <= startTimeMs || !::timeline.isInitialized) return
+        if (player.isPlaying) {
+            player.pause()
+            updatePlayButton()
+        }
+        timeline.navigateToTimeRange(startTimeMs, endTimeMs)
+    }
+
     /** Mulai scrubbing dengan seek sinkron terdekat agar decoder tidak dibebani seek presisi berulang. */
     private fun beginTimelineScrubbing() {
         if (isTimelineScrubbing) return
@@ -5340,6 +5354,9 @@ class MainActivity : AppCompatActivity() {
                 if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
                 activeLayerGroup = "OVERLAY"
                 updateLayerGroupVisibility(); updateToolMenu()
+                if (clip != null) {
+                    navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
+                }
                 syncOverlayVideoPreview()
                 overlaySelectionOverlay?.invalidate()
             },
@@ -5402,7 +5419,10 @@ class MainActivity : AppCompatActivity() {
                     for (i in 0 until thisEffectTracksContainer.childCount) {
                         (thisEffectTracksContainer.getChildAt(i) as? EffectTrackView)?.select(clip?.id)
                     }
-                    if (clip != null) activeLayerGroup = "EFFECT"
+                    if (clip != null) {
+                        activeLayerGroup = "EFFECT"
+                        navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
+                    }
                     updateLayerGroupVisibility()
                     updateToolMenu()
                 },
@@ -5481,6 +5501,9 @@ class MainActivity : AppCompatActivity() {
                 allClips = { textClipManager.clips },
                 onSelected = { clip ->
                     selectedTextClipId = clip?.id
+                    if (clip != null) {
+                        navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
+                    }
                     if (clip == null && player.isPlaying) {
                         player.pause()
                         updatePlayButton()
@@ -6840,6 +6863,9 @@ class MainActivity : AppCompatActivity() {
                 lane,
                 onClipSelected = { clip ->
                     selectedAudioClipId = clip?.id
+                    if (clip != null) {
+                        navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
+                    }
                     if (clip == null && player.isPlaying) {
                         player.pause()
                         updatePlayButton()
@@ -9022,15 +9048,29 @@ class TimelineView(
      * Dengan begitu batas klip yang menghadap playhead menyentuh garis playhead.
      */
     fun navigateToClipBoundary(clip: VideoClip) {
-        if (videoClips.find(clip.id) == null || width <= 0) return
+        if (videoClips.find(clip.id) == null) return
+        navigateToTimeRange(clip.timelineStartMs, clip.timelineEndMs)
+    }
+
+    /**
+     * Memusatkan playhead pada batas clip dari video utama maupun layer tambahan.
+     * Semua layer membaca offset controller yang sama sehingga bergerak serempak.
+     */
+    fun navigateToTimeRange(startTimeMs: Long, endTimeMs: Long) {
+        if (width <= 0 || endTimeMs <= startTimeMs) return
+
+        // Batalkan navigasi sebelumnya sebelum mengevaluasi clip baru.
+        navigationAnimator?.cancel()
+        navigationAnimator = null
+        isNavigatingToClip = false
+
         val currentPosition = controller.positionMs
         val targetPosition = when {
-            currentPosition < clip.timelineStartMs -> clip.timelineStartMs
-            currentPosition >= clip.timelineEndMs ->
-                (clip.timelineEndMs - 1L).coerceAtLeast(clip.timelineStartMs)
+            currentPosition < startTimeMs -> startTimeMs
+            currentPosition >= endTimeMs ->
+                (endTimeMs - 1L).coerceAtLeast(startTimeMs)
             else -> return
         }
-        navigationAnimator?.cancel()
         val startPosition = currentPosition.toFloat()
         val endPosition = targetPosition.toFloat()
         val startOffset = controller.offsetPx
@@ -9047,11 +9087,12 @@ class TimelineView(
                 controller.offsetPx = startOffset + (endOffset - startOffset) * fraction
                 controller.clampOffset()
                 postInvalidateOnAnimation()
+                // Seluruh layer harus menggambar ulang karena offset controller berubah.
+                onViewportChanged()
             }
             addListener(object : android.animation.AnimatorListenerAdapter() {
                 override fun onAnimationEnd(animation: android.animation.Animator) {
-                    // cancel() juga memanggil onAnimationEnd; jangan biarkan animasi lama
-                    // menimpa tujuan navigasi yang lebih baru.
+                    // Jangan biarkan animasi yang dibatalkan menimpa tujuan navigasi terbaru.
                     if (!isNavigatingToClip) return
                     controller.positionMs = targetPosition
                     controller.offsetPx = endOffset
@@ -9059,6 +9100,8 @@ class TimelineView(
                     isNavigatingToClip = false
                     navigationAnimator = null
                     invalidate()
+                    onViewportChanged()
+                    // Satu seek akhir saja; jangan seek setiap frame animasi.
                     onNavigateToPosition(targetPosition)
                 }
 
