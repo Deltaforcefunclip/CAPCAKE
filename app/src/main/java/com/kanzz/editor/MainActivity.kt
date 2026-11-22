@@ -7711,7 +7711,13 @@ class MainActivity : AppCompatActivity() {
             if (fpsOptions.none { kotlin.math.abs(it - fps) < 0.5f }) fpsOptions.add(fps)
         }
 
-        data class ResolutionChoice(val width: Int, val height: Int, val label: String)
+        data class ResolutionChoice(
+            val width: Int,
+            val height: Int,
+            val label: String,
+            val sourceVideo: Boolean = false,
+            val sourceRatio: Boolean = false
+        )
 
         val ratio = selectedPreviewRatio.split(":").let { parts ->
             if (parts.size == 2) {
@@ -7745,7 +7751,8 @@ class MainActivity : AppCompatActivity() {
                     ResolutionChoice(
                         profile.width,
                         profile.height,
-                        "Sumber Video • ${profile.resolutionLabel}"
+                        "Sumber Video • ${profile.resolutionLabel}",
+                        sourceVideo = true
                     )
                 )
             }
@@ -7770,7 +7777,8 @@ class MainActivity : AppCompatActivity() {
             ResolutionChoice(
                 sourceRatioDimensions.first,
                 sourceRatioDimensions.second,
-                "Sumber Rasio • ${sourceRatioDimensions.first}×${sourceRatioDimensions.second}"
+                "Sumber Rasio • ${sourceRatioDimensions.first}×${sourceRatioDimensions.second}",
+                sourceRatio = true
             )
         )
 
@@ -7838,10 +7846,19 @@ class MainActivity : AppCompatActivity() {
                     val selectedFps = fpsOptions.getOrNull(fpsIndex)
                     val selectedResolution = resolutionOptions.getOrNull(resolutionIndex)
                     dialog.dismiss()
+                    val exportCanvasAspect = selectedResolution?.let {
+                        it.width.toFloat() / it.height.toFloat().coerceAtLeast(1)
+                    } ?: if (selectedPreviewRatio.isBlank()) {
+                        profiles.first().width.toFloat() /
+                            profiles.first().height.toFloat().coerceAtLeast(1)
+                    } else {
+                        ratio
+                    }
                     startExportVideo(
                         selectedFps,
                         selectedResolution?.width,
-                        selectedResolution?.height
+                        selectedResolution?.height,
+                        exportCanvasAspect
                     )
                 }
             }
@@ -7866,6 +7883,7 @@ class MainActivity : AppCompatActivity() {
         fun addOption(
             group: RadioGroup,
             label: String,
+            enabled: Boolean = true,
             onSelectionChanged: (Int) -> Unit
         ) {
             val radio = RadioButton(this).apply {
@@ -7873,6 +7891,8 @@ class MainActivity : AppCompatActivity() {
                 text = label
                 textSize = 14f
                 setTextColor(Color.WHITE)
+                isEnabled = enabled
+                alpha = if (enabled) 1f else 0.38f
                 buttonTintList = android.content.res.ColorStateList.valueOf(green)
                 setPadding(dp(10), dp(2), dp(10), dp(2))
                 background = android.graphics.drawable.GradientDrawable().apply {
@@ -7916,7 +7936,12 @@ class MainActivity : AppCompatActivity() {
         }
         resolutionOptions.forEach { option ->
             tasks.add {
-                addOption(resolutionGroup, option.label) { tappedId ->
+                val optionEnabled = when {
+                    option.sourceVideo -> selectedPreviewRatio.isBlank()
+                    option.sourceRatio -> selectedPreviewRatio.isNotBlank()
+                    else -> true
+                }
+                addOption(resolutionGroup, option.label, enabled = optionEnabled) { tappedId ->
                     if (selectedResolutionId == tappedId) {
                         resolutionGroup.clearCheck()
                         selectedResolutionId = -1
@@ -7960,7 +7985,12 @@ class MainActivity : AppCompatActivity() {
         analyzeExportSources(::showExportSourceAnalysis)
     }
 
-    private fun startExportVideo(outputFps: Float?, outputWidth: Int?, outputHeight: Int?) {
+    private fun startExportVideo(
+        outputFps: Float?,
+        outputWidth: Int?,
+        outputHeight: Int?,
+        exportCanvasAspect: Float
+    ) {
 
         val editedItems = try {
             videoClipManager.clips.map { clip ->
@@ -8416,16 +8446,14 @@ class MainActivity : AppCompatActivity() {
                             .build()
                     ).build()
                 val overlayEffects = buildList {
+                    // Koordinat translasi berasal dari ukuran area preview, tetapi
+                    // geometri kanvas export wajib memakai rasio kanvas project yang
+                    // sudah dipastikan dari sumber utama (Original) atau rasio manual.
+                    // Presentation FIT meniru perilaku PlayerView overlay di preview:
+                    // sumber overlay diperkecil proporsional agar muat di dalam kanvas.
                     val frameW = playerView.width.coerceAtLeast(1).toFloat()
                     val frameH = playerView.height.coerceAtLeast(1).toFloat()
-                    // Overlay harus memakai kanvas project yang sama dengan video utama,
-                    // bukan rasio/resolusi sumber file overlay.
-                    val ratioParts = selectedPreviewRatio.split(":")
-                    val canvasAspect = if (ratioParts.size == 2) {
-                        (ratioParts[0].toFloatOrNull() ?: frameW) /
-                            (ratioParts[1].toFloatOrNull() ?: frameH).coerceAtLeast(0.0001f)
-                    } else frameW / frameH
-                    val aspect = canvasAspect.coerceAtLeast(0.0001f)
+                    val aspect = exportCanvasAspect.coerceAtLeast(0.0001f)
                     add(Presentation.createForAspectRatio(aspect, Presentation.LAYOUT_SCALE_TO_FIT))
                     val scale = overlayClip.transformScale.coerceIn(0.2f, 4f)
                     val radians = Math.toRadians(overlayClip.rotationDegrees.toDouble())
