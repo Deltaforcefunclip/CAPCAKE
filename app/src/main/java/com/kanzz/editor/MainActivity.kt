@@ -118,6 +118,7 @@ class MainActivity : AppCompatActivity() {
     private var overlayPreviewPlayerView: PlayerView? = null
     private var overlayPreviewPlayer: ExoPlayer? = null
     private var activeOverlayPreviewId: String? = null
+    private var activeOverlayPreviewEffectSignature: String? = null
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
     private lateinit var audioTracksContainer: LinearLayout
@@ -3315,7 +3316,7 @@ class MainActivity : AppCompatActivity() {
                 "P̲T̲" to "Preset Text"
             )
         } else if (selectedOverlayVideoClipId != null) {
-            listOf("⚙" to "Modifikasi", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
+            listOf("⚙" to "Modifikasi", "🟩" to "Chroma Key", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3459,6 +3460,7 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     "Modifikasi" -> showOverlayVideoModifyDialog()
+                    "Chroma Key" -> showOverlayChromaKeyDialog()
                     "Edit Text" -> editSelectedText()
                     "Font" -> showTextFontPicker()
                     "Preset Text" -> showPresetTextPanel()
@@ -4821,10 +4823,19 @@ class MainActivity : AppCompatActivity() {
             overlayPlayer.pause()
             overlayView.visibility = View.GONE
             activeOverlayPreviewId = null
+            activeOverlayPreviewEffectSignature = null
+            overlayPlayer.setVideoEffects(emptyList())
             return
         }
-        val position = if (::timelineController.isInitialized) timelineController.positionMs
-            else currentTimelinePosition()
+
+        // Saat playback, ambil jam timeline dari pemetaan player utama (bukan jam
+        // player overlay). Saat scrub, posisi jari adalah sumber kebenaran.
+        val position = when {
+            isTimelineScrubbing -> pendingScrubPositionMs
+            player.isPlaying -> currentTimelinePosition()
+            else -> timelineController.positionMs
+        }.coerceAtLeast(0L)
+
         val clip = overlayVideoClips
             .filter { position >= it.startTimeMs && position < it.endTimeMs }
             .maxByOrNull { it.trackIndex }
@@ -4832,10 +4843,29 @@ class MainActivity : AppCompatActivity() {
             overlayPlayer.pause()
             overlayView.visibility = View.GONE
             activeOverlayPreviewId = null
+            activeOverlayPreviewEffectSignature = null
+            overlayPlayer.setVideoEffects(emptyList())
             return
         }
+
         overlayView.visibility = View.VISIBLE
         applyOverlayPreviewTransform(clip)
+
+        val effectSignature = "${clip.chromaKeyEnabled}:${clip.chromaKeyColor}:" +
+            "${clip.chromaKeyThreshold}:${clip.chromaKeySoftness}"
+        if (activeOverlayPreviewEffectSignature != effectSignature) {
+            val effects = if (clip.chromaKeyEnabled) listOf(
+                ChromaKeyGlEffect(
+                    clip.chromaKeyColor,
+                    clip.chromaKeyThreshold,
+                    clip.chromaKeySoftness
+                )
+            ) else emptyList()
+            overlayPlayer.setVideoEffects(effects)
+            activeOverlayPreviewEffectSignature = effectSignature
+        }
+
+        val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
         if (activeOverlayPreviewId != clip.id) {
             val item = MediaItem.Builder()
                 .setUri(Uri.parse(clip.sourceUri))
@@ -4848,17 +4878,129 @@ class MainActivity : AppCompatActivity() {
                 ).build()
             activeOverlayPreviewId = clip.id
             overlayPlayer.volume = 0f
-            overlayPlayer.setMediaItem(item, (position - clip.startTimeMs).coerceAtLeast(0L))
+            overlayPlayer.setMediaItem(item, localPosition)
             overlayPlayer.prepare()
         } else {
-            val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
-            val seekThreshold = if (player.isPlaying && !isTimelineScrubbing) 280L else 45L
-            if (kotlin.math.abs(overlayPlayer.currentPosition - localPosition) > seekThreshold) {
-                overlayPlayer.seekTo(localPosition)
+            // Overlay mengikuti laju playback utama. Koreksi seek hanya saat drift
+            // benar-benar besar; seek kecil berkala justru terlihat sebagai loncatan.
+            overlayPlayer.setPlaybackSpeed(player.playbackParameters.speed)
+            val drift = kotlin.math.abs(overlayPlayer.currentPosition - localPosition)
+            val seekThreshold = if (player.isPlaying && !isTimelineScrubbing) 700L else 24L
+            if (drift > seekThreshold) overlayPlayer.seekTo(localPosition)
+        }
+
+        overlayPlayer.playWhenReady = player.isPlaying && !isTimelineScrubbing
+        if (!player.isPlaying || isTimelineScrubbing) overlayPlayer.pause()
+    }
+
+    private fun showOverlayChromaKeyDialog() {
+        val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return
+        val oldEnabled = clip.chromaKeyEnabled
+        val oldColor = clip.chromaKeyColor
+        val oldThreshold = clip.chromaKeyThreshold
+        val oldSoftness = clip.chromaKeySoftness
+        pushUndoSnapshot()
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+        }
+        val enabled = CheckBox(this).apply {
+            text = "Aktifkan Chroma Key"
+            setTextColor(Color.WHITE)
+            isChecked = oldEnabled
+        }
+        content.addView(enabled)
+
+        val colorGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
+        val colors = listOf(
+            "Hijau" to Color.GREEN,
+            "Biru" to Color.BLUE,
+            "Magenta" to Color.MAGENTA
+        )
+        var selectedColor = oldColor
+        colors.forEachIndexed { index, entry ->
+            val radio = RadioButton(this).apply {
+                id = View.generateViewId()
+                text = entry.first
+                setTextColor(Color.WHITE)
+                tag = entry.second
+                isChecked = oldColor == entry.second
+            }
+            colorGroup.addView(radio)
+            if (radio.isChecked) colorGroup.check(radio.id)
+            if (index == 0 && colors.none { it.second == oldColor }) {
+                // Warna kustom yang belum dikenali tetap tersimpan sampai pilihan diganti.
             }
         }
-        overlayPlayer.playWhenReady = player.isPlaying && !isTimelineScrubbing
-        if (!player.isPlaying) overlayPlayer.pause()
+        colorGroup.setOnCheckedChangeListener { group, checkedId ->
+            val selected = group.findViewById<RadioButton>(checkedId)
+            selectedColor = (selected?.tag as? Int) ?: selectedColor
+        }
+        content.addView(TextView(this).apply {
+            text = "Warna layar"; setTextColor(Color.LTGRAY); textSize = 12f
+        })
+        content.addView(colorGroup)
+
+        fun addSlider(title: String, initial: Float, update: (Float) -> Unit) {
+            val label = TextView(this).apply {
+                setTextColor(Color.WHITE); textSize = 13f
+            }
+            val bar = SeekBar(this).apply {
+                max = 100
+                progress = (initial * 100f).toInt().coerceIn(0, 100)
+            }
+            fun updateLabel(value: Int) {
+                label.text = "$title: ${String.format(java.util.Locale.US, "%.2f", value / 100f)}"
+            }
+            updateLabel(bar.progress)
+            bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    updateLabel(progress); update(progress / 100f)
+                    clip.chromaKeyEnabled = enabled.isChecked
+                    clip.chromaKeyColor = selectedColor
+                    syncOverlayVideoPreview()
+                }
+                override fun onStartTrackingTouch(seekBar: SeekBar?) {}
+                override fun onStopTrackingTouch(seekBar: SeekBar?) {}
+            })
+            content.addView(label); content.addView(bar)
+        }
+        addSlider("Ambang warna", oldThreshold) { clip.chromaKeyThreshold = it.coerceIn(0.01f, 1f) }
+        addSlider("Kelembutan tepi", oldSoftness) { clip.chromaKeySoftness = it.coerceIn(0.001f, 0.5f) }
+
+        enabled.setOnCheckedChangeListener { _, checked ->
+            clip.chromaKeyEnabled = checked
+            clip.chromaKeyColor = selectedColor
+            syncOverlayVideoPreview()
+        }
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Chroma Key")
+            .setView(ScrollView(this).apply { addView(content) })
+            .setNegativeButton("Batal") { _, _ ->
+                clip.chromaKeyEnabled = oldEnabled
+                clip.chromaKeyColor = oldColor
+                clip.chromaKeyThreshold = oldThreshold
+                clip.chromaKeySoftness = oldSoftness
+                undoStack.removeLastOrNull()
+                syncOverlayVideoPreview()
+            }
+            .setPositiveButton("Terapkan") { _, _ ->
+                clip.chromaKeyEnabled = enabled.isChecked
+                clip.chromaKeyColor = selectedColor
+                syncOverlayVideoPreview()
+                saveCurrentProject()
+            }
+            .setOnCancelListener {
+                clip.chromaKeyEnabled = oldEnabled
+                clip.chromaKeyColor = oldColor
+                clip.chromaKeyThreshold = oldThreshold
+                clip.chromaKeySoftness = oldSoftness
+                undoStack.removeLastOrNull()
+                syncOverlayVideoPreview()
+            }
+            .show()
     }
 
     private fun showOverlayVideoModifyDialog() {
@@ -8075,6 +8217,13 @@ class MainActivity : AppCompatActivity() {
                         0f, 0f, 1f
                     )) }
                     add(androidx.media3.effect.MatrixTransformation { Matrix(matrix) })
+                    if (overlayClip.chromaKeyEnabled) add(
+                        ChromaKeyGlEffect(
+                            overlayClip.chromaKeyColor,
+                            overlayClip.chromaKeyThreshold,
+                            overlayClip.chromaKeySoftness
+                        )
+                    )
                 }
                 val overlayEdited = EditedMediaItem.Builder(overlayItem)
                     .setRemoveAudio(true)

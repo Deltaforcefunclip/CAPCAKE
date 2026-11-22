@@ -23,7 +23,11 @@ data class OverlayVideoClip(
     var transformScale: Float = 1f,
     var rotationDegrees: Float = 0f,
     var transformX: Float = 0f,
-    var transformY: Float = 0f
+    var transformY: Float = 0f,
+    var chromaKeyEnabled: Boolean = false,
+    var chromaKeyColor: Int = Color.GREEN,
+    var chromaKeyThreshold: Float = 0.22f,
+    var chromaKeySoftness: Float = 0.08f
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
@@ -38,6 +42,8 @@ object OverlayVideoCodec {
                 put("name", clip.name); put("trackIndex", clip.trackIndex)
                 put("transformScale", clip.transformScale.toDouble()); put("rotationDegrees", clip.rotationDegrees.toDouble())
                 put("transformX", clip.transformX.toDouble()); put("transformY", clip.transformY.toDouble())
+                put("chromaKeyEnabled", clip.chromaKeyEnabled); put("chromaKeyColor", clip.chromaKeyColor)
+                put("chromaKeyThreshold", clip.chromaKeyThreshold.toDouble()); put("chromaKeySoftness", clip.chromaKeySoftness.toDouble())
             })
         }
     }.toString()
@@ -63,7 +69,11 @@ object OverlayVideoCodec {
                     transformScale = o.optDouble("transformScale", 1.0).toFloat().coerceIn(0.2f, 4f),
                     rotationDegrees = o.optDouble("rotationDegrees", 0.0).toFloat(),
                     transformX = o.optDouble("transformX", 0.0).toFloat(),
-                    transformY = o.optDouble("transformY", 0.0).toFloat()
+                    transformY = o.optDouble("transformY", 0.0).toFloat(),
+                    chromaKeyEnabled = o.optBoolean("chromaKeyEnabled", false),
+                    chromaKeyColor = o.optInt("chromaKeyColor", Color.GREEN),
+                    chromaKeyThreshold = o.optDouble("chromaKeyThreshold", 0.22).toFloat().coerceIn(0.01f, 1f),
+                    chromaKeySoftness = o.optDouble("chromaKeySoftness", 0.08).toFloat().coerceIn(0.001f, 0.5f)
                 ))
             }
         }
@@ -141,6 +151,7 @@ class OverlayVideoTrackView(
     override fun onTouchEvent(event: MotionEvent): Boolean {
         when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> {
+                parent?.requestDisallowInterceptTouchEvent(true)
                 downX = event.x; downY = event.y
                 val lane = (event.y / rowHeight).toInt().coerceAtLeast(0)
                 touched = clips.lastOrNull {
@@ -170,6 +181,7 @@ class OverlayVideoTrackView(
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 if (dragging) onChanged()
+                parent?.requestDisallowInterceptTouchEvent(false)
                 performClick(); return true
             }
         }
