@@ -84,6 +84,36 @@ class DreamyShaderProgram(
     private val effectSpread = glowSpread.coerceIn(0f, 1f)
     private val effectWarmth = warmth.coerceIn(0f, 1f)
 
+    // CPU-side GL submit timing; tidak memaksa GPU sinkron.
+    private var diagnosticWindowStartNs = System.nanoTime()
+    private var diagnosticFrameCount = 0
+    private var diagnosticTotalNs = 0L
+    private var diagnosticMaxNs = 0L
+    private var diagnosticActiveFrames = 0
+
+    private fun recordFrameTiming(durationNs: Long, effectActive: Boolean) {
+        diagnosticFrameCount++
+        diagnosticTotalNs += durationNs
+        diagnosticMaxNs = maxOf(diagnosticMaxNs, durationNs)
+        if (effectActive) diagnosticActiveFrames++
+        val now = System.nanoTime()
+        if (now - diagnosticWindowStartNs >= 1_000_000_000L) {
+            val averageMs = diagnosticTotalNs.toDouble() / diagnosticFrameCount / 1_000_000.0
+            val maxMs = diagnosticMaxNs / 1_000_000.0
+            android.util.Log.d(
+                "CAPCAKE_GL_TIMING",
+                "DREAMY frames=" + diagnosticFrameCount + " active=" + diagnosticActiveFrames +
+                    " avgCpu=" + String.format(java.util.Locale.US, "%.3f", averageMs) + "ms" +
+                    " maxCpu=" + String.format(java.util.Locale.US, "%.3f", maxMs) + "ms"
+            )
+            diagnosticWindowStartNs = now
+            diagnosticFrameCount = 0
+            diagnosticTotalNs = 0L
+            diagnosticMaxNs = 0L
+            diagnosticActiveFrames = 0
+        }
+    }
+
     init {
         glProgram.setBufferAttribute(
             "aPosition",
@@ -102,6 +132,7 @@ class DreamyShaderProgram(
         Size(inputWidth.coerceAtLeast(1), inputHeight.coerceAtLeast(1))
 
     override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
+        val frameStartNs = System.nanoTime()
         try {
             val liveIntensity: Float
             val liveSpread: Float
@@ -199,6 +230,8 @@ class DreamyShaderProgram(
             glProgram.setFloatUniform("uMagentaLuminance", grade.magentaLuminance)
             glProgram.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
+            val effectActiveForDiagnostic = (active && liveIntensity > 0.001f) || !grade.isDefault || pullBlur > 0.001f || pullFade > 0.001f || kotlin.math.abs(pullZoom - 1f) > 0.001f
+            recordFrameTiming(System.nanoTime() - frameStartNs, effectActiveForDiagnostic)
             // Hindari glGetError pada setiap frame: pemeriksaan ini dapat memaksa sinkronisasi CPU-GPU.
         } catch (e: VideoFrameProcessingException) {
             throw e
