@@ -8607,7 +8607,7 @@ class MainActivity : AppCompatActivity() {
                         val ty = (-2f * overlayClip.transformY / frameH).coerceIn(-1f, 1f)
                         return StaticOverlaySettings.Builder()
                             .setScale(scale, scale)
-                            .setRotationDegrees(overlayClip.rotationDegrees)
+                            .setRotationDegrees(-overlayClip.rotationDegrees)
                             .setBackgroundFrameAnchor(tx, ty)
                             .setOverlayFrameAnchor(0f, 0f)
                             .build()
