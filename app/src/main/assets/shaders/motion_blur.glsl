@@ -16,31 +16,41 @@ uniform float uHistoryCount;
 
 float luma(vec3 c) { return dot(c, vec3(0.299, 0.587, 0.114)); }
 
-// Dense per-pixel Lucas-Kanade estimate over a 5x5 neighbourhood.
+// Estimate the displacement of a moving detail from the previous frame
+// into the current frame. The returned vector is in pixel units.
 vec2 estimateFlow(vec2 uv, sampler2D previousFrame) {
     float xx=0.0, yy=0.0, xy=0.0, xt=0.0, yt=0.0;
     for (int y=-2; y<=2; y++) {
         for (int x=-2; x<=2; x++) {
-            vec2 p=clamp(uv+vec2(float(x),float(y))*uTexelSize,uTexelSize*2.0,vec2(1.0)-uTexelSize*2.0);
+            vec2 p=clamp(uv+vec2(float(x),float(y))*uTexelSize,
+                         uTexelSize*2.0,vec2(1.0)-uTexelSize*2.0);
             float l=luma(texture2D(sTexture,p-vec2(uTexelSize.x,0.0)).rgb);
             float r=luma(texture2D(sTexture,p+vec2(uTexelSize.x,0.0)).rgb);
             float d=luma(texture2D(sTexture,p-vec2(0.0,uTexelSize.y)).rgb);
             float u=luma(texture2D(sTexture,p+vec2(0.0,uTexelSize.y)).rgb);
             float now=luma(texture2D(sTexture,p).rgb);
             float prev=luma(texture2D(previousFrame,p).rgb);
-            float gx=(r-l)*0.5, gy=(u-d)*0.5, gt=now-prev;
-            xx+=gx*gx; yy+=gy*gy; xy+=gx*gy; xt+=gx*gt; yt+=gy*gt;
+            float gx=(r-l)*0.5;
+            float gy=(u-d)*0.5;
+            float gt=now-prev;
+            xx+=gx*gx;
+            yy+=gy*gy;
+            xy+=gx*gy;
+            xt+=gx*gt;
+            yt+=gy*gt;
         }
     }
-    float lambda=0.000001;
-    float a=xx+lambda, c=yy+lambda, det=a*c-xy*xy;
+
+    float a=xx+0.00001;
+    float c=yy+0.00001;
+    float det=a*c-xy*xy;
     vec2 flow=vec2(0.0);
-    if(det>1.0e-12) {
+    if(det>1.0e-10) {
         flow.x=-(c*xt-xy*yt)/det;
         flow.y=-(-xy*xt+a*yt)/det;
     }
-    float flowLen=length(flow);
-    if(flowLen>24.0) flow*=24.0/flowLen;
+    float magnitude=length(flow);
+    if(magnitude>18.0) flow*=18.0/magnitude;
     return flow;
 }
 
@@ -60,54 +70,49 @@ void main() {
         return;
     }
 
-    // Estimate per-frame motion from several temporal baselines.
+    // Use one stable adjacent-frame motion estimate. Mixing estimates from
+    // different temporal baselines made the trail length inconsistent.
     vec2 flow=estimateFlow(vTextureCoord,uHistory0);
-    float flowWeight=1.0;
-    if(uTimes>=2.0 && uHistoryCount>=2.0) {
-        flow+=estimateFlow(vTextureCoord,uHistory1)*(0.35/2.0);
-        flowWeight+=0.35;
+    float flowLength=length(flow);
+    float confidence=smoothstep(0.025,0.65,flowLength);
+    if(confidence<=0.001) {
+        gl_FragColor=current;
+        return;
     }
-    if(uTimes>=4.0 && uHistoryCount>=4.0) {
-        flow+=estimateFlow(vTextureCoord,uHistory3)*(0.25/4.0);
-        flowWeight+=0.25;
-    }
-    if(uTimes>=6.0 && uHistoryCount>=6.0) {
-        flow+=estimateFlow(vTextureCoord,uHistory5)*(0.20/6.0);
-        flowWeight+=0.20;
-    }
-    flow/=flowWeight;
 
-    float flowLen=length(flow);
-    float confidence=smoothstep(0.000001,0.00012,flowLen);
-    vec2 flowUv=flow*uTexelSize;
-    vec3 accumulated=current.rgb*0.22;
-    float totalWeight=0.22;
+    vec2 motionUv=flow*uTexelSize;
+    float trailScale=uBlur*2.5;
+    vec3 accumulated=current.rgb;
+    float totalWeight=1.0;
 
-    // Real temporal samples are warped with the estimated motion vector before accumulation.
+    // Each sample uses the matching real historical frame. Samples are
+    // weighted toward the present to avoid a detached, translucent duplicate.
     for(int i=0;i<6;i++) {
-        if(float(i)<uTimes) {
-            float ageFrames=min(float(i+1),uHistoryCount);
-            float ageIndex=ageFrames-1.0;
-            float t=(float(i)+0.5)/max(uTimes,1.0);
-            vec2 backwardCoord=clamp(vTextureCoord-flowUv*(ageFrames*t*uBlur),0.0,1.0);
-            vec2 forwardCoord=clamp(vTextureCoord-flowUv*(ageFrames*t*uBlur),0.0,1.0);
+        float age=float(i+1);
+        if(age<=uTimes && age<=uHistoryCount) {
+            float ageWeight=1.0/(1.0+0.16*float(i));
+            vec2 backwardCoord=clamp(vTextureCoord-motionUv*age*trailScale,0.0,1.0);
+            vec2 forwardCoord=clamp(vTextureCoord+motionUv*age*trailScale,0.0,1.0);
             vec3 sampleColor;
 
             if(uDirection<0.5) {
-                vec3 pastColor=historySample(ageIndex,backwardCoord).rgb;
-                vec3 futureColor=texture2D(sTexture,forwardCoord).rgb;
-                sampleColor=(pastColor+futureColor)*0.5;
+                vec3 backColor=historySample(age-1.0,backwardCoord).rgb;
+                vec3 frontColor=historySample(age-1.0,forwardCoord).rgb;
+                sampleColor=(backColor+frontColor)*0.5;
             } else if(uDirection<1.5) {
-                sampleColor=historySample(ageIndex,backwardCoord).rgb;
+                sampleColor=historySample(age-1.0,backwardCoord).rgb;
             } else {
-                sampleColor=texture2D(sTexture,forwardCoord).rgb;
+                // A forward-facing streak is synthesized from the previous
+                // frame by sampling the opposite side of the motion vector.
+                sampleColor=historySample(age-1.0,forwardCoord).rgb;
             }
 
-            accumulated+=sampleColor;
-            totalWeight+=1.0;
+            accumulated+=sampleColor*ageWeight;
+            totalWeight+=ageWeight;
         }
     }
 
-    vec3 temporalAccumulation=accumulated/totalWeight;
-    gl_FragColor=vec4(mix(current.rgb,temporalAccumulation,uBlend*confidence),current.a);
+    vec3 temporalBlur=accumulated/totalWeight;
+    float strength=clamp(uBlend*confidence,0.0,1.0);
+    gl_FragColor=vec4(mix(current.rgb,temporalBlur,strength),current.a);
 }
