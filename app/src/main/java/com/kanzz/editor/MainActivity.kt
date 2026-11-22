@@ -425,6 +425,21 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private var pendingVideoDiagnosticFull = false
+
+    private val pickDiagnosticVideo =
+        registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+            if (uri != null) {
+                try {
+                    contentResolver.takePersistableUriPermission(
+                        uri,
+                        android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION
+                    )
+                } catch (_: Exception) {}
+                VideoDiagnostics.run(this, uri, pendingVideoDiagnosticFull)
+            }
+        }
+
     // =====================================
     // VIDEO PICKER
     // =====================================
@@ -628,6 +643,27 @@ class MainActivity : AppCompatActivity() {
         }
 
         root.addView(subtitle)
+
+        val diagnosticsButton = TextView(this).apply {
+            text = "⌕  DIAGNOSTIK VIDEO  •  ANALISIS SEBELUM IMPOR"
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTextColor(green)
+            setBackgroundColor(panel)
+            setPadding(dp(8), 0, dp(8), 0)
+            setOnClickListener {
+                VideoDiagnostics.showMenu(this@MainActivity) { fullScan ->
+                    pendingVideoDiagnosticFull = fullScan
+                    pickDiagnosticVideo.launch(arrayOf("video/*"))
+                }
+            }
+        }
+        root.addView(
+            diagnosticsButton,
+            LinearLayout.LayoutParams(-1, dp(50)).apply {
+                bottomMargin = dp(12)
+            }
+        )
 
         val scroll = ScrollView(this)
 
