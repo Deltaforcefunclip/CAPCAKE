@@ -62,6 +62,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.Locale
+import java.security.MessageDigest
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
