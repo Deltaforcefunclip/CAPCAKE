@@ -2544,6 +2544,10 @@ class MainActivity : AppCompatActivity() {
                                 selectedAudioClipId = null
                                 selectedTextClipId = null
                                 selectedEffectClipId = null
+                                selectedOverlayVideoClipId = null
+                                overlayCropModeEnabled = false
+                                overlaySelectionOverlay?.setCropMode(false)
+                                overlaySelectionOverlay?.invalidate()
                                 videoSelected = false
                                 timeline.selectClip(null)
                                 timeline.updateSelection(false)
@@ -2560,6 +2564,7 @@ class MainActivity : AppCompatActivity() {
                                 }
                                 playerView.foreground = null
                                 updateTextPreview()
+                                overlaySelectionOverlay?.invalidate()
                                 updateToolMenu()
                             }
                             panVelocityTracker?.computeCurrentVelocity(1000)
@@ -3767,14 +3772,31 @@ class MainActivity : AppCompatActivity() {
                     }
 
                     "Overlay", "Sticker" -> {
-                        activeLayerGroup = if (pair.second == "Overlay") "OVERLAY" else "STICKER"
-                        selectedAudioClipId = null
-                        selectedTextClipId = null
-                        selectedEffectClipId = null
-                        selectedOverlayVideoClipId = null
-                        updateLayerGroupVisibility()
-                        updateToolMenu()
-                        if (pair.second == "Overlay") pickOverlayVideo.launch(arrayOf("video/*"))
+                        if (pair.second == "Overlay") {
+                            val wasOverlayVisible = activeLayerGroup == "OVERLAY"
+                            activeLayerGroup = "OVERLAY"
+                            selectedAudioClipId = null
+                            selectedTextClipId = null
+                            selectedEffectClipId = null
+                            selectedOverlayVideoClipId = null
+                            clearAudioTrackSelection()
+                            updateLayerGroupVisibility()
+                            updateToolMenu()
+                            // Jika layer overlay sudah ada tetapi sedang diminimize,
+                            // ketukan pertama hanya membukanya. Ketukan berikutnya
+                            // baru membuka pemilih berkas/galeri.
+                            if (overlayVideoClips.isEmpty() || wasOverlayVisible) {
+                                pickOverlayVideo.launch(arrayOf("video/*"))
+                            }
+                        } else {
+                            activeLayerGroup = "STICKER"
+                            selectedAudioClipId = null
+                            selectedTextClipId = null
+                            selectedEffectClipId = null
+                            selectedOverlayVideoClipId = null
+                            updateLayerGroupVisibility()
+                            updateToolMenu()
+                        }
                     }
 
                     "Pisah" -> {
@@ -5481,6 +5503,17 @@ class MainActivity : AppCompatActivity() {
                 overlaySelectionOverlay?.setCropMode(false)
                 selectedAudioClipId = null; selectedTextClipId = null; selectedEffectClipId = null
                 selectedVideoClipId = null; videoSelected = false
+                clearAudioTrackSelection()
+                if (::thisTextTracksContainer.isInitialized) {
+                    for (i in 0 until thisTextTracksContainer.childCount) {
+                        (thisTextTracksContainer.getChildAt(i) as? TextTrackView)?.select(null)
+                    }
+                }
+                if (::thisEffectTracksContainer.isInitialized) {
+                    for (i in 0 until thisEffectTracksContainer.childCount) {
+                        (thisEffectTracksContainer.getChildAt(i) as? EffectTrackView)?.select(null)
+                    }
+                }
                 timeline.selectClip(null)
                 timeline.updateSelection(false)
                 playerView.foreground = null
@@ -5500,6 +5533,19 @@ class MainActivity : AppCompatActivity() {
             onChanged = {
                 viewInvalidateOverlayTracks()
                 saveCurrentProject()
+            },
+            onTimelineScrolled = { position ->
+                pendingScrubPositionMs = position
+                beginTimelineScrubbing()
+                requestScrubSeek(position)
+                handler.removeCallbacks(scrubFinishRunnable)
+                handler.postDelayed(scrubFinishRunnable, 140L)
+                updateTime()
+                timeline.postInvalidateOnAnimation()
+                audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
+                invalidateTextTrackViews()
+                invalidateEffectTrackViews()
+                viewInvalidateOverlayTracks()
             }
         )
         view.select(selectedOverlayVideoClipId)
