@@ -29,7 +29,7 @@ private class ChromaKeyShaderProgram(
     keyColor: Int,
     threshold: Float,
     softness: Float
-) : BaseGlShaderProgram(useHdr, 2) {
+) : BaseGlShaderProgram(useHdr, 3) {
     private val program = GlProgram(
         context,
         "shaders/vertex_shader.glsl",
