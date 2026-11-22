@@ -118,6 +118,10 @@ class MainActivity : AppCompatActivity() {
     private var overlayPreviewPlayerView: PlayerView? = null
     private var overlayPreviewPlayer: ExoPlayer? = null
     private var activeOverlayPreviewId: String? = null
+    private var lastOverlayClockSyncAtMs = 0L
+    private var lastOverlayHardSeekAtMs = 0L
+    private var lastOverlayAppliedSpeed = 1f
+    private var overlayPreviewFailed = false
     private var activeOverlayPreviewEffectSignature: String? = null
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
@@ -429,7 +433,6 @@ class MainActivity : AppCompatActivity() {
                 if (!player.isPlaying) updateTime()
                 syncVideoClipProperties()
                 syncAudioPlayback()
-                syncOverlayVideoPreview()
                 updateTextPreview(force = false)
             }
             handler.postDelayed(this, 100L)
@@ -2371,6 +2374,9 @@ class MainActivity : AppCompatActivity() {
                         timeline.invalidate()
                         audioTrackViews.values.forEach { it.invalidate() }
                         invalidateTextTrackViews()
+                        invalidateEffectTrackViews()
+                        if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.postInvalidateOnAnimation()
+                        overlaySelectionOverlay?.postInvalidateOnAnimation()
                         return true
                     }
                 }
@@ -2391,6 +2397,7 @@ class MainActivity : AppCompatActivity() {
                 if (deltaX == 0f) return
                 timelineController.offsetPx -= deltaX
                 timelineController.clampOffset()
+                if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.postInvalidateOnAnimation()
                 val position = timelineController.xToTime(width / 2f)
                 timelineController.positionMs = position
                 pendingScrubPositionMs = position
@@ -2408,6 +2415,8 @@ class MainActivity : AppCompatActivity() {
                 audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
                 invalidateTextTrackViews()
                 invalidateEffectTrackViews()
+                if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.postInvalidateOnAnimation()
+                overlaySelectionOverlay?.postInvalidateOnAnimation()
             }
 
             private fun startPanFling(velocityX: Float) {
@@ -4831,12 +4840,14 @@ class MainActivity : AppCompatActivity() {
     private fun syncOverlayVideoPreview() {
         val overlayView = overlayPreviewPlayerView ?: return
         val overlayPlayer = overlayPreviewPlayer ?: return
-        if (!editorOpen || overlayVideoClips.isEmpty()) {
+        if (isFinishing || isDestroyed || !editorOpen || overlayVideoClips.isEmpty()) {
             overlayPlayer.pause()
             overlayView.visibility = View.GONE
             activeOverlayPreviewId = null
             activeOverlayPreviewEffectSignature = null
-            overlayPlayer.setVideoEffects(emptyList())
+            lastOverlayClockSyncAtMs = 0L
+            lastOverlayHardSeekAtMs = 0L
+            runCatching { overlayPlayer.setVideoEffects(emptyList()) }
             return
         }
 
@@ -4873,7 +4884,8 @@ class MainActivity : AppCompatActivity() {
                     clip.chromaKeySoftness
                 )
             ) else emptyList()
-            overlayPlayer.setVideoEffects(effects)
+            runCatching { overlayPlayer.setVideoEffects(effects) }
+                .onFailure { recordPlaybackDiagnostic("OVERLAY_EFFECT_ERROR ${it.javaClass.simpleName}: ${it.message}") }
             activeOverlayPreviewEffectSignature = effectSignature
         }
 
@@ -4889,21 +4901,62 @@ class MainActivity : AppCompatActivity() {
                         .build()
                 ).build()
             activeOverlayPreviewId = clip.id
-            overlayPlayer.volume = 0f
-            overlayPlayer.setMediaItem(item, localPosition)
-            overlayPlayer.prepare()
+            try {
+                overlayPlayer.volume = 0f
+                overlayPlayer.setMediaItem(item, localPosition)
+                overlayPlayer.prepare()
+                lastOverlayClockSyncAtMs = android.os.SystemClock.elapsedRealtime()
+                lastOverlayHardSeekAtMs = lastOverlayClockSyncAtMs
+                lastOverlayAppliedSpeed = player.playbackParameters.speed
+                overlayPreviewFailed = false
+            } catch (error: RuntimeException) {
+                overlayPreviewFailed = true
+                recordPlaybackDiagnostic("OVERLAY_PREPARE_ERROR ${error.javaClass.simpleName}: ${error.message}")
+                overlayPlayer.pause()
+                overlayView.visibility = View.GONE
+                return
+            }
         } else {
-            // Overlay mengikuti laju playback utama. Koreksi seek hanya saat drift
-            // benar-benar besar; seek kecil berkala justru terlihat sebagai loncatan.
-            overlayPlayer.setPlaybackSpeed(player.playbackParameters.speed)
-            val drift = kotlin.math.abs(overlayPlayer.currentPosition - localPosition)
-            val seekThreshold = if (player.isPlaying && !isTimelineScrubbing) 700L else 24L
-            if (drift > seekThreshold) overlayPlayer.seekTo(localPosition)
+            // Hindari seek berkala: koreksi kecil menggunakan laju playback.
+            val now = android.os.SystemClock.elapsedRealtime()
+            val masterSpeed = player.playbackParameters.speed
+            if (kotlin.math.abs(masterSpeed - lastOverlayAppliedSpeed) > 0.01f) {
+                overlayPlayer.setPlaybackSpeed(masterSpeed)
+                lastOverlayAppliedSpeed = masterSpeed
+            }
+            if (player.isPlaying && !isTimelineScrubbing && now - lastOverlayClockSyncAtMs >= 500L) {
+                lastOverlayClockSyncAtMs = now
+                val drift = localPosition - overlayPlayer.currentPosition
+                when {
+                    kotlin.math.abs(drift) in 70L..350L -> {
+                        val correction = (1f + drift.toFloat() / 5000f).coerceIn(0.96f, 1.04f)
+                        overlayPlayer.setPlaybackSpeed(masterSpeed * correction)
+                        lastOverlayAppliedSpeed = masterSpeed * correction
+                    }
+                    kotlin.math.abs(drift) > 350L && now - lastOverlayHardSeekAtMs >= 1800L -> {
+                        overlayPlayer.seekTo(localPosition)
+                        overlayPlayer.setPlaybackSpeed(masterSpeed)
+                        lastOverlayAppliedSpeed = masterSpeed
+                        lastOverlayHardSeekAtMs = now
+                    }
+                    kotlin.math.abs(drift) < 45L && kotlin.math.abs(overlayPlayer.playbackParameters.speed - masterSpeed) > 0.005f -> {
+                        overlayPlayer.setPlaybackSpeed(masterSpeed)
+                        lastOverlayAppliedSpeed = masterSpeed
+                    }
+                }
+            } else if (!player.isPlaying) {
+                val drift = kotlin.math.abs(overlayPlayer.currentPosition - localPosition)
+                if (drift > 45L) overlayPlayer.seekTo(localPosition)
+                overlayPlayer.setPlaybackSpeed(masterSpeed)
+                lastOverlayAppliedSpeed = masterSpeed
+            }
         }
 
-        overlayPlayer.playWhenReady = player.isPlaying && !isTimelineScrubbing && !selectedPreviewOnly
-        if (!player.isPlaying || isTimelineScrubbing || selectedPreviewOnly) overlayPlayer.pause()
-        overlaySelectionOverlay?.invalidate()
+        if (!overlayPreviewFailed) {
+            overlayPlayer.playWhenReady = player.isPlaying && !isTimelineScrubbing && !selectedPreviewOnly
+            if (!player.isPlaying || isTimelineScrubbing || selectedPreviewOnly) overlayPlayer.pause()
+        }
+        overlaySelectionOverlay?.postInvalidateOnAnimation()
     }
 
     private fun showOverlayChromaKeyDialog() {
@@ -5126,8 +5179,9 @@ class MainActivity : AppCompatActivity() {
         )
         view.select(selectedOverlayVideoClipId)
         overlayVideoTracksContainer.addView(view, LinearLayout.LayoutParams(-1, -2))
-        overlayVideoTracksContainer.invalidate()
-        overlaySelectionOverlay?.invalidate()
+        overlayVideoTracksContainer.requestLayout()
+        overlayVideoTracksContainer.postInvalidateOnAnimation()
+        overlaySelectionOverlay?.postInvalidateOnAnimation()
     }
 
     private fun restoreOverlayVideoClips(raw: String?) = OverlayVideoCodec.decode(raw, overlayVideoClips)
