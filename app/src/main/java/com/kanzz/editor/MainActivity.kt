@@ -2663,6 +2663,15 @@ class MainActivity : AppCompatActivity() {
                 recordPlaybackDiagnostic(
                     "PLAYER_ERROR code=${error.errorCodeName} message=${error.message}"
                 )
+                var cause: Throwable? = error
+                var depth = 0
+                while (cause != null && depth < 8) {
+                    recordPlaybackDiagnostic(
+                        "PLAYER_ERROR_CAUSE depth=$depth type=${cause.javaClass.name} message=${cause.message}"
+                    )
+                    cause = cause.cause
+                    depth++
+                }
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
