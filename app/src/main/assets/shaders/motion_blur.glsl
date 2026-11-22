@@ -83,25 +83,6 @@ vec3 estimateFlow(vec2 uv, sampler2D previousFrame) {
     float structureConfidence=max(coarse.z,max(medium.z,fine.z));
     return vec3(flow,structureConfidence*consistencyConfidence);
 }
-vec4 historySample(float ageIndex, vec2 coord) {
-    if(ageIndex<0.5) return texture2D(uHistory0,coord);
-    if(ageIndex<1.5) return texture2D(uHistory1,coord);
-    if(ageIndex<2.5) return texture2D(uHistory2,coord);
-    if(ageIndex<3.5) return texture2D(uHistory3,coord);
-    if(ageIndex<4.5) return texture2D(uHistory4,coord);
-    return texture2D(uHistory5,coord);
-}
-
-// Fractional temporal sampling removes the separated, chunky appearance
-// caused by accumulating only six discrete frame positions.
-vec3 smoothHistory(float age, vec2 coord) {
-    float baseAge=floor(age);
-    float fraction=fract(age);
-    vec3 a=historySample(baseAge,coord).rgb;
-    vec3 b=historySample(min(baseAge+1.0,5.0),coord).rgb;
-    return mix(a,b,fraction);
-}
-
 // Edge-aware vector smoothing. Neighbor vectors are blended only when
 // they belong to a similarly lit region and point in a compatible direction.
 // This reduces pixel-level flow noise without bleeding motion across object edges.
