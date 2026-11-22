@@ -1970,6 +1970,7 @@ class MainActivity : AppCompatActivity() {
         }
 
         playButton.setOnClickListener {
+            recordPlaybackDiagnostic("PLAY_BUTTON_TAP isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
             // Tombol play selalu melepas seleksi clip dari semua jenis layer.
             selectedVideoClipId = null
             selectedAudioClipId = null
@@ -2199,6 +2200,7 @@ class MainActivity : AppCompatActivity() {
                 }
             },
             onNavigateToPosition = { targetPosition ->
+                recordPlaybackDiagnostic("TIMELINE_SEEK target=${targetPosition}ms isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
                 seekTimelinePosition(targetPosition)
                 updateTime()
             },
@@ -2594,6 +2596,7 @@ class MainActivity : AppCompatActivity() {
         var initialPositionApplied = false
 
         player.volume = if (muteAudio) 0f else 1f
+        recordPlaybackDiagnostic("PLAYLIST_REPLACE source=loadVideo:setMediaItem isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
         player.setMediaItem(MediaItem.fromUri(uri))
         player.playWhenReady = false
 
@@ -2634,6 +2637,7 @@ class MainActivity : AppCompatActivity() {
                     timeline.loadThumbnails(uri, sourceDuration)
 
                     // Replace the original full-length source with the edited clip sequence.
+                    recordPlaybackDiagnostic("PLAYLIST_REPLACE source=loadVideo:initial-edited-list isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
                     player.setMediaItems(buildEditedVideoItems())
                     player.prepare()
                     return
@@ -3053,6 +3057,12 @@ class MainActivity : AppCompatActivity() {
 
     /** Rebuild playlist setelah edit, lalu seek dan lanjutkan playback setelah decoder siap. */
     private fun refreshEditedPreview(positionMs: Long = currentTimelinePosition()) {
+        val caller = Thread.currentThread().stackTrace
+            .dropWhile { it.methodName != "refreshEditedPreview" }
+            .drop(1)
+            .take(6)
+            .joinToString(" <- ") { "${it.methodName}:${it.lineNumber}" }
+        recordPlaybackDiagnostic("REFRESH_PREVIEW_REQUEST caller=$caller isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms target=${positionMs}ms")
         val generation = ++previewRefreshGeneration
         // Kunci posisi visual agar callback playlist lama/tidak sinkron tidak
         // menggeser seluruh timeline sebelum seek ke titik edit selesai.
@@ -3072,6 +3082,7 @@ class MainActivity : AppCompatActivity() {
 
         player.pause()
         player.playWhenReady = false
+        recordPlaybackDiagnostic("PLAYLIST_REPLACE source=refreshEditedPreview generation=$generation wasPlaying=$wasPlaying state=${player.playbackState} position=${player.currentPosition}ms target=${safePosition}ms")
         player.setMediaItems(buildEditedVideoItems(includeAiDiagnostic = true))
 
         timelineController.setDuration(videoClipManager.durationMs)
@@ -7349,9 +7360,17 @@ class MainActivity : AppCompatActivity() {
 
     override fun onPause() {
 
+        recordPlaybackDiagnostic("APP_ON_PAUSE isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
         saveCurrentProject()
 
         super.onPause()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::player.isInitialized) {
+            recordPlaybackDiagnostic("APP_ON_RESUME isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
+        }
     }
 
     // =====================================
