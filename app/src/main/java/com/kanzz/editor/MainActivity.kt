@@ -120,6 +120,10 @@ class MainActivity : AppCompatActivity() {
     private lateinit var audioTracksContainer: LinearLayout
     private lateinit var audioTracksScroll: ScrollView
     private lateinit var textTracksScroll: ScrollView
+    private lateinit var overlayVideoTracksScroll: ScrollView
+    private lateinit var overlayVideoTracksContainer: LinearLayout
+    private val overlayVideoClips = mutableListOf<OverlayVideoClip>()
+    private var selectedOverlayVideoClipId: String? = null
     private lateinit var audioTimelineFrame: FrameLayout
     private lateinit var previewTextOverlay: TextView
     private lateinit var textSelectionOverlay: View
@@ -925,6 +929,8 @@ class MainActivity : AppCompatActivity() {
         audioClipManager.clear()
         textClipManager.clips.clear()
         effectClipManager.clips.clear()
+        overlayVideoClips.clear()
+        selectedOverlayVideoClipId = null
         selectedEffectClipId = null
         selectedTextClipId = null
         activeLayerGroup = "AUDIO"
@@ -949,6 +955,7 @@ class MainActivity : AppCompatActivity() {
         )
         restoreTextClips(prefs.getString("text_timeline_${project.id}", null))
         restoreEffectClips(prefs.getString("effect_timeline_${project.id}", null))
+        restoreOverlayVideoClips(prefs.getString("overlay_video_timeline_${project.id}", null))
 
         try {
 
@@ -2118,6 +2125,16 @@ class MainActivity : AppCompatActivity() {
             visibility = View.GONE
         }
         thisTextTracksContainer = textTracksContainer
+        overlayVideoTracksContainer = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(bg)
+        }
+        overlayVideoTracksScroll = ScrollView(this).apply {
+            isVerticalScrollBarEnabled = false
+            isFillViewport = false
+            addView(overlayVideoTracksContainer, android.view.ViewGroup.LayoutParams(-1, -2))
+            visibility = View.GONE
+        }
 
         // VIDEO TIMELINE
 
@@ -2323,6 +2340,7 @@ class MainActivity : AppCompatActivity() {
                     "AUDIO" -> (audioTracksContainer.height - audioTracksScroll.scrollY).coerceAtLeast(0)
                     "TEXT" -> (thisTextTracksContainer.height - textTracksScroll.scrollY).coerceAtLeast(0)
                     "EFFECT" -> (thisEffectTracksContainer.height - effectTracksScroll.scrollY).coerceAtLeast(0)
+                    "OVERLAY" -> (overlayVideoTracksContainer.height - overlayVideoTracksScroll.scrollY).coerceAtLeast(0)
                     else -> 0
                 }
                 return y > visibleHeight + dp(2)
@@ -2505,6 +2523,7 @@ class MainActivity : AppCompatActivity() {
             FrameLayout.LayoutParams(-1, -1)
         )
         audioTimelineFrame.addView(effectTracksScroll, FrameLayout.LayoutParams(-1, -1))
+        audioTimelineFrame.addView(overlayVideoTracksScroll, FrameLayout.LayoutParams(-1, -1))
         genericLayerPlaceholder = TextView(this).apply {
             gravity = Gravity.CENTER_VERTICAL
             setPadding(dp(12), 0, dp(12), 0)
@@ -4712,9 +4731,10 @@ class MainActivity : AppCompatActivity() {
         audioTracksScroll.visibility = if (activeLayerGroup == "AUDIO") View.VISIBLE else View.GONE
         textTracksScroll.visibility = if (activeLayerGroup == "TEXT") View.VISIBLE else View.GONE
         effectTracksScroll.visibility = if (activeLayerGroup == "EFFECT") View.VISIBLE else View.GONE
+        overlayVideoTracksScroll.visibility = if (activeLayerGroup == "OVERLAY") View.VISIBLE else View.GONE
         if (::genericLayerPlaceholder.isInitialized) {
-            genericLayerPlaceholder.visibility = if (activeLayerGroup == "OVERLAY" || activeLayerGroup == "STICKER") View.VISIBLE else View.GONE
-            genericLayerPlaceholder.text = if (activeLayerGroup == "OVERLAY") "Overlay Layer" else "Sticker Layer"
+            genericLayerPlaceholder.visibility = if (activeLayerGroup == "STICKER") View.VISIBLE else View.GONE
+            genericLayerPlaceholder.text = "Sticker Layer"
         }
     }
 
