@@ -127,7 +127,7 @@ class OverlayVideoTrackView(
     }
 
     fun select(id: String?) { selectedId = id; invalidate() }
-    private fun laneCount() = maxOf(3, (clips.maxOfOrNull { it.trackIndex } ?: 0) + 2)
+    private fun laneCount() = (clips.maxOfOrNull { it.trackIndex } ?: -1) + 1
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
         val desired = (laneCount() * rowHeight).toInt()
