@@ -8618,6 +8618,9 @@ class MainActivity : AppCompatActivity() {
             // Encode portrait frames in portrait dimensions instead of relying
             // only on a 90-degree rotation flag in MP4 metadata.
             val transformer = Transformer.Builder(this)
+                // Paksa H.264/AVC agar perangkat tidak mencoba encoder HEVC
+                // yang pada beberapa perangkat tidak tersedia untuk konfigurasi export ini.
+                .setVideoMimeType("video/avc")
                 .setPortraitEncodingEnabled(true)
                 .addListener(listener)
                 .build()
