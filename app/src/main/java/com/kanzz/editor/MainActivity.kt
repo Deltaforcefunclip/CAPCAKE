@@ -8580,8 +8580,12 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            val composition = Composition.Builder(sequences)
-                .setVideoCompositorSettings(object : VideoCompositorSettings {
+            // SingleInputVideoGraph tidak memakai VideoCompositor. Karena itu,
+            // VideoCompositorSettings hanya boleh dipasang jika ada video overlay
+            // sehingga komposisi benar-benar memiliki beberapa input video.
+            val compositionBuilder = Composition.Builder(sequences)
+            if (exportOverlayClips.isNotEmpty()) {
+                compositionBuilder.setVideoCompositorSettings(object : VideoCompositorSettings {
                     // Ukuran output harus mengikuti video utama, bukan file overlay
                     // yang kebetulan menjadi input pertama compositor.
                     override fun getOutputSize(inputSizes: List<Size>): Size {
@@ -8609,7 +8613,8 @@ class MainActivity : AppCompatActivity() {
                             .build()
                     }
                 })
-                .build()
+            }
+            val composition = compositionBuilder.build()
             // Encode portrait frames in portrait dimensions instead of relying
             // only on a 90-degree rotation flag in MP4 metadata.
             val transformer = Transformer.Builder(this)
