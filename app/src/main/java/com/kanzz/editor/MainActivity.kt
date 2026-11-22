@@ -3210,10 +3210,28 @@ class MainActivity : AppCompatActivity() {
      */
     private fun navigateToLayerClipBoundary(startTimeMs: Long, endTimeMs: Long) {
         if (endTimeMs <= startTimeMs || !::timeline.isInitialized) return
+
         if (player.isPlaying) {
             player.pause()
             updatePlayButton()
         }
+
+        // Bila playhead sudah di dalam clip, jangan mengganggu scrub yang sedang
+        // menyelesaikan preview pada posisi tersebut.
+        val currentPosition = timelineController.positionMs
+        if (currentPosition >= startTimeMs && currentPosition < endTimeMs) return
+
+        // Navigasi clip baru mengambil alih target scrub lama. Hapus callback tertunda
+        // agar seek lama tidak datang setelah animasi navigasi selesai.
+        handler.removeCallbacks(scrubSeekRunnable)
+        handler.removeCallbacks(scrubFinishRunnable)
+        scrubSeekScheduled = false
+        if (isTimelineScrubbing) {
+            player.setScrubbingModeEnabled(false)
+            player.setSeekParameters(SeekParameters.EXACT)
+            isTimelineScrubbing = false
+        }
+
         timeline.navigateToTimeRange(startTimeMs, endTimeMs)
     }
 
