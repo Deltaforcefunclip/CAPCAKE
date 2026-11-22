@@ -29,7 +29,9 @@ data class OverlayVideoClip(
     var chromaKeyEnabled: Boolean = false,
     var chromaKeyColor: Int = Color.GREEN,
     var chromaKeyThreshold: Float = 0.22f,
-    var chromaKeySoftness: Float = 0.08f
+    var chromaKeySoftness: Float = 0.08f,
+    var videoWidth: Int = 0,
+    var videoHeight: Int = 0
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
@@ -46,6 +48,7 @@ object OverlayVideoCodec {
                 put("transformX", clip.transformX.toDouble()); put("transformY", clip.transformY.toDouble())
                 put("chromaKeyEnabled", clip.chromaKeyEnabled); put("chromaKeyColor", clip.chromaKeyColor)
                 put("chromaKeyThreshold", clip.chromaKeyThreshold.toDouble()); put("chromaKeySoftness", clip.chromaKeySoftness.toDouble())
+                put("videoWidth", clip.videoWidth); put("videoHeight", clip.videoHeight)
             })
         }
     }.toString()
@@ -75,7 +78,9 @@ object OverlayVideoCodec {
                     chromaKeyEnabled = o.optBoolean("chromaKeyEnabled", false),
                     chromaKeyColor = o.optInt("chromaKeyColor", Color.GREEN),
                     chromaKeyThreshold = o.optDouble("chromaKeyThreshold", 0.22).toFloat().coerceIn(0.01f, 1f),
-                    chromaKeySoftness = o.optDouble("chromaKeySoftness", 0.08).toFloat().coerceIn(0.001f, 0.5f)
+                    chromaKeySoftness = o.optDouble("chromaKeySoftness", 0.08).toFloat().coerceIn(0.001f, 0.5f),
+                    videoWidth = o.optInt("videoWidth", 0).coerceAtLeast(0),
+                    videoHeight = o.optInt("videoHeight", 0).coerceAtLeast(0)
                 ))
             }
         }
