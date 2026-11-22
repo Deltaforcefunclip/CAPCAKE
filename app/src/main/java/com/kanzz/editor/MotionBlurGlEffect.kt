@@ -58,6 +58,36 @@ private class MotionBlurShaderProgram(
     private var historyCount = 0
     private var lastPresentationTimeUs = Long.MIN_VALUE
 
+    // CPU-side GL submit + history-copy timing; bukan durasi eksekusi GPU.
+    private var diagnosticWindowStartNs = System.nanoTime()
+    private var diagnosticFrameCount = 0
+    private var diagnosticTotalNs = 0L
+    private var diagnosticMaxNs = 0L
+    private var diagnosticActiveFrames = 0
+
+    private fun recordFrameTiming(durationNs: Long, effectActive: Boolean) {
+        diagnosticFrameCount++
+        diagnosticTotalNs += durationNs
+        diagnosticMaxNs = maxOf(diagnosticMaxNs, durationNs)
+        if (effectActive) diagnosticActiveFrames++
+        val now = System.nanoTime()
+        if (now - diagnosticWindowStartNs >= 1_000_000_000L) {
+            val averageMs = diagnosticTotalNs.toDouble() / diagnosticFrameCount / 1_000_000.0
+            val maxMs = diagnosticMaxNs / 1_000_000.0
+            Log.d(
+                "CAPCAKE_GL_TIMING",
+                "MOTION_BLUR frames=" + diagnosticFrameCount + " active=" + diagnosticActiveFrames +
+                    " avgCpu=" + String.format(java.util.Locale.US, "%.3f", averageMs) + "ms" +
+                    " maxCpu=" + String.format(java.util.Locale.US, "%.3f", maxMs) + "ms"
+            )
+            diagnosticWindowStartNs = now
+            diagnosticFrameCount = 0
+            diagnosticTotalNs = 0L
+            diagnosticMaxNs = 0L
+            diagnosticActiveFrames = 0
+        }
+    }
+
     init {
         glProgram.setBufferAttribute("aPosition", floatArrayOf(-1f, -1f, 1f, -1f, -1f, 1f, 1f, 1f), 2)
         glProgram.setBufferAttribute("aTexSamplingCoord", floatArrayOf(0f, 0f, 1f, 0f, 0f, 1f, 1f, 1f), 2)
@@ -73,6 +103,7 @@ private class MotionBlurShaderProgram(
     }
 
     override fun drawFrame(inputTexId: Int, presentationTimeUs: Long) {
+        val frameStartNs = System.nanoTime()
         try {
             if (lastPresentationTimeUs != Long.MIN_VALUE &&
                 (presentationTimeUs <= lastPresentationTimeUs || presentationTimeUs - lastPresentationTimeUs > 250_000L)
@@ -116,6 +147,7 @@ private class MotionBlurShaderProgram(
                 captureInputFrame(inputTexId)
                 lastPresentationTimeUs = presentationTimeUs
             }
+            recordFrameTiming(System.nanoTime() - frameStartNs, effectActive)
         } catch (e: VideoFrameProcessingException) {
             Log.e("CAPCAKE_MOTION_BLUR", "VideoFrameProcessingException at $presentationTimeUs us", e)
             throw e
