@@ -59,8 +59,11 @@ vec3 estimateFlowLevel(vec2 uv, sampler2D previousFrame, vec2 initialFlow, float
     float det=a*c-xy*xy;
     vec2 correction=vec2(0.0);
     if(det>1.0e-10) {
-        correction.x=-(c*xt-xy*yt)/det;
-        correction.y=-(-xy*xt+a*yt)/det;
+        // Positive displacement maps the previous-frame feature to its
+        // current-frame position. The previous implementation inverted this
+        // sign, making the sampling direction unstable.
+        correction.x=(c*xt-xy*yt)/det;
+        correction.y=(-xy*xt+a*yt)/det;
     }
     float correctionLength=length(correction);
     if(correctionLength>20.0) correction*=20.0/correctionLength;
@@ -146,63 +149,73 @@ vec3 estimateSmoothedFlow(vec2 uv, sampler2D previousFrame) {
 }
 
 void main() {
-    vec4 current=texture2D(sTexture,vTextureCoord);
-    if(uBlur<=0.001 || uBlend<=0.001 || uHistoryCount<1.0) {
-        gl_FragColor=current;
+    vec4 current = texture2D(sTexture, vTextureCoord);
+    if (uBlur <= 0.001 || uBlend <= 0.001 || uHistoryCount < 1.0) {
+        gl_FragColor = current;
         return;
     }
 
-    vec3 flowEstimate=estimateSmoothedFlow(vTextureCoord,uHistory0);
-    vec2 flow=flowEstimate.xy;
-    float flowLength=length(flow);
-    float confidence=flowEstimate.z*smoothstep(0.015,0.35,flowLength);
-    if(confidence<=0.001) {
-        gl_FragColor=current;
+    // Estimate object movement from the previous frame, then use that vector
+    // to integrate samples from the CURRENT image along the object's path.
+    // This avoids stacking misregistered historical frames (the source of
+    // vibrating patches and chunky ghost-like clumps).
+    vec3 flowEstimate = estimateSmoothedFlow(vTextureCoord, uHistory0);
+    vec2 flow = flowEstimate.xy;
+    float flowLength = length(flow);
+    float confidence = flowEstimate.z * smoothstep(0.10, 1.25, flowLength);
+
+    if (confidence <= 0.008) {
+        gl_FragColor = current;
         return;
     }
 
-    float fastMotion=smoothstep(0.7,4.0,flowLength);
-    // Let the trail grow more aggressively with measured movement. Blur
-    // slider controls the shutter/trail length; speed controls extra spread.
-    float trailScale=uBlur*(3.0+7.0*fastMotion);
-    float maxAge=min(uTimes,uHistoryCount);
-    vec2 motionUv=flow*uTexelSize;
+    float times = clamp(uTimes, 1.0, 6.0);
+    float fastMotion = smoothstep(0.8, 5.0, flowLength);
 
-    // Integrate many evenly spaced sub-frame positions over the motion path.
-    // This turns discrete frame ghosts into a continuous, smooth smear.
-    vec3 accumulated=vec3(0.0);
-    float totalWeight=0.0;
-    float currentWeight=mix(0.55,0.10,fastMotion);
-    accumulated+=current.rgb*currentWeight;
-    totalWeight+=currentWeight;
+    // Blur slider controls streak length; movement speed and Times extend it.
+    // Limit the radius to avoid sampling across the entire frame on outliers.
+    float radiusPixels = flowLength * (0.45 + 1.65 * uBlur) * times;
+    radiusPixels = clamp(radiusPixels, 0.0, 96.0);
+    vec2 motionUv = normalize(flow + vec2(0.00001)) * radiusPixels * uTexelSize;
 
-    for(int i=0;i<24;i++) {
-        float t=(float(i)+0.5)/24.0;
-        float age=t*maxAge;
-        float ageWeight=1.0;
-        vec2 offset=motionUv*(age*trailScale);
-        vec3 sampleColor;
+    vec3 streakColor = vec3(0.0);
+    float totalWeight = 0.0;
 
-        if(uDirection<0.5) {
-            vec3 backColor=smoothHistory(age,clamp(vTextureCoord-offset,0.0,1.0));
-            vec3 frontColor=smoothHistory(age,clamp(vTextureCoord+offset,0.0,1.0));
-            sampleColor=(backColor+frontColor)*0.5;
-        } else if(uDirection<1.5) {
-            sampleColor=smoothHistory(age,clamp(vTextureCoord-offset,0.0,1.0));
+    // Dense directional integration of the current frame. 32 taps form one
+    // continuous streak rather than six separate historical silhouettes.
+    for (int i = 0; i < 32; i++) {
+        float t = (float(i) + 0.5) / 32.0;
+        float position;
+        float weight;
+
+        if (uDirection < 0.5) {
+            position = t * 2.0 - 1.0;
+            weight = exp(-2.2 * position * position);
+        } else if (uDirection < 1.5) {
+            position = -t;
+            weight = exp(-1.35 * t);
         } else {
-            sampleColor=smoothHistory(age,clamp(vTextureCoord+offset,0.0,1.0));
+            position = t;
+            weight = exp(-1.35 * t);
         }
 
-        // A gentle center-to-edge falloff prevents a hard cut at the end
-        // of the trail while keeping the streak dense enough to look fluid.
-        float edgeWeight=0.82+0.18*sin(3.14159265*t);
-        accumulated+=sampleColor*(ageWeight*edgeWeight);
-        totalWeight+=ageWeight*edgeWeight;
+        vec2 sampleUv = clamp(
+            vTextureCoord + motionUv * position,
+            uTexelSize * 0.5,
+            vec2(1.0) - uTexelSize * 0.5
+        );
+        vec3 sampleColor = texture2D(sTexture, sampleUv).rgb;
+        streakColor += sampleColor * weight;
+        totalWeight += weight;
     }
 
-    vec3 temporalBlur=accumulated/max(totalWeight,0.0001);
-    // Fast-moving detail is intentionally allowed to dissolve into the
-    // integrated streak instead of remaining as a crisp duplicate.
-    float strength=clamp(uBlend*confidence*(0.85+0.75*fastMotion),0.0,1.0);
-    gl_FragColor=vec4(mix(current.rgb,temporalBlur,strength),current.a);
+    streakColor /= max(totalWeight, 0.0001);
+
+    // Fast movement deliberately loses fine detail into a smooth streak.
+    float strength = clamp(
+        uBlend * confidence * (0.72 + 0.28 * fastMotion),
+        0.0,
+        1.0
+    );
+    gl_FragColor = vec4(mix(current.rgb, streakColor, strength), current.a);
 }
