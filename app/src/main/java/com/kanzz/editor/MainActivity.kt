@@ -4583,13 +4583,6 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Batal", null)
             .create()
         dialog.setOnShowListener {
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).setOnClickListener {
-                updatePreview()
-                aiDiagnosticPreviewActive = false
-                aiDiagnosticPreviewClipId = null
-                dialog.dismiss()
-                startMotionBlurPreRender(clip, diagnostic = true)
-            }
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
                 .setTextColor(green)
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEGATIVE)
@@ -6904,6 +6897,26 @@ class MainActivity : AppCompatActivity() {
             .setPositiveButton("TERAPKAN", null)
             .create()
         dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).apply {
+                setTextColor(green)
+                setOnClickListener {
+                    updatePreview()
+                    val blur = blurSlider.progress / 100f
+                    val blend = blendSlider.progress / 100f
+                    val direction = directionButtons.indexOfFirst {
+                        it.id == directionGroup.checkedRadioButtonId
+                    }.coerceAtLeast(0)
+                    val times = selectedTimes()
+                    clip.motionBlurIntensity = blur
+                    clip.motionBlurBlend = blend
+                    clip.motionBlurDirection = direction
+                    clip.motionBlurTimes = times
+                    aiDiagnosticPreviewActive = false
+                    aiDiagnosticPreviewClipId = null
+                    dialog.dismiss()
+                    startMotionBlurPreRender(clip, diagnostic = true)
+                }
+            }
             dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
                 updatePreview()
                 val blur = blurSlider.progress / 100f
