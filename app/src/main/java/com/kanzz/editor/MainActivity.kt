@@ -131,6 +131,7 @@ class MainActivity : AppCompatActivity() {
         var failed: Boolean = false
     )
     private val overlayPreviewSessions = linkedMapOf<String, OverlayPreviewSession>()
+    private var overlayPreviewSuspendedForExport = false
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
     private lateinit var audioTracksContainer: LinearLayout
@@ -5017,7 +5018,7 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun syncOverlayVideoPreview() {
-        if (isFinishing || isDestroyed || !editorOpen || overlayVideoClips.isEmpty()) {
+        if (overlayPreviewSuspendedForExport || isFinishing || isDestroyed || !editorOpen || overlayVideoClips.isEmpty()) {
             clearOverlayPreviewSessions()
             return
         }
@@ -8091,6 +8092,9 @@ class MainActivity : AppCompatActivity() {
         outputHeight: Int?,
         exportCanvasAspect: Float
     ) {
+        // Lepaskan decoder dan surface preview sebelum Transformer membuat pipeline GL export.
+        overlayPreviewSuspendedForExport = true
+        clearOverlayPreviewSessions()
         // Dimensi encoder wajib minimal 2 px dan genap agar sesuai batasan codec hardware.
         val exportWidth = outputWidth?.let { (it / 2 * 2).coerceAtLeast(2) }
         val exportHeight = outputHeight?.let { (it / 2 * 2).coerceAtLeast(2) }
@@ -8454,6 +8458,8 @@ class MainActivity : AppCompatActivity() {
             .setNegativeButton("Batal") { _, _ ->
                 exportTransformer?.cancel()
                 exportTransformer = null
+                overlayPreviewSuspendedForExport = false
+                handler.post { syncOverlayVideoPreview() }
                 handler.removeCallbacks(exportProgressRunnable)
                 output.delete()
             }
@@ -8463,6 +8469,8 @@ class MainActivity : AppCompatActivity() {
         val listener = object : Transformer.Listener {
             override fun onCompleted(composition: Composition, exportResult: ExportResult) {
                 exportTransformer = null
+                overlayPreviewSuspendedForExport = false
+                handler.post { syncOverlayVideoPreview() }
                 handler.removeCallbacks(exportProgressRunnable)
                 exportProgressBar?.progress = 100
                 exportProgressText?.text = "Menyiapkan hasil export…"
@@ -8524,6 +8532,8 @@ class MainActivity : AppCompatActivity() {
                 exportException: ExportException
             ) {
                 exportTransformer = null
+                overlayPreviewSuspendedForExport = false
+                handler.post { syncOverlayVideoPreview() }
                 handler.removeCallbacks(exportProgressRunnable)
                 output.delete()
                 exportDialog?.dismiss()
@@ -8740,6 +8750,8 @@ class MainActivity : AppCompatActivity() {
             handler.post(exportProgressRunnable)
         } catch (error: Exception) {
             exportTransformer = null
+            overlayPreviewSuspendedForExport = false
+            handler.post { syncOverlayVideoPreview() }
             handler.removeCallbacks(exportProgressRunnable)
             output.delete()
             exportDialog?.dismiss()
