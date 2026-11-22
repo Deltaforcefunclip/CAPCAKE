@@ -30,6 +30,7 @@ data class OverlayVideoClip(
     var chromaKeyColor: Int = Color.GREEN,
     var chromaKeyThreshold: Float = 0.22f,
     var chromaKeySoftness: Float = 0.08f,
+    var volume: Float = 1f,
     var videoWidth: Int = 0,
     var videoHeight: Int = 0
 ) {
@@ -99,6 +100,7 @@ object OverlayVideoCodec {
                 put("transformX", clip.transformX.toDouble()); put("transformY", clip.transformY.toDouble())
                 put("chromaKeyEnabled", clip.chromaKeyEnabled); put("chromaKeyColor", clip.chromaKeyColor)
                 put("chromaKeyThreshold", clip.chromaKeyThreshold.toDouble()); put("chromaKeySoftness", clip.chromaKeySoftness.toDouble())
+                put("volume", clip.volume.toDouble())
                 put("videoWidth", clip.videoWidth); put("videoHeight", clip.videoHeight)
             })
         }
@@ -130,6 +132,7 @@ object OverlayVideoCodec {
                     chromaKeyColor = o.optInt("chromaKeyColor", Color.GREEN),
                     chromaKeyThreshold = o.optDouble("chromaKeyThreshold", 0.22).toFloat().coerceIn(0.01f, 1f),
                     chromaKeySoftness = o.optDouble("chromaKeySoftness", 0.08).toFloat().coerceIn(0.001f, 0.5f),
+                    volume = o.optDouble("volume", 1.0).toFloat().coerceIn(0f, 2f),
                     videoWidth = o.optInt("videoWidth", 0).coerceAtLeast(0),
                     videoHeight = o.optInt("videoHeight", 0).coerceAtLeast(0)
                 ))
