@@ -48,6 +48,7 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.PlayerView
 import androidx.media3.transformer.Composition
+import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
@@ -8022,6 +8023,13 @@ class MainActivity : AppCompatActivity() {
         outputHeight: Int?,
         exportCanvasAspect: Float
     ) {
+        // Dimensi encoder wajib minimal 2 px dan genap agar sesuai batasan codec hardware.
+        val exportWidth = outputWidth?.let { (it / 2 * 2).coerceAtLeast(2) }
+        val exportHeight = outputHeight?.let { (it / 2 * 2).coerceAtLeast(2) }
+        recordPlaybackDiagnostic(
+            "EXPORT_CONFIG mime=video/avc width=${exportWidth ?: "source"} " +
+                "height=${exportHeight ?: "source"} fps=${outputFps ?: "source"}"
+        )
 
         val editedItems = try {
             videoClipManager.clips.map { clip ->
@@ -8329,11 +8337,11 @@ class MainActivity : AppCompatActivity() {
                                 }
 
                                 // Resolusi opsional diterapkan setelah semua efek kanvas dan teks.
-                                if (outputWidth != null && outputHeight != null) {
+                                if (exportWidth != null && exportHeight != null) {
                                     add(
                                         Presentation.createForWidthAndHeight(
-                                            outputWidth,
-                                            outputHeight,
+                                            exportWidth,
+                                            exportHeight,
                                             Presentation.LAYOUT_SCALE_TO_FIT
                                         )
                                     )
@@ -8502,8 +8510,8 @@ class MainActivity : AppCompatActivity() {
                     // Gunakan dimensi kanvas export yang PERSIS sama dengan sequence video utama.
                     // Satu Presentation ukuran tetap menggantikan resize berbasis rasio yang
                     // dapat menghasilkan ukuran output berbeda antar-sumber overlay.
-                    val canvasWidth = (outputWidth ?: frameW.toInt()).coerceAtLeast(2)
-                    val canvasHeight = (outputHeight ?: frameH.toInt()).coerceAtLeast(2)
+                    val canvasWidth = (exportWidth ?: frameW.toInt()).coerceAtLeast(2)
+                    val canvasHeight = (exportHeight ?: frameH.toInt()).coerceAtLeast(2)
                     add(
                         Presentation.createForWidthAndHeight(
                             canvasWidth,
@@ -8648,9 +8656,14 @@ class MainActivity : AppCompatActivity() {
             val composition = compositionBuilder.build()
             // Encode portrait frames in portrait dimensions instead of relying
             // only on a 90-degree rotation flag in MP4 metadata.
+            val encoderFactory = DefaultEncoderFactory.Builder(this)
+                // Izinkan Media3 memilih konfigurasi encoder yang didukung perangkat,
+                // termasuk penyesuaian resolusi bila ukuran yang diminta tidak tersedia.
+                .setEnableFallback(true)
+                .setEnableFormatFallback(true)
+                .build()
             val transformer = Transformer.Builder(this)
-                // Paksa H.264/AVC agar perangkat tidak mencoba encoder HEVC
-                // yang pada beberapa perangkat tidak tersedia untuk konfigurasi export ini.
+                .setEncoderFactory(encoderFactory)
                 .setVideoMimeType("video/avc")
                 .setPortraitEncodingEnabled(true)
                 .addListener(listener)
