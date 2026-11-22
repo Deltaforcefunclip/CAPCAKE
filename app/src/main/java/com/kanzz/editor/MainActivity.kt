@@ -115,6 +115,9 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var player: ExoPlayer
     private lateinit var playerView: PlayerView
+    private var overlayPreviewPlayerView: PlayerView? = null
+    private var overlayPreviewPlayer: ExoPlayer? = null
+    private var activeOverlayPreviewId: String? = null
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
     private lateinit var audioTracksContainer: LinearLayout
@@ -423,6 +426,7 @@ class MainActivity : AppCompatActivity() {
                 if (!player.isPlaying) updateTime()
                 syncVideoClipProperties()
                 syncAudioPlayback()
+                syncOverlayVideoPreview()
                 updateTextPreview(force = false)
             }
             handler.postDelayed(this, 100L)
@@ -1576,6 +1580,20 @@ class MainActivity : AppCompatActivity() {
             playerView,
             FrameLayout.LayoutParams(-1, -1)
         )
+        overlayPreviewPlayerView = (android.view.LayoutInflater.from(this)
+            .inflate(R.layout.preview_player_view, previewFrame, false) as PlayerView).apply {
+            useController = false
+            setBackgroundColor(Color.TRANSPARENT)
+            setShutterBackgroundColor(Color.TRANSPARENT)
+            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+            setKeepContentOnPlayerReset(true)
+            visibility = View.GONE
+        }
+        overlayPreviewPlayer = ExoPlayer.Builder(this).build().also { overlay ->
+            overlay.volume = 0f
+            overlayPreviewPlayerView?.player = overlay
+        }
+        previewFrame.addView(overlayPreviewPlayerView, FrameLayout.LayoutParams(-1, -1))
 
         dreamyPreviewOverlay = View(this).apply {
             isClickable = false
@@ -3293,7 +3311,7 @@ class MainActivity : AppCompatActivity() {
                 "P̲T̲" to "Preset Text"
             )
         } else if (selectedOverlayVideoClipId != null) {
-            listOf("✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
+            listOf("⚙" to "Modifikasi", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3436,6 +3454,7 @@ class MainActivity : AppCompatActivity() {
                             else showMessage("Pengaturan ${clip.effectName} belum tersedia.")
                         }
                     }
+                    "Modifikasi" -> showOverlayVideoModifyDialog()
                     "Edit Text" -> editSelectedText()
                     "Font" -> showTextFontPicker()
                     "Preset Text" -> showPresetTextPanel()
@@ -4791,6 +4810,7 @@ class MainActivity : AppCompatActivity() {
         selectedOverlayVideoClipId = clip.id
         activeLayerGroup = "OVERLAY"
         refreshOverlayVideoTracks(); updateLayerGroupVisibility(); saveCurrentProject(); updateToolMenu()
+        syncOverlayVideoPreview()
         Toast.makeText(this, "Overlay video ditambahkan ke timeline.", Toast.LENGTH_SHORT).show()
     }
 
@@ -4809,7 +4829,7 @@ class MainActivity : AppCompatActivity() {
             onChanged = { refreshOverlayVideoTracks(); saveCurrentProject() }
         )
         view.select(selectedOverlayVideoClipId)
-        overlayVideoTracksContainer.addView(view, LinearLayout.LayoutParams(-1, dp(38)))
+        overlayVideoTracksContainer.addView(view, LinearLayout.LayoutParams(-1, -2))
     }
 
     private fun restoreOverlayVideoClips(raw: String?) = OverlayVideoCodec.decode(raw, overlayVideoClips)
@@ -7052,6 +7072,7 @@ class MainActivity : AppCompatActivity() {
     override fun onPause() {
 
         recordPlaybackDiagnostic("APP_ON_PAUSE isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
+        overlayPreviewPlayer?.pause()
         saveCurrentProject()
 
         super.onPause()
@@ -7098,9 +7119,11 @@ class MainActivity : AppCompatActivity() {
         invalidateTextTrackViews()
         // Effect clips juga harus mengikuti playhead pada setiap frame playback.
         invalidateEffectTrackViews()
+        overlayVideoTracksContainer.postInvalidateOnAnimation()
         // Sinkronkan transformasi gambar dengan klip yang tepat di bawah playhead.
         applyPreviewTransform()
         updateDreamyPreviewOverlay()
+        syncOverlayVideoPreview()
         updateTextPreview(force = false)
 
         currentProject?.position = position
@@ -7897,6 +7920,47 @@ class MainActivity : AppCompatActivity() {
             val sequences = mutableListOf<EditedMediaItemSequence>()
             sequences.add(EditedMediaItemSequence.withAudioAndVideoFrom(editedItems))
 
+            // Setiap klip overlay video menjadi sequence video paralel, sehingga
+            // Transformer mengompositkannya di atas video utama pada waktu yang tepat.
+            overlayVideoClips.filter { it.durationMs > 0L }.forEach { overlayClip ->
+                val overlayStart = overlayClip.startTimeMs.coerceAtLeast(0L)
+                val overlayItem = MediaItem.Builder()
+                    .setUri(Uri.parse(overlayClip.sourceUri))
+                    .setClippingConfiguration(
+                        MediaItem.ClippingConfiguration.Builder()
+                            .setStartPositionMs(overlayClip.sourceStartMs.coerceAtLeast(0L))
+                            .setEndPositionMs((overlayClip.sourceStartMs + overlayClip.durationMs)
+                                .coerceAtLeast(overlayClip.sourceStartMs + 1L))
+                            .build()
+                    ).build()
+                val overlayEffects = buildList {
+                    val frameW = playerView.width.coerceAtLeast(1).toFloat()
+                    val frameH = playerView.height.coerceAtLeast(1).toFloat()
+                    val aspect = frameW / frameH
+                    add(Presentation.createForAspectRatio(aspect, Presentation.LAYOUT_SCALE_TO_FIT))
+                    val scale = overlayClip.transformScale.coerceIn(0.2f, 4f)
+                    val radians = Math.toRadians(overlayClip.rotationDegrees.toDouble())
+                    val cosA = kotlin.math.cos(radians).toFloat()
+                    val sinA = kotlin.math.sin(radians).toFloat()
+                    val tx = 2f * overlayClip.transformX / frameW
+                    val ty = -2f * overlayClip.transformY / frameH
+                    val matrix = Matrix().apply { setValues(floatArrayOf(
+                        scale * cosA, scale * sinA / aspect, tx,
+                        -scale * sinA * aspect, scale * cosA, ty,
+                        0f, 0f, 1f
+                    )) }
+                    add(androidx.media3.effect.MatrixTransformation { Matrix(matrix) })
+                }
+                val overlayEdited = EditedMediaItem.Builder(overlayItem)
+                    .setRemoveAudio(true)
+                    .setEffects(Effects(emptyList(), overlayEffects))
+                    .build()
+                val overlaySequence = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
+                if (overlayStart > 0L) overlaySequence.addGap(overlayStart * 1000L)
+                overlaySequence.addItem(overlayEdited)
+                sequences.add(overlaySequence.build())
+            }
+
             // Setiap layer audio menjadi sequence terpisah agar beberapa layer dapat
             // bercampur bersamaan, sementara addGap menjaga posisi klip di timeline.
             audioClipManager.lanes.forEach { lane ->
@@ -8237,6 +8301,9 @@ class MainActivity : AppCompatActivity() {
 
         audioPlayers.values.forEach { it.release() }
         audioPlayers.clear()
+        overlayPreviewPlayerView?.player = null
+        overlayPreviewPlayer?.release()
+        overlayPreviewPlayer = null
         player.release()
 
         super.onDestroy()
