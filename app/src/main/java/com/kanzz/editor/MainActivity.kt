@@ -6514,7 +6514,7 @@ class MainActivity : AppCompatActivity() {
         container.addView(title)
         container.addView(bar, LinearLayout.LayoutParams(-1, dp(5)).apply { topMargin = dp(7) })
         container.tag = Pair(title, bar)
-        val params = android.widget.FrameLayout.LayoutParams(dp(250), ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+        val params = android.widget.FrameLayout.LayoutParams(dp(250), android.view.ViewGroup.LayoutParams.WRAP_CONTENT).apply {
             gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
             topMargin = dp(42)
         }
