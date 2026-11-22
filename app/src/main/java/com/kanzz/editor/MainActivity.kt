@@ -4798,6 +4798,126 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
+        overlayPreviewPlayerView?.let { view ->
+            view.pivotX = view.width / 2f
+            view.pivotY = view.height / 2f
+            view.scaleX = clip.transformScale.coerceIn(0.2f, 4f)
+            view.scaleY = clip.transformScale.coerceIn(0.2f, 4f)
+            view.rotation = clip.rotationDegrees
+            view.translationX = clip.transformX
+            view.translationY = clip.transformY
+        }
+    }
+
+    private fun syncOverlayVideoPreview() {
+        val overlayView = overlayPreviewPlayerView ?: return
+        val overlayPlayer = overlayPreviewPlayer ?: return
+        if (!editorOpen || overlayVideoClips.isEmpty()) {
+            overlayPlayer.pause()
+            overlayView.visibility = View.GONE
+            activeOverlayPreviewId = null
+            return
+        }
+        val position = if (::timelineController.isInitialized) timelineController.positionMs
+            else currentTimelinePosition()
+        val clip = overlayVideoClips
+            .filter { position >= it.startTimeMs && position < it.endTimeMs }
+            .maxByOrNull { it.trackIndex }
+        if (clip == null) {
+            overlayPlayer.pause()
+            overlayView.visibility = View.GONE
+            activeOverlayPreviewId = null
+            return
+        }
+        overlayView.visibility = View.VISIBLE
+        applyOverlayPreviewTransform(clip)
+        if (activeOverlayPreviewId != clip.id) {
+            val item = MediaItem.Builder()
+                .setUri(Uri.parse(clip.sourceUri))
+                .setClippingConfiguration(
+                    MediaItem.ClippingConfiguration.Builder()
+                        .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
+                        .setEndPositionMs((clip.sourceStartMs + clip.durationMs)
+                            .coerceAtLeast(clip.sourceStartMs + 1L))
+                        .build()
+                ).build()
+            activeOverlayPreviewId = clip.id
+            overlayPlayer.volume = 0f
+            overlayPlayer.setMediaItem(item, (position - clip.startTimeMs).coerceAtLeast(0L))
+            overlayPlayer.prepare()
+        } else {
+            val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
+            if (kotlin.math.abs(overlayPlayer.currentPosition - localPosition) > 280L) {
+                overlayPlayer.seekTo(localPosition)
+            }
+        }
+        overlayPlayer.playWhenReady = player.isPlaying && !isTimelineScrubbing
+        if (!player.isPlaying) overlayPlayer.pause()
+    }
+
+    private fun showOverlayVideoModifyDialog() {
+        val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return
+        val oldScale = clip.transformScale
+        val oldRotation = clip.rotationDegrees
+        val oldX = clip.transformX
+        val oldY = clip.transformY
+        pushUndoSnapshot()
+
+        val panel = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(8))
+        }
+        fun addControl(title: String, max: Int, initial: Int, valueText: (Int) -> String, update: (Int) -> Unit) {
+            val heading = TextView(this).apply {
+                setTextColor(Color.WHITE); textSize = 13f; text = valueText(initial)
+            }
+            val seek = SeekBar(this).apply { this.max = max; progress = initial }
+            seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+                override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
+                    heading.text = valueText(progress)
+                    update(progress)
+                    applyOverlayPreviewTransform(clip)
+                }
+                override fun onStartTrackingTouch(bar: SeekBar?) {}
+                override fun onStopTrackingTouch(bar: SeekBar?) {}
+            })
+            panel.addView(heading)
+            panel.addView(seek)
+        }
+        addControl("Ukuran", 380, ((oldScale * 100f) - 20f).toInt().coerceIn(0, 380),
+            { "Ukuran: ${it + 20}%" }) { clip.transformScale = (it + 20) / 100f }
+        addControl("Rotasi", 360, (oldRotation + 180f).toInt().coerceIn(0, 360),
+            { "Rotasi: ${it - 180}°" }) { clip.rotationDegrees = (it - 180).toFloat() }
+        val range = dp(250).coerceAtLeast(100)
+        addControl("Posisi horizontal", 200, ((oldX / range.toFloat() + 1f) * 100f).toInt().coerceIn(0, 200),
+            { "Horizontal: ${((it - 100) / 100f * range).toInt()} px" }) { clip.transformX = (it - 100) / 100f * range }
+        addControl("Posisi vertikal", 200, ((oldY / range.toFloat() + 1f) * 100f).toInt().coerceIn(0, 200),
+            { "Vertikal: ${((it - 100) / 100f * range).toInt()} px" }) { clip.transformY = (it - 100) / 100f * range }
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Modifikasi Overlay Video")
+            .setView(ScrollView(this).apply { addView(panel) })
+            .setNegativeButton("Batal") { _, _ ->
+                clip.transformScale = oldScale; clip.rotationDegrees = oldRotation
+                clip.transformX = oldX; clip.transformY = oldY
+                undoStack.removeLastOrNull()
+                applyOverlayPreviewTransform(clip)
+            }
+            .setPositiveButton("Terapkan") { _, _ ->
+                applyOverlayPreviewTransform(clip)
+                saveCurrentProject()
+                refreshOverlayVideoTracks()
+            }
+            .setOnCancelListener {
+                clip.transformScale = oldScale; clip.rotationDegrees = oldRotation
+                clip.transformX = oldX; clip.transformY = oldY
+                undoStack.removeLastOrNull()
+                applyOverlayPreviewTransform(clip)
+            }
+            .show()
+    }
+
     private fun addOverlayVideoClip(uri: Uri) {
         try { contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
         val duration = readVideoDurationMs(uri)
