@@ -7847,10 +7847,10 @@ class MainActivity : AppCompatActivity() {
                     val selectedResolution = resolutionOptions.getOrNull(resolutionIndex)
                     dialog.dismiss()
                     val exportCanvasAspect = selectedResolution?.let {
-                        it.width.toFloat() / it.height.toFloat().coerceAtLeast(1)
+                        it.width.toFloat() / it.height.toFloat().coerceAtLeast(1f)
                     } ?: if (selectedPreviewRatio.isBlank()) {
                         profiles.first().width.toFloat() /
-                            profiles.first().height.toFloat().coerceAtLeast(1)
+                            profiles.first().height.toFloat().coerceAtLeast(1f)
                     } else {
                         ratio
                     }
