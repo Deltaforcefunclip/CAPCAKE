@@ -7683,7 +7683,9 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun analyzeExportSources(onComplete: (List<ExportSourceProfile>) -> Unit) {
-        val sourceUris = (videoClipManager.clips.map { it.sourceUri } + overlayVideoClips.map { it.sourceUri }).distinct()
+        // Pilihan "Sumber Video" dan analisis resolusi/FPS hanya berasal
+        // dari klip utama. Overlay tidak boleh menentukan resolusi export.
+        val sourceUris = videoClipManager.clips.map { it.sourceUri }.distinct()
         Thread {
             val profiles = sourceUris.mapNotNull { inspectExportSource(it) }
             runOnUiThread { onComplete(profiles) }
@@ -8412,7 +8414,14 @@ class MainActivity : AppCompatActivity() {
                 val overlayEffects = buildList {
                     val frameW = playerView.width.coerceAtLeast(1).toFloat()
                     val frameH = playerView.height.coerceAtLeast(1).toFloat()
-                    val aspect = frameW / frameH
+                    // Overlay harus memakai kanvas project yang sama dengan video utama,
+                    // bukan rasio/resolusi sumber file overlay.
+                    val ratioParts = selectedPreviewRatio.split(":")
+                    val canvasAspect = if (ratioParts.size == 2) {
+                        (ratioParts[0].toFloatOrNull() ?: frameW) /
+                            (ratioParts[1].toFloatOrNull() ?: frameH).coerceAtLeast(0.0001f)
+                    } else frameW / frameH
+                    val aspect = canvasAspect.coerceAtLeast(0.0001f)
                     add(Presentation.createForAspectRatio(aspect, Presentation.LAYOUT_SCALE_TO_FIT))
                     val scale = overlayClip.transformScale.coerceIn(0.2f, 4f)
                     val radians = Math.toRadians(overlayClip.rotationDegrees.toDouble())
@@ -8433,6 +8442,16 @@ class MainActivity : AppCompatActivity() {
                             overlayClip.chromaKeySoftness
                         )
                     )
+                    // Samakan ukuran output layer overlay dengan kanvas export utama.
+                    if (outputWidth != null && outputHeight != null) {
+                        add(
+                            Presentation.createForWidthAndHeight(
+                                outputWidth,
+                                outputHeight,
+                                Presentation.LAYOUT_SCALE_TO_FIT
+                            )
+                        )
+                    }
                 }
                 val overlayEdited = EditedMediaItem.Builder(overlayItem)
                     .setRemoveAudio(true)
