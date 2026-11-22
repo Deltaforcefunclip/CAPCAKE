@@ -101,12 +101,12 @@ private class MotionBlurShaderProgram(
 
             glProgram.use()
             glProgram.setSamplerTexIdUniform("sTexture", inputTexId, 0)
-            for (age in 0 until 6) {
-                val texture = if (historyCount > age) {
-                    historyTextures[(historyWriteIndex - 1 - age + historyTextures.size) % historyTextures.size]
-                } else historyTextures[0]
-                glProgram.setSamplerTexIdUniform("uHistory$age", texture, age + 1)
-            }
+            // Only uHistory0 is active in the current streak shader.
+            // Binding optimized-out uniforms can fail on some GLES drivers.
+            val previousTexture = if (historyCount > 0) {
+                historyTextures[(historyWriteIndex - 1 + historyTextures.size) % historyTextures.size]
+            } else historyTextures[0]
+            glProgram.setSamplerTexIdUniform("uHistory0", previousTexture, 1)
             glProgram.setFloatsUniform("uTexelSize", floatArrayOf(1f / frameWidth, 1f / frameHeight))
             glProgram.setFloatUniform("uBlur", amount)
             glProgram.setFloatUniform("uBlend", mixAmount)
