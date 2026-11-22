@@ -6602,7 +6602,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun motionBlurCacheFile(clip: VideoClip): File {
         val identity = listOf(
-            "motion_blur_neuflow_ai_v1", clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
+            "motion_blur_rife_v1", clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
             clip.motionBlurIntensity, clip.motionBlurBlend,
             clip.motionBlurDirection, clip.motionBlurTimes
         ).joinToString("|")
@@ -6616,27 +6616,6 @@ class MainActivity : AppCompatActivity() {
     private fun startMotionBlurPreRender(clip: VideoClip, diagnostic: Boolean = false) {
         if (motionBlurModelPreparing) {
             showMessage("Model AI Motion Blur sedang disiapkan.")
-            return
-        }
-        val aiModel = NeuFlowV2Model.modelFile(this)
-        if (!aiModel.isFile || aiModel.length() != NeuFlowV2Model.MODEL_SIZE_BYTES) {
-            motionBlurModelPreparing = true
-            showMessage("Mengunduh model AI Motion Blur (sekitar 42 MB)...")
-            Thread {
-                try {
-                    NeuFlowV2Model.ensureDownloaded(this)
-                    handler.post {
-                        motionBlurModelPreparing = false
-                        showMessage("Model AI siap. Memulai render Motion Blur.")
-                        startMotionBlurPreRender(clip, diagnostic)
-                    }
-                } catch (error: Exception) {
-                    handler.post {
-                        motionBlurModelPreparing = false
-                        showMessage("Model AI gagal diunduh: ${error.message}")
-                    }
-                }
-            }.start()
             return
         }
         if (motionBlurRenderTransformer != null) {
@@ -6693,17 +6672,30 @@ class MainActivity : AppCompatActivity() {
                 )
                 .build()
             val edited = EditedMediaItem.Builder(item)
+                .setRemoveAudio(true)
                 .setEffects(
                     Effects(
                         emptyList(),
-                        listOf(AiMotionBlurGlEffect(
-                            blur = clip.motionBlurIntensity,
-                            blend = clip.motionBlurBlend,
-                            direction = clip.motionBlurDirection,
-                            times = clip.motionBlurTimes,
-                            modelFile = aiModel,
-                            diagnostic = diagnostic
-                        ))
+                        listOf(
+                            if (diagnostic) {
+                                AiMotionBlurGlEffect(
+                                    blur = clip.motionBlurIntensity,
+                                    blend = clip.motionBlurBlend,
+                                    direction = clip.motionBlurDirection,
+                                    times = clip.motionBlurTimes,
+                                    modelFile = NeuFlowV2Model.modelFile(this),
+                                    diagnostic = true
+                                )
+                            } else {
+                                RifeMotionBlurGlEffect(
+                                    context = this,
+                                    blur = clip.motionBlurIntensity,
+                                    blend = clip.motionBlurBlend,
+                                    direction = clip.motionBlurDirection,
+                                    times = clip.motionBlurTimes
+                                )
+                            }
+                        )
                     )
                 )
                 .build()
