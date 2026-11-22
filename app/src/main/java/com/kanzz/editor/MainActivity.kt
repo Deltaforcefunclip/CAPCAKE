@@ -2386,8 +2386,7 @@ class MainActivity : AppCompatActivity() {
                         audioTrackViews.values.forEach { it.invalidate() }
                         invalidateTextTrackViews()
                         invalidateEffectTrackViews()
-                        if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.postInvalidateOnAnimation()
-                        overlaySelectionOverlay?.postInvalidateOnAnimation()
+                        viewInvalidateOverlayTracks()
                         return true
                     }
                 }
