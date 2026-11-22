@@ -172,7 +172,7 @@ object VideoDiagnostics {
                 if (codec.isEncoder || codec.supportedTypes.none { it.equals(mime, true) }) continue
                 val caps = runCatching { codec.getCapabilitiesForType(mime) }.getOrNull() ?: continue
                 val supports = if (width > 0 && height > 0) {
-                    runCatching { caps.videoCapabilities?.areSizeAndRateSupported(width, height, max(1f, declaredFps)) }.getOrNull()
+                    runCatching { caps.videoCapabilities?.areSizeAndRateSupported(width, height, max(1.0, declaredFps.toDouble())) }.getOrNull()
                 } else null
                 val kind = if (codec.isHardwareAccelerated) "hardware" else if (codec.isSoftwareOnly) "software" else "unknown"
                 decoderResults.add("${codec.name} ($kind), resolusi/FPS: ${supports?.toString() ?: "?"}")
