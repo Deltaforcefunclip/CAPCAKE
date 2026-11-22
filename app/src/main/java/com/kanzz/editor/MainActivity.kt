@@ -1619,7 +1619,7 @@ class MainActivity : AppCompatActivity() {
         // TextureView diperlukan agar rotasi dan transformasi parent benar-benar
         // diterapkan pada frame video, bukan hanya pada bingkai seleksi.
         playerView = (android.view.LayoutInflater.from(this)
-            .inflate(R.layout.preview_player_view, previewFrame, false) as PlayerView).apply {
+            .inflate(R.layout.preview_player_view, previewFrameContainer, false) as PlayerView).apply {
             useController = false
             setBackgroundColor(Color.BLACK)
             resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -4933,8 +4933,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
         val view = overlayPreviewSessions[clip.id]?.view ?: return
-        val parentWidth = previewFrame.width
-        val parentHeight = previewFrame.height
+        val parentWidth = previewFrameContainer.width
+        val parentHeight = previewFrameContainer.height
         val videoWidth = clip.videoWidth
         val videoHeight = clip.videoHeight
         if (parentWidth > 0 && parentHeight > 0 && videoWidth > 0 && videoHeight > 0) {
@@ -4965,7 +4965,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun createOverlayPreviewSession(clip: OverlayVideoClip): OverlayPreviewSession {
         val view = (android.view.LayoutInflater.from(this)
-            .inflate(R.layout.preview_player_view, previewFrame, false) as PlayerView).apply {
+            .inflate(R.layout.preview_player_view, previewFrameContainer, false) as PlayerView).apply {
             useController = false
             setBackgroundColor(Color.TRANSPARENT)
             setShutterBackgroundColor(Color.TRANSPARENT)
@@ -5001,7 +5001,7 @@ class MainActivity : AppCompatActivity() {
                 view.visibility = View.GONE
             }
         })
-        previewFrame.addView(view, FrameLayout.LayoutParams(-1, -1))
+        previewFrameContainer.addView(view, FrameLayout.LayoutParams(-1, -1))
         view.elevation = dp(4).toFloat() + clip.trackIndex
         return session
     }
