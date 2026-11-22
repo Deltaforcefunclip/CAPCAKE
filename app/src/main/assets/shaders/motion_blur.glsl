@@ -58,7 +58,7 @@ vec3 estimateFlow(vec2 uv, sampler2D previousFrame) {
         flow.y=-(-xy*xt+a*yt)/det;
     }
     float magnitude=length(flow);
-    if(magnitude>14.0) flow*=14.0/magnitude;
+    if(magnitude>28.0) flow*=28.0/magnitude;
 
     // Reject vectors that do not actually explain the temporal brightness
     // change at the warped location (occlusions / unrelated texture changes).
@@ -97,16 +97,20 @@ void main() {
     }
 
     vec2 motionUv=flow*uTexelSize;
-    float trailScale=uBlur*2.5;
-    vec3 accumulated=current.rgb;
-    float totalWeight=1.0;
+    // Fast motion should lose fine detail into a continuous streak rather
+    // than retaining a crisp copy of the moving object.
+    float fastMotion=smoothstep(0.8,5.0,flowLength);
+    float trailScale=uBlur*(2.5+3.5*fastMotion);
+    float currentWeight=mix(1.0,0.42,fastMotion);
+    vec3 accumulated=current.rgb*currentWeight;
+    float totalWeight=currentWeight;
 
     // Each sample uses the matching real historical frame. Samples are
     // weighted toward the present to avoid a detached, translucent duplicate.
     for(int i=0;i<6;i++) {
         float age=float(i+1);
         if(age<=uTimes && age<=uHistoryCount) {
-            float ageWeight=1.0/(1.0+0.16*float(i));
+            float ageWeight=(1.0/(1.0+0.10*float(i)))*(1.0+0.35*fastMotion);
             vec2 backwardCoord=clamp(vTextureCoord-motionUv*age*trailScale,0.0,1.0);
             vec2 forwardCoord=clamp(vTextureCoord+motionUv*age*trailScale,0.0,1.0);
             vec3 sampleColor;
@@ -129,6 +133,6 @@ void main() {
     }
 
     vec3 temporalBlur=accumulated/totalWeight;
-    float strength=clamp(uBlend*confidence,0.0,1.0);
+    float strength=clamp(uBlend*confidence*(1.0+0.55*fastMotion),0.0,1.0);
     gl_FragColor=vec4(mix(current.rgb,temporalBlur,strength),current.a);
 }
