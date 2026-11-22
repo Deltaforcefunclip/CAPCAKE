@@ -2667,7 +2667,6 @@ class MainActivity : AppCompatActivity() {
                     "state=${player.playbackState} position=${player.currentPosition}ms duration=${sourceDuration}ms"
             )
             player.setMediaItems(buildEditedVideoItems())
-            player.prepare()
         }
 
         val metadataDuration = readVideoDurationMs(uri)
@@ -2685,7 +2684,6 @@ class MainActivity : AppCompatActivity() {
             )
             player.setMediaItem(MediaItem.fromUri(uri))
             player.playWhenReady = false
-            player.prepare()
         }
 
         val listener = object : Player.Listener {
@@ -2752,14 +2750,16 @@ class MainActivity : AppCompatActivity() {
         playbackListener = listener
         player.addListener(listener)
 
-        // Playlist sudah dipasang dan dipersiapkan di atas untuk jalur metadata.
-        // Untuk fallback, sumber mentah baru dipersiapkan setelah listener terpasang.
-        if (metadataDuration > 0L) {
-            // Listener dipasang setelah prepare dipanggil; READY tetap dikirim saat listener aktif
-            // karena proses persiapan asynchronous. Tidak ada prepare kedua.
-        } else {
-            // Fallback source sudah dipanggil prepare sebelum listener; panggil prepare
-            // tidak diperlukan lagi. Listener akan menerima READY saat decoder siap.
+        // Listener terpasang sebelum prepare agar callback frame/state pertama tidak terlewat.
+        // Kedua jalur hanya menjalankan prepare satu kali.
+        player.prepare()
+
+        // Antisipasi decoder yang sudah READY sebelum callback listener sempat diterima.
+        if (playlistInstalled && player.playbackState == Player.STATE_READY && !initialPositionApplied) {
+            initialPositionApplied = true
+            seekTimelinePosition(savedPosition)
+            updateTime()
+            updatePlayButton()
         }
     }
 
