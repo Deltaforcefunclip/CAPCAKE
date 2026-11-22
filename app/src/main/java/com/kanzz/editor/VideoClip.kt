@@ -117,8 +117,8 @@ data class VideoClip(
     var transformX: Float = 0f,
     var transformY: Float = 0f,
     var colorGrading: ColorGrading = ColorGrading(),
-    var motionBlurIntensity: Float = 0f,
-    var motionBlurBlend: Float = 0.65f,
+    var motionBlurIntensity: Float = 0.30f,
+    var motionBlurBlend: Float = 0.30f,
     var motionBlurDirection: Int = 0,
     var motionBlurTimes: Int = 4
 ) {
