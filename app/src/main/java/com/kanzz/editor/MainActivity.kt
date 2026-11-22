@@ -2638,9 +2638,55 @@ class MainActivity : AppCompatActivity() {
         var initialPositionApplied = false
 
         player.volume = if (muteAudio) 0f else 1f
-        recordPlaybackDiagnostic("PLAYLIST_REPLACE source=loadVideo:setMediaItem isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
-        player.setMediaItem(MediaItem.fromUri(uri))
-        player.playWhenReady = false
+
+        // Ambil durasi langsung dari metadata/container terlebih dahulu.
+        // Jika valid, jangan decode sumber mentah hanya untuk membaca durasi:
+        // langsung pasang playlist hasil edit agar decoder tidak dibuat dua kali.
+        fun installEditedPlaylist(sourceDuration: Long) {
+            if (videoClipManager.clips.isEmpty()) {
+                videoClipManager.setSource(uri.toString(), sourceDuration)
+            }
+            if (videoClipManager.clips.isEmpty()) {
+                showMessage("Klip video tidak memiliki durasi yang valid.")
+                return
+            }
+
+            playlistInstalled = true
+            selectedVideoClipId = selectedVideoClipId
+                ?.takeIf { id -> videoClipManager.find(id) != null }
+                ?: videoClipManager.clips.firstOrNull()?.id
+
+            timeline.setDuration(
+                videoClipManager.durationMs,
+                savedPosition.coerceIn(0L, videoClipManager.durationMs)
+            )
+            timeline.loadThumbnails(uri, sourceDuration)
+
+            recordPlaybackDiagnostic(
+                "PLAYLIST_REPLACE source=loadVideo:initial-edited-list isPlaying=${player.isPlaying} " +
+                    "state=${player.playbackState} position=${player.currentPosition}ms duration=${sourceDuration}ms"
+            )
+            player.setMediaItems(buildEditedVideoItems())
+            player.prepare()
+        }
+
+        val metadataDuration = readVideoDurationMs(uri)
+        if (metadataDuration > 0L) {
+            installEditedPlaylist(metadataDuration)
+        } else {
+            // Fallback kompatibilitas: sebagian container tidak menyediakan durasi
+            // melalui metadata, sehingga biarkan ExoPlayer membacanya seperti alur lama.
+            recordPlaybackDiagnostic(
+                "DURATION_METADATA_UNAVAILABLE fallback=prepare_source"
+            )
+            recordPlaybackDiagnostic(
+                "PLAYLIST_REPLACE source=loadVideo:setMediaItem isPlaying=${player.isPlaying} " +
+                    "state=${player.playbackState} position=${player.currentPosition}ms"
+            )
+            player.setMediaItem(MediaItem.fromUri(uri))
+            player.playWhenReady = false
+            player.prepare()
+        }
 
         val listener = object : Player.Listener {
             override fun onPlaybackStateChanged(state: Int) {
@@ -2651,37 +2697,17 @@ class MainActivity : AppCompatActivity() {
                 }
                 if (state != Player.STATE_READY) return
 
-                // First prepare the source once so its real duration is known.
+                // Jalur fallback hanya dipakai bila metadata tidak dapat membaca durasi.
                 if (!playlistInstalled) {
-                    // ExoPlayer dapat sementara melaporkan durasi pendek/tidak lengkap
-                    // pada sebagian container. Cocokkan dengan metadata dan track video.
                     val sourceDuration = max(
                         player.duration.coerceAtLeast(0L),
                         readVideoDurationMs(uri)
                     )
-                    if (videoClipManager.clips.isEmpty()) {
-                        videoClipManager.setSource(uri.toString(), sourceDuration)
-                    }
-                    if (videoClipManager.clips.isEmpty()) {
-                        showMessage("Klip video tidak memiliki durasi yang valid.")
+                    if (sourceDuration <= 0L) {
+                        showMessage("Durasi video tidak dapat dibaca.")
                         return
                     }
-
-                    playlistInstalled = true
-                    selectedVideoClipId = selectedVideoClipId
-                        ?.takeIf { id -> videoClipManager.find(id) != null }
-                        ?: videoClipManager.clips.firstOrNull()?.id
-
-                    timeline.setDuration(
-                        videoClipManager.durationMs,
-                        savedPosition.coerceIn(0L, videoClipManager.durationMs)
-                    )
-                    timeline.loadThumbnails(uri, sourceDuration)
-
-                    // Replace the original full-length source with the edited clip sequence.
-                    recordPlaybackDiagnostic("PLAYLIST_REPLACE source=loadVideo:initial-edited-list isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
-                    player.setMediaItems(buildEditedVideoItems())
-                    player.prepare()
+                    installEditedPlaylist(sourceDuration)
                     return
                 }
 
@@ -2694,17 +2720,12 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
-                // Catat waktu perpindahan agar jeda sampai frame pertama dapat diukur.
                 lastTransitionElapsedMs = SystemClock.elapsedRealtime()
                 lastTransitionItemIndex = player.currentMediaItemIndex
                 recordPlaybackDiagnostic(
                     "TRANSITION item=$lastTransitionItemIndex reason=$reason " +
                         diagnosticClipLabel(lastTransitionItemIndex)
                 )
-                // Terapkan volume, opacity, dan speed tepat saat item berganti.
-                // Pembaruan timeline tidak dipanggil di callback transisi karena
-                // timelineFrameUpdater sudah menyegarkannya setiap 33 ms.
-                // Menghindari pekerjaan UI tambahan tepat pada pergantian decoder.
                 syncVideoClipProperties()
             }
 
@@ -2730,7 +2751,16 @@ class MainActivity : AppCompatActivity() {
 
         playbackListener = listener
         player.addListener(listener)
-        player.prepare()
+
+        // Playlist sudah dipasang dan dipersiapkan di atas untuk jalur metadata.
+        // Untuk fallback, sumber mentah baru dipersiapkan setelah listener terpasang.
+        if (metadataDuration > 0L) {
+            // Listener dipasang setelah prepare dipanggil; READY tetap dikirim saat listener aktif
+            // karena proses persiapan asynchronous. Tidak ada prepare kedua.
+        } else {
+            // Fallback source sudah dipanggil prepare sebelum listener; panggil prepare
+            // tidak diperlukan lagi. Listener akan menerima READY saat decoder siap.
+        }
     }
 
     private fun showPreviewQualityDialog() {
