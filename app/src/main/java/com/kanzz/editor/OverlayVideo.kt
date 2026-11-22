@@ -114,6 +114,7 @@ class OverlayVideoTrackView(
     private var downY = 0f
     private var originStart = 0L
     private var originTrack = 0
+    private var lastDrawnTrack = 0
     private var dragging = false
     private val gestureHandler = Handler(Looper.getMainLooper())
     private var movedBeforeLongPress = false
@@ -176,6 +177,7 @@ class OverlayVideoTrackView(
                 selectedId = touched?.id
                 originStart = touched?.startTimeMs ?: 0L
                 originTrack = touched?.trackIndex ?: lane
+                lastDrawnTrack = originTrack
                 dragging = false
                 movedBeforeLongPress = false
                 gestureHandler.removeCallbacks(longPressDrag)
@@ -193,15 +195,26 @@ class OverlayVideoTrackView(
                 if (dragging) {
                     if (controller.pixelsPerMs > 0f) clip.startTimeMs =
                         (originStart + (dx / controller.pixelsPerMs).toLong()).coerceAtLeast(0L)
-                    clip.trackIndex = (originTrack + (dy / rowHeight).toInt()).coerceIn(0, 7)
-                    requestLayout(); invalidate()
+                    val nextTrack = (originTrack + (dy / rowHeight).toInt()).coerceIn(0, 7)
+                    if (clip.trackIndex != nextTrack) {
+                        clip.trackIndex = nextTrack
+                        if (clip.trackIndex != lastDrawnTrack) {
+                            lastDrawnTrack = clip.trackIndex
+                            requestLayout()
+                        }
+                    }
+                    invalidate()
                 }
                 return true
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 gestureHandler.removeCallbacks(longPressDrag)
-                if (dragging) onChanged()
+                if (dragging) {
+                    runCatching { onChanged() }
+                }
                 parent?.requestDisallowInterceptTouchEvent(false)
+                touched = null
+                dragging = false
                 performClick(); return true
             }
         }

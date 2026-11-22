@@ -421,8 +421,11 @@ class MainActivity : AppCompatActivity() {
     private val timelineFrameUpdater = object : Runnable {
         override fun run() {
             if (::timeLabel.isInitialized && player.isPlaying) updateTime()
-            if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.invalidate()
-            overlaySelectionOverlay?.invalidate()
+            if (::overlayVideoTracksContainer.isInitialized) {
+                overlayVideoTracksContainer.postInvalidateOnAnimation()
+                overlayVideoTracksScroll.postInvalidateOnAnimation()
+            }
+            overlaySelectionOverlay?.postInvalidateOnAnimation()
             if (isTimelineScrubbing) syncOverlayVideoPreview()
             handler.postDelayed(this, 33L)
         }
@@ -2409,7 +2412,10 @@ class MainActivity : AppCompatActivity() {
                 if (deltaX == 0f) return
                 timelineController.offsetPx -= deltaX
                 timelineController.clampOffset()
-                if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.postInvalidateOnAnimation()
+                if (::overlayVideoTracksContainer.isInitialized) {
+                    overlayVideoTracksContainer.postInvalidateOnAnimation()
+                    overlayVideoTracksScroll.postInvalidateOnAnimation()
+                }
                 val position = timelineController.xToTime(width / 2f)
                 timelineController.positionMs = position
                 pendingScrubPositionMs = position
@@ -2427,7 +2433,10 @@ class MainActivity : AppCompatActivity() {
                 audioTrackViews.values.forEach { it.postInvalidateOnAnimation() }
                 invalidateTextTrackViews()
                 invalidateEffectTrackViews()
-                if (::overlayVideoTracksContainer.isInitialized) overlayVideoTracksContainer.postInvalidateOnAnimation()
+                if (::overlayVideoTracksContainer.isInitialized) {
+                    overlayVideoTracksContainer.postInvalidateOnAnimation()
+                    overlayVideoTracksScroll.postInvalidateOnAnimation()
+                }
                 overlaySelectionOverlay?.postInvalidateOnAnimation()
             }
 
@@ -4958,6 +4967,19 @@ class MainActivity : AppCompatActivity() {
                         lastOverlayAppliedSpeed = masterSpeed
                     }
                 }
+            } else if (isTimelineScrubbing) {
+                // Saat scrub, jangan membanjiri decoder dengan seek tiap frame.
+                // Batasi koreksi maksimal sekitar 10 kali/detik.
+                if (now - lastOverlayHardSeekAtMs >= 100L) {
+                    val drift = kotlin.math.abs(overlayPlayer.currentPosition - localPosition)
+                    if (drift > 55L) {
+                        overlayPlayer.seekTo(localPosition)
+                        lastOverlayHardSeekAtMs = now
+                    }
+                }
+                if (kotlin.math.abs(overlayPlayer.playbackParameters.speed - masterSpeed) > 0.005f) {
+                    overlayPlayer.setPlaybackSpeed(masterSpeed)
+                }
             } else if (!player.isPlaying) {
                 val drift = kotlin.math.abs(overlayPlayer.currentPosition - localPosition)
                 if (drift > 45L) overlayPlayer.seekTo(localPosition)
@@ -5175,6 +5197,14 @@ class MainActivity : AppCompatActivity() {
         Toast.makeText(this, "Overlay video ditambahkan ke timeline.", Toast.LENGTH_SHORT).show()
     }
 
+    private fun viewInvalidateOverlayTracks() {
+        if (!::overlayVideoTracksContainer.isInitialized) return
+        overlayVideoTracksContainer.requestLayout()
+        overlayVideoTracksContainer.postInvalidateOnAnimation()
+        if (::overlayVideoTracksScroll.isInitialized) overlayVideoTracksScroll.postInvalidateOnAnimation()
+        overlaySelectionOverlay?.postInvalidateOnAnimation()
+    }
+
     private fun refreshOverlayVideoTracks() {
         if (!::overlayVideoTracksContainer.isInitialized) return
         overlayVideoTracksContainer.removeAllViews()
@@ -5189,7 +5219,13 @@ class MainActivity : AppCompatActivity() {
                 overlaySelectionOverlay?.invalidate()
             },
             onEditStart = { pushUndoSnapshot() },
-            onChanged = { refreshOverlayVideoTracks(); saveCurrentProject() }
+            // Jangan membongkar/membuat ulang View ketika gesture baru selesai.
+            // Mengganti target touch saat ACTION_UP dapat memutus gesture Android
+            // dan memicu crash pada beberapa perangkat.
+            onChanged = {
+                viewInvalidateOverlayTracks()
+                saveCurrentProject()
+            }
         )
         view.select(selectedOverlayVideoClipId)
         overlayVideoTracksContainer.addView(view, LinearLayout.LayoutParams(-1, -2))
