@@ -63,7 +63,6 @@ import org.json.JSONObject
 import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executors
-import java.security.MessageDigest
 import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
@@ -359,35 +358,6 @@ class MainActivity : AppCompatActivity() {
     private var previewProxyFps = 30
     private var dreamyIntensity = 0f
     private val dreamyPreviewState = DreamyPreviewState()
-    private val motionBlurPreviewState = MotionBlurPreviewState()
-
-    // Motion Blur prerender cache: render once, reuse in preview and final export.
-    private var motionBlurRenderTransformer: Transformer? = null
-    private var motionBlurRenderDialog: androidx.appcompat.app.AlertDialog? = null
-    private var motionBlurRenderProgress: ProgressBar? = null
-    private var motionBlurRenderText: TextView? = null
-    private var motionBlurFloatingProgress: View? = null
-    private val motionBlurRenderHolder = ProgressHolder()
-    private var motionBlurRenderGeneration = 0
-    private var pendingMotionBlurClipId: String? = null
-    private var motionBlurModelPreparing = false
-    private var aiDiagnosticPreviewActive = false
-    private var aiDiagnosticPreviewClipId: String? = null
-    private val motionBlurRenderRunnable = object : Runnable {
-        override fun run() {
-            val active = motionBlurRenderTransformer ?: return
-            val state = active.getProgress(motionBlurRenderHolder)
-            if (state == Transformer.PROGRESS_STATE_AVAILABLE) {
-                motionBlurRenderProgress?.progress = motionBlurRenderHolder.progress
-                motionBlurRenderText?.text = "Merender Motion Blur • ${motionBlurRenderHolder.progress}%"
-                (motionBlurFloatingProgress?.tag as? Pair<*, *>)?.let { pair ->
-                    (pair.first as? TextView)?.text = "Motion Blur • ${motionBlurRenderHolder.progress}%"
-                    (pair.second as? ProgressBar)?.progress = motionBlurRenderHolder.progress
-                }
-            }
-            if (motionBlurRenderTransformer != null) handler.postDelayed(this, 350L)
-        }
-    }
     private var liveColorGradingPreview: ColorGrading? = null
     private var dreamyPreviewOverlay: View? = null
     private var proxyCompletedCount = 0
@@ -448,14 +418,6 @@ class MainActivity : AppCompatActivity() {
                 if (!player.isPlaying) updateTime()
                 syncVideoClipProperties()
                 syncAudioPlayback()
-                val motionPosition = currentTimelinePosition()
-                val motionClip = videoClipManager.clips.firstOrNull {
-                    motionPosition >= it.timelineStartMs && motionPosition < it.timelineEndMs
-                }
-                motionBlurPreviewState.blur = motionClip?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
-                motionBlurPreviewState.blend = motionClip?.motionBlurBlend?.coerceIn(0f, 1f) ?: 0f
-                motionBlurPreviewState.direction = motionClip?.motionBlurDirection?.coerceIn(0, 2) ?: 0
-                motionBlurPreviewState.times = motionClip?.motionBlurTimes?.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 } ?: 4
                 updateTextPreview(force = false)
             }
             handler.postDelayed(this, 100L)
@@ -2978,22 +2940,17 @@ class MainActivity : AppCompatActivity() {
      * Klip yang memakai proxy terpisah tetap berdiri sendiri karena setiap proxy
      * merupakan file fisik yang berbeda. Properti speed/volume/opacity harus sama.
      */
-    private fun buildEditedVideoItems(includeAiDiagnostic: Boolean = false): List<MediaItem> {
+    private fun buildEditedVideoItems(): List<MediaItem> {
         val groups = mutableListOf<PlaybackGroup>()
 
         for (clip in videoClipManager.clips) {
-            val diagnosticFile = if (includeAiDiagnostic && aiDiagnosticPreviewActive && aiDiagnosticPreviewClipId == clip.id)
-                motionBlurDiagnosticCacheFile(clip) else null
-            val cachedMotionBlur = diagnosticFile?.takeIf { it.exists() && it.length() >= 1024L }
-                ?: motionBlurCacheFile(clip).takeIf { clip.motionBlurIntensity > 0.001f && it.exists() && it.length() >= 1024L }
-            val cachedProxy = if (cachedMotionBlur == null && previewQualityShortSide > 0) {
+            val cachedProxy = if (previewQualityShortSide > 0) {
                 previewProxyFile(clip, previewQualityShortSide, previewProxyFps)
                     .takeIf { it.exists() && it.length() >= 1024L }
             } else null
 
-            val cachedMedia = cachedMotionBlur ?: cachedProxy
-            val mediaUri = cachedMedia?.let { Uri.fromFile(it).toString() } ?: clip.sourceUri
-            val usesProxy = cachedMedia != null
+            val mediaUri = cachedProxy?.let { Uri.fromFile(it).toString() } ?: clip.sourceUri
+            val usesProxy = cachedProxy != null
             val mediaStart = if (usesProxy) 0L else clip.sourceStartMs
             val mediaEnd = if (usesProxy) clip.durationMs else clip.sourceEndMs
             val previous = groups.lastOrNull()
@@ -3157,7 +3114,7 @@ class MainActivity : AppCompatActivity() {
         player.pause()
         player.playWhenReady = false
         recordPlaybackDiagnostic("PLAYLIST_REPLACE source=refreshEditedPreview generation=$generation wasPlaying=$wasPlaying state=${player.playbackState} position=${player.currentPosition}ms target=${safePosition}ms")
-        player.setMediaItems(buildEditedVideoItems(includeAiDiagnostic = true))
+        player.setMediaItems(buildEditedVideoItems())
 
         timelineController.setDuration(videoClipManager.durationMs)
         timelineController.setPosition(safePosition)
@@ -3290,7 +3247,6 @@ class MainActivity : AppCompatActivity() {
                 "▧" to "Overlay",
                 "◇" to "Stabilkan",
                 "▤" to "Duplikat",
-                "〰" to "Motion Blur",
                 "◐" to "Opasitas",
                 "♪" to "Irama"
             )
@@ -3381,10 +3337,6 @@ class MainActivity : AppCompatActivity() {
 
                     "Sesuaikan" -> {
                         videoClipManager.find(selectedVideoClipId)?.let { showVideoColorGrading(it) }
-                    }
-
-                    "Motion Blur" -> {
-                        videoClipManager.find(selectedVideoClipId)?.let { showVideoMotionBlurDialog(it) }
                     }
 
                     "Atur" -> {
@@ -3681,15 +3633,6 @@ class MainActivity : AppCompatActivity() {
         } ?: videoClipManager.clips.lastOrNull()?.takeIf { position >= it.timelineEndMs }
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
-        val activeMotionBlurCached = activeVideo?.let {
-            it.motionBlurIntensity > 0.001f &&
-                motionBlurCacheFile(it).let { file -> file.exists() && file.length() >= 1024L }
-        } == true
-        motionBlurPreviewState.blur = if (activeMotionBlurCached) 0f
-            else activeVideo?.motionBlurIntensity?.coerceIn(0f, 1f) ?: 0f
-        motionBlurPreviewState.blend = activeVideo?.motionBlurBlend?.coerceIn(0f, 1f) ?: 0f
-        motionBlurPreviewState.direction = activeVideo?.motionBlurDirection?.coerceIn(0, 2) ?: 0
-        motionBlurPreviewState.times = activeVideo?.motionBlurTimes?.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 } ?: 4
 
         // Transisi melewati satu frame hitam: klip kiri zoom + fade-out,
         // klip kanan fade-in dari hitam. Zoom dibuat lebih tegas hingga 2x.
@@ -3751,35 +3694,15 @@ class MainActivity : AppCompatActivity() {
         val transitionActive = dreamyPreviewState.pullInFade > 0.001f ||
             dreamyPreviewState.pullInBlur > 0.001f ||
             dreamyPreviewState.pullInZoom > 1.001f
-        val motionBlurActive = motionBlurPreviewState.blur > 0.001f &&
-            motionBlurPreviewState.blend > 0.001f
-
         val visualShaderActive = gradeActive || effectActive || transitionActive
-        val signature = "visual=" + visualShaderActive + ";motion=" + motionBlurActive
+        val signature = "visual=" + visualShaderActive
         if (signature == previewVisualPipelineSignature) return
-
-        val effects = ArrayList<androidx.media3.common.Effect>(2)
-        if (visualShaderActive) {
-            effects.add(
-                DreamyGlEffect(
-                    intensity = 0f,
-                    glowSpread = 0.35f,
-                    warmth = 0.5f,
-                    previewState = dreamyPreviewState
-                )
-            )
-        }
-        if (motionBlurActive) {
-            effects.add(MotionBlurGlEffect(blur = 0f, previewState = motionBlurPreviewState))
-        }
-
+        val effects = ArrayList<androidx.media3.common.Effect>(1)
+        if (visualShaderActive) effects.add(DreamyGlEffect(intensity = 0f, glowSpread = 0.35f, warmth = 0.5f, previewState = dreamyPreviewState))
         player.setVideoEffects(effects)
         previewVisualPipelineSignature = signature
-        recordPlaybackDiagnostic(
-            "VISUAL_PIPELINE signature=" + signature + " effects=" + effects.size +
-                " grade=" + gradeActive + " effect=" + effectActive +
-                " transition=" + transitionActive + " motionBlur=" + motionBlurActive
-        )
+        recordPlaybackDiagnostic("VISUAL_PIPELINE signature=" + signature + " effects=" + effects.size +
+            " grade=" + gradeActive + " effect=" + effectActive + " transition=" + transitionActive)
     }
     private fun buildDreamyColorMatrix(amount: Float): RgbMatrix {
         val strength = amount.coerceIn(0f, 1f)
@@ -6688,524 +6611,6 @@ class MainActivity : AppCompatActivity() {
 
 
 
-    private fun showMotionBlurFloatingProgress() {
-        hideMotionBlurFloatingProgress()
-        val container = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(14), dp(9), dp(14), dp(10))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(Color.rgb(35, 38, 43))
-                cornerRadius = dp(12).toFloat()
-                setStroke(dp(1), Color.rgb(85, 90, 98))
-            }
-            elevation = dp(10).toFloat()
-        }
-        val title = TextView(this).apply {
-            text = "Motion Blur • 0%"
-            setTextColor(Color.WHITE)
-            textSize = 12f
-        }
-        val bar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
-        }
-        container.addView(title)
-        container.addView(bar, LinearLayout.LayoutParams(-1, dp(5)).apply { topMargin = dp(7) })
-        container.tag = Pair(title, bar)
-        val params = android.widget.FrameLayout.LayoutParams(dp(250), android.view.ViewGroup.LayoutParams.WRAP_CONTENT).apply {
-            gravity = android.view.Gravity.TOP or android.view.Gravity.CENTER_HORIZONTAL
-            topMargin = dp(42)
-        }
-        val decor = window.decorView as? android.widget.FrameLayout ?: return
-        decor.addView(container, params)
-        motionBlurFloatingProgress = container
-    }
-
-    private fun hideMotionBlurFloatingProgress() {
-        val view = motionBlurFloatingProgress ?: return
-        (view.parent as? android.view.ViewGroup)?.removeView(view)
-        motionBlurFloatingProgress = null
-    }
-
-    private fun motionBlurDiagnosticCacheFile(clip: VideoClip): File {
-        val identity = listOf("motion_blur_neuflow_ai_diagnostic_v1", clip.id, clip.sourceUri,
-            clip.sourceStartMs, clip.durationMs).joinToString("|")
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(identity.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-        val directory = File(filesDir, "motion_blur_cache").apply { mkdirs() }
-        return File(directory, "ai_flow_$digest.mp4")
-    }
-
-    private fun motionBlurCacheFile(clip: VideoClip): File {
-        val identity = listOf(
-            "motion_blur_rife_v1", clip.id, clip.sourceUri, clip.sourceStartMs, clip.durationMs,
-            clip.motionBlurIntensity, clip.motionBlurBlend,
-            clip.motionBlurDirection, clip.motionBlurTimes
-        ).joinToString("|")
-        val digest = MessageDigest.getInstance("SHA-256")
-            .digest(identity.toByteArray(Charsets.UTF_8))
-            .joinToString("") { "%02x".format(it) }
-        val directory = File(filesDir, "motion_blur_cache").apply { mkdirs() }
-        return File(directory, "$digest.mp4")
-    }
-
-    private fun startMotionBlurPreRender(clip: VideoClip, diagnostic: Boolean = false) {
-        if (motionBlurModelPreparing) {
-            showMessage("Model AI Motion Blur sedang disiapkan.")
-            return
-        }
-        if (motionBlurRenderTransformer != null) {
-            showMessage("Motion Blur sedang diproses.")
-            return
-        }
-        val target = if (diagnostic) motionBlurDiagnosticCacheFile(clip) else motionBlurCacheFile(clip)
-        if (target.exists() && target.length() >= 1024L) {
-            refreshEditedPreview(currentTimelinePosition())
-            if (diagnostic) { aiDiagnosticPreviewActive = true; aiDiagnosticPreviewClipId = clip.id; refreshEditedPreview(currentTimelinePosition()); showMessage("Visualisasi AI sudah tersedia.") } else showMessage("Hasil Motion Blur sudah tersedia.")
-            return
-        }
-
-        val generation = ++motionBlurRenderGeneration
-        pendingMotionBlurClipId = clip.id
-        val temp = File(target.parentFile, "${target.nameWithoutExtension}_tmp_$generation.mp4")
-        temp.delete()
-
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(8))
-        }
-        motionBlurRenderText = TextView(this).apply {
-            text = if (diagnostic) "Menyiapkan visualisasi AI..." else "Menyiapkan Motion Blur..."
-            setTextColor(Color.WHITE)
-            textSize = 13f
-        }
-        motionBlurRenderProgress = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
-            max = 100
-            progress = 0
-        }
-        content.addView(motionBlurRenderText)
-        content.addView(motionBlurRenderProgress, LinearLayout.LayoutParams(-1, dp(8)).apply {
-            topMargin = dp(12)
-        })
-        motionBlurRenderDialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle(if (diagnostic) "Menguji AI Motion Flow" else "Memproses Motion Blur")
-            .setMessage(if (diagnostic) "AI menganalisis gerakan setiap frame. Hasil flow akan ditampilkan di preview." else "Pemrosesan berjalan di background. Preview akan diperbarui setelah selesai.")
-            .setView(content)
-            .setNegativeButton("JALAN DI BACKGROUND", null)
-            .setCancelable(false)
-            .create()
-        motionBlurRenderDialog?.show()
-        showMotionBlurFloatingProgress()
-
-        try {
-            val item = MediaItem.Builder()
-                .setUri(Uri.parse(clip.sourceUri))
-                .setClippingConfiguration(
-                    MediaItem.ClippingConfiguration.Builder()
-                        .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
-                        .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(clip.sourceStartMs + 1L))
-                        .build()
-                )
-                .build()
-            val edited = EditedMediaItem.Builder(item)
-                .setRemoveAudio(true)
-                .setEffects(
-                    Effects(
-                        emptyList(),
-                        listOf(
-                            if (diagnostic) {
-                                AiMotionBlurGlEffect(
-                                    blur = clip.motionBlurIntensity,
-                                    blend = clip.motionBlurBlend,
-                                    direction = clip.motionBlurDirection,
-                                    times = clip.motionBlurTimes,
-                                    modelFile = NeuFlowV2Model.modelFile(this),
-                                    diagnostic = true
-                                )
-                            } else {
-                                RifeMotionBlurGlEffect(
-                                    context = this,
-                                    blur = clip.motionBlurIntensity,
-                                    blend = clip.motionBlurBlend,
-                                    direction = clip.motionBlurDirection,
-                                    times = clip.motionBlurTimes
-                                )
-                            }
-                        )
-                    )
-                )
-                .build()
-            val composition = Composition.Builder(
-                listOf(EditedMediaItemSequence.Builder(listOf(edited)).build())
-            ).build()
-            val listener = object : Transformer.Listener {
-                override fun onCompleted(composition: Composition, exportResult: ExportResult) {
-                    if (generation != motionBlurRenderGeneration) {
-                        temp.delete()
-                        return
-                    }
-                    motionBlurRenderTransformer = null
-                    handler.removeCallbacks(motionBlurRenderRunnable)
-                    try {
-                        target.delete()
-                        if (!temp.renameTo(target)) {
-                            temp.copyTo(target, overwrite = true)
-                            temp.delete()
-                        }
-                    } catch (_: Exception) {
-                        target.delete()
-                    }
-                    val success = target.exists() && target.length() >= 1024L
-                    motionBlurRenderDialog?.dismiss()
-                    hideMotionBlurFloatingProgress()
-                    motionBlurRenderDialog = null
-                    motionBlurRenderProgress = null
-                    motionBlurRenderText = null
-                    pendingMotionBlurClipId = null
-                    if (success) {
-                        if (diagnostic) { aiDiagnosticPreviewActive = true; aiDiagnosticPreviewClipId = clip.id } else { aiDiagnosticPreviewActive = false; aiDiagnosticPreviewClipId = null }
-                        refreshEditedPreview(currentTimelinePosition())
-                        showMessage(if (diagnostic) "Visualisasi AI siap. Warna menunjukkan arah dan kekuatan gerakan." else "Motion Blur selesai. Preview diperbarui.")
-                    } else {
-                        temp.delete()
-                        refreshEditedPreview(currentTimelinePosition())
-                        showMessage("Motion Blur gagal dibuat. Preview memakai pemrosesan langsung.")
-                    }
-                }
-
-                override fun onError(
-                    composition: Composition,
-                    exportResult: ExportResult,
-                    exportException: ExportException
-                ) {
-                    if (generation != motionBlurRenderGeneration) return
-                    motionBlurRenderTransformer = null
-                    handler.removeCallbacks(motionBlurRenderRunnable)
-                    temp.delete()
-                    motionBlurRenderDialog?.dismiss()
-                    hideMotionBlurFloatingProgress()
-                    motionBlurRenderDialog = null
-                    motionBlurRenderProgress = null
-                    motionBlurRenderText = null
-                    pendingMotionBlurClipId = null
-                    if (diagnostic) { aiDiagnosticPreviewActive = false; aiDiagnosticPreviewClipId = null }
-                    refreshEditedPreview(currentTimelinePosition())
-                    showMessage("Pemrosesan ${if (diagnostic) "diagnostik AI" else "Motion Blur"} gagal: ${exportException.message}")
-                }
-            }
-            motionBlurRenderHolder.progress = 0
-            motionBlurRenderTransformer = Transformer.Builder(this).addListener(listener).build()
-            motionBlurRenderTransformer?.start(composition, temp.absolutePath)
-            handler.post(motionBlurRenderRunnable)
-        } catch (error: Exception) {
-            motionBlurRenderTransformer = null
-            handler.removeCallbacks(motionBlurRenderRunnable)
-            temp.delete()
-            motionBlurRenderDialog?.dismiss()
-            hideMotionBlurFloatingProgress()
-            motionBlurRenderDialog = null
-            motionBlurRenderProgress = null
-            motionBlurRenderText = null
-            pendingMotionBlurClipId = null
-            showMessage("Tidak dapat memproses Motion Blur: ${error.message}")
-        }
-    }
-
-    private fun showVideoMotionBlurDialog(clip: VideoClip) {
-        val originalBlur = clip.motionBlurIntensity.coerceIn(0f, 1f)
-        val originalBlend = clip.motionBlurBlend.coerceIn(0f, 1f)
-        val originalDirection = clip.motionBlurDirection.coerceIn(0, 2)
-        val originalTimes = clip.motionBlurTimes.let { if (it == 1 || it == 2 || it == 4 || it == 6) it else 4 }
-
-        val content = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(8))
-            setBackgroundColor(panel)
-        }
-        fun label(value: String) = TextView(this).apply {
-            text = value
-            setTextColor(Color.WHITE)
-            textSize = 13f
-            setPadding(0, dp(7), 0, dp(2))
-        }
-        val blurLabel = label("Kabur: ${(originalBlur * 100f).toInt()}%")
-        val blurSlider = SeekBar(this).apply {
-            max = 100
-            progress = (originalBlur * 100f).toInt()
-        }
-        val blendLabel = label("Campuran: ${(originalBlend * 100f).toInt()}%")
-        val blendSlider = SeekBar(this).apply {
-            max = 100
-            progress = (originalBlend * 100f).toInt()
-        }
-        content.addView(label("KABUR"))
-        content.addView(blurLabel)
-        content.addView(blurSlider, LinearLayout.LayoutParams(-1, dp(38)))
-        content.addView(label("CAMPURAN"))
-        content.addView(blendLabel)
-        content.addView(blendSlider, LinearLayout.LayoutParams(-1, dp(38)))
-
-        content.addView(label("ARAH"))
-        val directionGroup = android.widget.RadioGroup(this).apply {
-            orientation = android.widget.RadioGroup.HORIZONTAL
-        }
-        val directionButtons = listOf("Keduanya", "Kebelakang", "Teruskan").mapIndexed { index, title ->
-            android.widget.RadioButton(this).apply {
-                id = View.generateViewId()
-                text = title
-                textSize = 11f
-                setTextColor(Color.WHITE)
-                buttonTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
-                isChecked = index == originalDirection
-                directionGroup.addView(this, android.widget.RadioGroup.LayoutParams(0, dp(42), 1f))
-            }
-        }
-        content.addView(directionGroup)
-
-        content.addView(label("KALI"))
-        val timesGroup = android.widget.RadioGroup(this).apply {
-            orientation = android.widget.RadioGroup.HORIZONTAL
-        }
-        val timeOptions = listOf(1, 2, 4, 6)
-        timeOptions.forEach { count ->
-            val button = android.widget.RadioButton(this).apply {
-                id = View.generateViewId()
-                text = when (count) {
-                    1 -> "Sekali"
-                    2 -> "Dua kali"
-                    else -> "${count}x"
-                }
-                textSize = 11f
-                setTextColor(Color.WHITE)
-                buttonTintList = android.content.res.ColorStateList.valueOf(Color.WHITE)
-                isChecked = count == originalTimes
-            }
-            timesGroup.addView(button, android.widget.RadioGroup.LayoutParams(0, dp(42), 1f))
-        }
-        content.addView(timesGroup)
-
-        val rifeTestStatus = TextView(this).apply {
-            text = "Mesin RIFE belum diuji."
-            setTextColor(Color.LTGRAY)
-            textSize = 11f
-            setPadding(0, dp(8), 0, dp(2))
-        }
-        val rifeTestButton = Button(this).apply {
-            text = "UJI MESIN RIFE"
-            setTextColor(Color.BLACK)
-            backgroundTintList = android.content.res.ColorStateList.valueOf(green)
-        }
-        content.addView(rifeTestButton, LinearLayout.LayoutParams(-1, dp(44)))
-        content.addView(rifeTestStatus)
-        rifeTestButton.setOnClickListener { runRifeDiagnosticTest(clip, rifeTestButton, rifeTestStatus) }
-
-        fun selectedTimes(): Int {
-            val index = (0 until timesGroup.childCount).firstOrNull { i ->
-                (timesGroup.getChildAt(i) as? android.widget.RadioButton)?.isChecked == true
-            } ?: 2
-            return timeOptions.getOrElse(index) { 4 }
-        }
-        fun updatePreview() {
-            motionBlurPreviewState.blur = blurSlider.progress / 100f
-            motionBlurPreviewState.blend = blendSlider.progress / 100f
-            motionBlurPreviewState.direction = directionButtons.indexOfFirst {
-                it.id == directionGroup.checkedRadioButtonId
-            }.coerceAtLeast(0)
-            motionBlurPreviewState.times = selectedTimes()
-        }
-        blurSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                blurLabel.text = "Kabur: ${progress}%"
-                updatePreview()
-            }
-            override fun onStartTrackingTouch(bar: SeekBar?) {}
-            override fun onStopTrackingTouch(bar: SeekBar?) {}
-        })
-        blendSlider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                blendLabel.text = "Campuran: ${progress}%"
-                updatePreview()
-            }
-            override fun onStartTrackingTouch(bar: SeekBar?) {}
-            override fun onStopTrackingTouch(bar: SeekBar?) {}
-        })
-        directionGroup.setOnCheckedChangeListener { _, _ -> updatePreview() }
-        timesGroup.setOnCheckedChangeListener { _, _ -> updatePreview() }
-        updatePreview()
-
-        val dialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Motion Blur")
-            .setView(content)
-            .setNegativeButton("BATAL", null)
-            .setNeutralButton("UJI AI", null)
-            .setPositiveButton("TERAPKAN", null)
-            .create()
-        dialog.setOnShowListener {
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_NEUTRAL).apply {
-                setTextColor(green)
-                setOnClickListener {
-                    updatePreview()
-                    val blur = blurSlider.progress / 100f
-                    val blend = blendSlider.progress / 100f
-                    val direction = directionButtons.indexOfFirst {
-                        it.id == directionGroup.checkedRadioButtonId
-                    }.coerceAtLeast(0)
-                    val times = selectedTimes()
-                    clip.motionBlurIntensity = blur
-                    clip.motionBlurBlend = blend
-                    clip.motionBlurDirection = direction
-                    clip.motionBlurTimes = times
-                    aiDiagnosticPreviewActive = false
-                    aiDiagnosticPreviewClipId = null
-                    dialog.dismiss()
-                    startMotionBlurPreRender(clip, diagnostic = true)
-                }
-            }
-            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
-                updatePreview()
-                val blur = blurSlider.progress / 100f
-                val blend = blendSlider.progress / 100f
-                val direction = directionButtons.indexOfFirst {
-                    it.id == directionGroup.checkedRadioButtonId
-                }.coerceAtLeast(0)
-                val times = selectedTimes()
-                val changed = kotlin.math.abs(clip.motionBlurIntensity - blur) > 0.001f ||
-                    kotlin.math.abs(clip.motionBlurBlend - blend) > 0.001f ||
-                    clip.motionBlurDirection != direction || clip.motionBlurTimes != times
-                if (changed) {
-                    pushUndoSnapshot()
-                    clip.motionBlurIntensity = blur
-                    clip.motionBlurBlend = blend
-                    clip.motionBlurDirection = direction
-                    clip.motionBlurTimes = times
-                    saveCurrentProject()
-                }
-                aiDiagnosticPreviewActive = false
-                aiDiagnosticPreviewClipId = null
-                if (blur > 0.001f && blend > 0.001f) {
-                    startMotionBlurPreRender(clip)
-                } else {
-                    refreshEditedPreview(currentTimelinePosition())
-                }
-                dialog.dismiss()
-            }
-        }
-        dialog.setOnDismissListener {
-            updateDreamyPreviewOverlay()
-            if (!player.isPlaying && player.playbackState == Player.STATE_READY) {
-                val position = currentTimelinePosition()
-                handler.post { player.seekTo(position) }
-            }
-        }
-        dialog.show()
-    }
-
-    private fun runRifeDiagnosticTest(clip: VideoClip, button: Button, status: TextView) {
-        if (!button.isEnabled) return
-        button.isEnabled = false
-        status.text = "Menyiapkan model RIFE v4.6..."
-        val testDir = File(cacheDir, "rife_diagnostic").apply { mkdirs() }
-        val inputA = File(testDir, "input_a.jpg")
-        val inputB = File(testDir, "input_b.jpg")
-        val output = File(testDir, "interpolated.jpg")
-        Thread {
-            var resultText = ""
-            var success = false
-            var retriever: MediaMetadataRetriever? = null
-            try {
-                val modelDir = RifeModelInstaller.install(this)
-                runOnUiThread { status.text = "Model siap. Membaca frame sumber..." }
-                retriever = MediaMetadataRetriever()
-                retriever.setDataSource(this, Uri.parse(clip.sourceUri))
-                val offset = (clip.durationMs / 3L).coerceIn(40L, 500L)
-                val firstMs = (clip.sourceStartMs + offset).coerceAtLeast(0L)
-                val secondMs = (firstMs + 100L).coerceAtMost(
-                    (clip.sourceStartMs + clip.durationMs - 1L).coerceAtLeast(firstMs + 1L)
-                )
-                fun saveFrame(timeMs: Long, target: File) {
-                    val original = retriever?.getFrameAtTime(
-                        timeMs * 1000L,
-                        MediaMetadataRetriever.OPTION_CLOSEST
-                    ) ?: throw IllegalStateException("Frame video tidak bisa dibaca.")
-                    val scale = min(1f, 640f / max(original.width, original.height).toFloat())
-                    val resized = if (scale < 1f) Bitmap.createScaledBitmap(
-                        original,
-                        (original.width * scale).toInt().coerceAtLeast(1),
-                        (original.height * scale).toInt().coerceAtLeast(1),
-                        true
-                    ) else original
-                    target.outputStream().use { stream ->
-                        if (!resized.compress(Bitmap.CompressFormat.JPEG, 95, stream)) {
-                            throw IllegalStateException("Gagal menyimpan frame uji.")
-                        }
-                    }
-                    if (resized !== original) resized.recycle()
-                    original.recycle()
-                }
-                saveFrame(firstMs, inputA)
-                saveFrame(secondMs, inputB)
-                retriever.release()
-                retriever = null
-                runOnUiThread { status.text = "Memeriksa GPU Vulkan dan memuat RIFE..." }
-                val gpuInfo = try { RifeNative.gpuInfo() } catch (e: Throwable) {
-                    "Info GPU gagal: " + (e.message ?: e.javaClass.simpleName)
-                }
-                val modes = listOf(0 to "GPU Vulkan normal", 1 to "GPU Vulkan aman",
-                    2 to "CPU aman FP32", 3 to "CPU cepat FP16")
-                val attempts = mutableListOf<String>()
-                for ((mode, label) in modes) {
-                    runOnUiThread { status.text = "Menguji " + label + "..." }
-                    output.delete()
-                    val started = SystemClock.elapsedRealtime()
-                    val loaded = try { RifeNative.initModel(modelDir.absolutePath, mode) } catch (e: Throwable) {
-                        attempts += label + ": gagal memuat (" + (e.message ?: e.javaClass.simpleName) + ")"
-                        false
-                    }
-                    if (!loaded) {
-                        if (attempts.none { it.startsWith(label + ":") }) attempts += label + ": model gagal dimuat"
-                        continue
-                    }
-                    val inferred = try {
-                        RifeNative.interpolate(inputA.absolutePath, inputB.absolutePath, 0.5f, output.absolutePath)
-                    } catch (e: Throwable) {
-                        attempts += label + ": inferensi error (" + (e.message ?: e.javaClass.simpleName) + ")"
-                        false
-                    }
-                    val elapsed = SystemClock.elapsedRealtime() - started
-                    if (inferred && output.isFile && output.length() > 1024L) {
-                        success = true
-                        attempts += label + ": BERHASIL, " + elapsed + "ms"
-                        attempts += "Output: " + (output.length() / 1024L) + " KB"
-                        attempts += "Validasi: " + RifeNative.lastInfo()
-                        break
-                    } else {
-                        attempts += label + ": inferensi belum menghasilkan gambar valid (" + elapsed + "ms)"
-                    }
-                    try { RifeNative.release() } catch (_: Throwable) {}
-                }
-                resultText = (if (success) "RIFE AKTIF" else "RIFE BELUM BERHASIL") +
-                    "\n\nGPU: " + gpuInfo + "\n\n" + attempts.joinToString("\n") +
-                    "\nFrame AI valid: " + RifeNative.goodCount() +
-                    ", fallback: " + RifeNative.badCount()
-            } catch (e: Throwable) {
-                resultText = "Uji RIFE gagal: " + (e.message ?: e.javaClass.simpleName)
-            } finally {
-                try { retriever?.release() } catch (_: Throwable) {}
-                try { RifeNative.release() } catch (_: Throwable) {}
-                runOnUiThread {
-                    button.isEnabled = true
-                    status.text = if (success) "RIFE berhasil menjalankan interpolasi." else "Pengujian RIFE belum berhasil."
-                    androidx.appcompat.app.AlertDialog.Builder(this)
-                        .setTitle("Hasil Uji RIFE")
-                        .setMessage(resultText)
-                        .setPositiveButton("TUTUP", null)
-                        .show()
-                }
-            }
-        }.start()
-    }
-
     private fun showVideoClipOpacity(clip: VideoClip) {
         // Tampilkan klip yang sedang diatur agar perubahan langsung terlihat di preview.
         seekTimelinePosition(clip.timelineStartMs)
@@ -7895,11 +7300,9 @@ class MainActivity : AppCompatActivity() {
 
         val editedItems = try {
             videoClipManager.clips.map { clip ->
-                val cachedMotionBlur = motionBlurCacheFile(clip)
-                    .takeIf { clip.motionBlurIntensity > 0.001f && it.exists() && it.length() >= 1024L }
-                val exportSourceUri = cachedMotionBlur?.let { Uri.fromFile(it) } ?: Uri.parse(clip.sourceUri)
-                val exportSourceStart = if (cachedMotionBlur != null) 0L else clip.sourceStartMs
-                val exportSourceEnd = if (cachedMotionBlur != null) clip.durationMs else clip.sourceStartMs + clip.durationMs
+                val exportSourceUri = Uri.parse(clip.sourceUri)
+                val exportSourceStart = clip.sourceStartMs
+                val exportSourceEnd = clip.sourceStartMs + clip.durationMs
                 val mediaItem = MediaItem.Builder()
                     .setUri(exportSourceUri)
                     .setClippingConfiguration(
@@ -8015,11 +7418,6 @@ class MainActivity : AppCompatActivity() {
                                 }
 
                                 if (dreamyIntensity > 0.001f) add(buildDreamyColorMatrix(dreamyIntensity))
-
-                                // Motion Blur diterapkan langsung pada frame clip, bukan layer/transisi.
-                                if (clip.motionBlurIntensity > 0.001f && cachedMotionBlur == null) {
-                                    add(MotionBlurGlEffect(blur = clip.motionBlurIntensity, blend = clip.motionBlurBlend, direction = clip.motionBlurDirection, times = clip.motionBlurTimes))
-                                }
 
                                 // Color grading per-klip diproses pada GPU, sama seperti preview.
                                 if (!clip.colorGrading.isDefault) {

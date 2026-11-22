@@ -116,11 +116,7 @@ data class VideoClip(
     var transformScale: Float = 1f,
     var transformX: Float = 0f,
     var transformY: Float = 0f,
-    var colorGrading: ColorGrading = ColorGrading(),
-    var motionBlurIntensity: Float = 0f,
-    var motionBlurBlend: Float = 0f,
-    var motionBlurDirection: Int = 0,
-    var motionBlurTimes: Int = 4
+    var colorGrading: ColorGrading = ColorGrading()
 ) {
     // Durasi pada timeline mengikuti kecepatan: 0.5x membuat klip 2 kali lebih panjang.
     val timelineDurationMs: Long
