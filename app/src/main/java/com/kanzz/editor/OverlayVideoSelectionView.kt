@@ -19,6 +19,7 @@ class OverlayVideoSelectionView(
     context: Context,
     private val clipProvider: () -> OverlayVideoClip?,
     private val previewVisible: (OverlayVideoClip) -> Boolean,
+    private val previewViewProvider: (OverlayVideoClip) -> View?,
     private val onGestureStart: () -> Unit,
     private val onTransformChanged: (OverlayVideoClip) -> Unit,
     private val onGestureEnd: () -> Unit
@@ -56,24 +57,33 @@ class OverlayVideoSelectionView(
 
     private data class G(val cx: Float, val cy: Float, val hw: Float, val hh: Float, val scale: Float, val rotation: Float)
     private fun geometry(c: OverlayVideoClip): G {
+        // Gunakan ukuran PlayerView overlay yang benar-benar tampil, bukan
+        // menghitung ulang rasio dari metadata video. Ini menjaga garis seleksi
+        // identik dengan bingkai overlay sebelum maupun sesudah crop.
+        val preview = previewViewProvider(c)
+        if (preview != null && preview.width > 0 && preview.height > 0) {
+            return G(
+                preview.left + preview.pivotX + preview.translationX,
+                preview.top + preview.pivotY + preview.translationY,
+                preview.width / 2f,
+                preview.height / 2f,
+                preview.scaleX.coerceIn(0.2f, 5f),
+                preview.rotation
+            )
+        }
+
+        // Fallback hanya saat PlayerView belum selesai di-layout.
         val vw = c.videoWidth.takeIf { it > 0 }?.toFloat() ?: 16f
         val vh = c.videoHeight.takeIf { it > 0 }?.toFloat() ?: 9f
-        // Setelah crop diterapkan, rasio konten yang terlihat berubah.
-        // Saat mode crop aktif, tetap gunakan rasio sumber agar handle crop
-        // bergerak pada batas asli; setelah diterapkan, bingkai seleksi mengikuti rasio hasil crop.
-        val visibleWidth = (1f - c.cropLeft - c.cropRight).coerceAtLeast(0.03f)
-        val visibleHeight = (1f - c.cropTop - c.cropBottom).coerceAtLeast(0.03f)
-        val aspect = if (cropMode) {
-            (vw / vh).coerceIn(0.1f, 10f)
-        } else {
-            ((vw * visibleWidth) / (vh * visibleHeight)).coerceIn(0.1f, 10f)
-        }
-        // Samakan batas bingkai dengan area video FIT yang benar-benar tampil di PlayerView.
+        val aspect = (vw / vh).coerceIn(0.1f, 10f)
         val maxW = width.toFloat().coerceAtLeast(1f)
         val maxH = height.toFloat().coerceAtLeast(1f)
         val w: Float; val h: Float
         if (aspect >= maxW / maxH) { w = maxW; h = w / aspect } else { h = maxH; w = h * aspect }
-        return G(width / 2f + c.transformX, height / 2f + c.transformY, w / 2f, h / 2f, c.transformScale.coerceIn(0.2f, 5f), c.rotationDegrees)
+        return G(
+            width / 2f + c.transformX, height / 2f + c.transformY,
+            w / 2f, h / 2f, c.transformScale.coerceIn(0.2f, 5f), c.rotationDegrees
+        )
     }
     private fun point(g: G, x: Float, y: Float): Pair<Float, Float> {
         val a = Math.toRadians(g.rotation.toDouble()); val sx = x * g.scale; val sy = y * g.scale
