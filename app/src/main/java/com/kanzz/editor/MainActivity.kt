@@ -1973,8 +1973,9 @@ class MainActivity : AppCompatActivity() {
             onGestureStart = { pushUndoSnapshot() },
             onTransformChanged = { clip ->
                 if (overlayCropModeEnabled) {
-                    // Selama crop, perbarui hanya garis/handle. Memasang ulang
-                    // Media3 Crop pada setiap MOVE membuat overlay membeku.
+                    // Perbarui crop langsung pada TextureView. Tidak ada setVideoEffects,
+                    // prepare(), seek(), atau restart decoder selama handle digeser.
+                    applyOverlayPreviewTransform(clip)
                     overlaySelectionOverlay?.postInvalidateOnAnimation()
                 } else {
                     applyOverlayPreviewTransform(clip)
@@ -5105,6 +5106,9 @@ class MainActivity : AppCompatActivity() {
         view.rotation = clip.rotationDegrees
         view.translationX = clip.transformX
         view.translationY = clip.transformY
+        // TextureView memotong area sumber secara visual tanpa mengubah decoder.
+        // Post dipakai agar ukuran surface sudah mengikuti layout crop yang baru.
+        view.post { applyOverlayPreviewCropTransform(clip, view) }
         overlaySelectionOverlay?.invalidate()
     }
 
@@ -5163,24 +5167,46 @@ class MainActivity : AppCompatActivity() {
         overlayPreviewSessions.clear()
     }
 
+    // Preview crop dilakukan pada TextureView, bukan lewat Media3 Effect.
+    // Dengan begitu perubahan koordinat crop tidak membangun ulang GL pipeline/decoder.
+    // Efek Crop Media3 tetap digunakan pada jalur export.
     private fun buildOverlayPreviewEffects(
         clip: OverlayVideoClip,
         chromaEffect: ChromaKeyGlEffect? = null
     ): List<androidx.media3.common.Effect> {
         val effects = mutableListOf<androidx.media3.common.Effect>()
-        if (clip.cropLeft > 0f || clip.cropTop > 0f || clip.cropRight > 0f || clip.cropBottom > 0f) {
-            val left = -1f + 2f * clip.cropLeft.coerceIn(0f, 0.97f)
-            val right = 1f - 2f * clip.cropRight.coerceIn(0f, 0.97f)
-            val bottom = -1f + 2f * clip.cropBottom.coerceIn(0f, 0.97f)
-            val top = 1f - 2f * clip.cropTop.coerceIn(0f, 0.97f)
-            if (left < right && bottom < top) effects.add(Crop(left, right, bottom, top))
-        }
         if (clip.chromaKeyEnabled) {
             effects.add(chromaEffect ?: ChromaKeyGlEffect(
                 clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
             ))
         }
         return effects
+    }
+
+    private fun applyOverlayPreviewCropTransform(clip: OverlayVideoClip, view: PlayerView) {
+        val texture = view.videoSurfaceView as? android.view.TextureView ?: return
+        val w = texture.width.toFloat()
+        val h = texture.height.toFloat()
+        if (w <= 0f || h <= 0f) return
+
+        val visibleWidth = (1f - clip.cropLeft - clip.cropRight).coerceIn(0.03f, 1f)
+        val visibleHeight = (1f - clip.cropTop - clip.cropBottom).coerceIn(0.03f, 1f)
+        val sx = 1f / visibleWidth
+        val sy = 1f / visibleHeight
+        val cx = w / 2f
+        val cy = h / 2f
+        val cropCenterOffsetX = (clip.cropLeft - clip.cropRight) * w / 2f
+        val cropCenterOffsetY = (clip.cropTop - clip.cropBottom) * h / 2f
+        val tx = cx - sx * (cx + cropCenterOffsetX)
+        val ty = cy - sy * (cy + cropCenterOffsetY)
+
+        val matrix = Matrix()
+        matrix.setValues(floatArrayOf(
+            sx, 0f, tx,
+            0f, sy, ty,
+            0f, 0f, 1f
+        ))
+        texture.setTransform(matrix)
     }
 
     private fun syncOverlayVideoPreview() {
@@ -5222,9 +5248,9 @@ class MainActivity : AppCompatActivity() {
             overlayView.elevation = dp(4).toFloat() + clip.trackIndex
             applyOverlayPreviewTransform(clip)
 
-            // Threshold/softness/warna diperbarui langsung pada uniform shader.
-            // Hanya perubahan struktur pipeline (aktif/nonaktif/crop) yang memerlukan pemasangan ulang.
-            val effectSignature = "${clip.chromaKeyEnabled}:${clip.cropLeft}:${clip.cropTop}:${clip.cropRight}:${clip.cropBottom}"
+            // Crop tidak lagi menjadi bagian signature efek preview.
+            // Perubahan crop cukup memperbarui Matrix TextureView, bukan memasang ulang efek.
+            val effectSignature = "${clip.chromaKeyEnabled}"
             val localPosition = if (selectedPreviewOnly) 0L else (position - clip.startTimeMs).coerceAtLeast(0L)
             if (session.preparedClipId != clip.id) {
                 val item = MediaItem.Builder()
