@@ -11,11 +11,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.OutputStream
 import java.util.UUID
 import java.util.concurrent.Executors
 import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlin.math.abs
 import kotlin.math.max
@@ -84,6 +86,25 @@ class GsTrainingCenterActivity : AppCompatActivity() {
             Toast.makeText(this, "Paket model diekspor.", Toast.LENGTH_SHORT).show()
         }.onFailure { Toast.makeText(this, "Ekspor gagal: ${it.message}", Toast.LENGTH_LONG).show() }
     }
+    private val inspectDatasetZip = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        statusOrToast("Memeriksa ZIP dataset…")
+        Thread {
+            val report = runCatching {
+                contentResolver.openInputStream(uri)?.use { validateDatasetZip(it) }
+                    ?: error("File ZIP tidak dapat dibuka")
+            }.getOrElse { "VALIDASI GAGAL\n${it.message ?: "Format ZIP tidak valid"}" }
+            runOnUiThread {
+                status.text = if (report.startsWith("LULUS")) "Validasi ZIP selesai: dataset siap diperiksa untuk training." else "Validasi menemukan masalah pada ZIP dataset."
+                android.app.AlertDialog.Builder(this)
+                    .setTitle("Hasil validasi dataset")
+                    .setMessage(report)
+                    .setPositiveButton("OK", null)
+                    .show()
+            }
+        }.start()
+    }
+
     private val exportDataset = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri == null) return@registerForActivityResult
         runCatching {
@@ -144,6 +165,9 @@ class GsTrainingCenterActivity : AppCompatActivity() {
             if (samples.isEmpty()) Toast.makeText(this, "Tambahkan gambar terlebih dahulu.", Toast.LENGTH_SHORT).show()
             else exportDataset.launch("CAPCAKE_GS_dataset.zip")
         }, full(44))
+        body.addView(button("Periksa / validasi ZIP dataset") {
+            inspectDatasetZip.launch(arrayOf("application/zip", "application/octet-stream", "*/*"))
+        }, full(42))
         status = label("Siap.", 12f, Color.rgb(24, 213, 138)); body.addView(status)
         root.addView(button("TUTUP") { finish() }, full(44))
         setContentView(root)
@@ -289,6 +313,148 @@ class GsTrainingCenterActivity : AppCompatActivity() {
                 ?.forEach { samples.add(Sample(it)) }
             persistDataset()
         }.onFailure { Toast.makeText(this, "Pemulihan dataset gagal: ${it.message}", Toast.LENGTH_LONG).show() }
+    }
+
+    /**
+     * Validates an exported COCO ZIP without extracting it to storage.
+     * This checks package structure, image dimensions/references and polygon data;
+     * it does not train a model or guarantee that annotations are visually accurate.
+     */
+    private fun validateDatasetZip(input: java.io.InputStream): String {
+        val imageEntries = linkedMapOf<String, Pair<Int, Int>>()
+        var cocoText: String? = null
+        var totalBytes = 0L
+        val maxTotalBytes = 1024L * 1024L * 1024L
+        val maxImageBytes = 40L * 1024L * 1024L
+        val maxJsonBytes = 20L * 1024L * 1024L
+        var readmeFound = false
+
+        ZipInputStream(input.buffered()).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                require(!entry.isDirectory) { "Folder tidak diizinkan: ${entry.name}" }
+                require(!entry.name.startsWith("/") && !entry.name.contains("../") && !entry.name.contains("\\\\")) {
+                    "Path ZIP tidak aman: ${entry.name}"
+                }
+                val isImage = entry.name.startsWith("images/") &&
+                    entry.name.substringAfterLast('/').let { it.isNotBlank() && !it.contains('/') }
+                val limit = when {
+                    entry.name == "annotations.json" -> maxJsonBytes
+                    isImage && entry.name.substringAfterLast('.').lowercase() in setOf("jpg", "jpeg", "png") -> maxImageBytes
+                    entry.name == "README.txt" -> 256L * 1024L
+                    else -> throw IllegalArgumentException("File tidak dikenal dalam ZIP: ${entry.name}")
+                }
+                val bytes = ByteArrayOutputStream()
+                val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                var entryBytes = 0L
+                while (true) {
+                    val n = zip.read(buffer)
+                    if (n < 0) break
+                    entryBytes += n
+                    totalBytes += n
+                    require(entryBytes <= limit) { "Ukuran file terlalu besar: ${entry.name}" }
+                    require(totalBytes <= maxTotalBytes) { "Ukuran total ZIP melewati batas 1 GB." }
+                    bytes.write(buffer, 0, n)
+                }
+                when {
+                    entry.name == "annotations.json" -> {
+                        require(cocoText == null) { "annotations.json ganda." }
+                        cocoText = bytes.toString(Charsets.UTF_8.name())
+                    }
+                    isImage -> {
+                        require(!imageEntries.containsKey(entry.name)) { "Nama gambar ganda: ${entry.name}" }
+                        val opts = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                        BitmapFactory.decodeByteArray(bytes.toByteArray(), 0, bytes.size(), opts)
+                        require(opts.outWidth > 0 && opts.outHeight > 0) { "Gambar rusak/tidak terbaca: ${entry.name}" }
+                        imageEntries[entry.name] = opts.outWidth to opts.outHeight
+                    }
+                    entry.name == "README.txt" -> readmeFound = true
+                }
+                zip.closeEntry()
+            }
+        }
+
+        val jsonText = cocoText ?: throw IllegalArgumentException("annotations.json tidak ditemukan.")
+        val coco = JSONObject(jsonText)
+        val images = coco.optJSONArray("images") ?: throw IllegalArgumentException("Daftar images COCO tidak ditemukan.")
+        val annotations = coco.optJSONArray("annotations") ?: throw IllegalArgumentException("Daftar annotations COCO tidak ditemukan.")
+        val categories = coco.optJSONArray("categories") ?: throw IllegalArgumentException("Daftar categories COCO tidak ditemukan.")
+        require(images.length() > 0) { "Dataset tidak memiliki gambar." }
+
+        val categoryNames = mutableMapOf<Int, String>()
+        for (i in 0 until categories.length()) {
+            val item = categories.getJSONObject(i)
+            val id = item.optInt("id", -1)
+            val name = item.optString("name").trim()
+            require(id > 0 && name.isNotBlank()) { "Kategori ke-${i + 1} tidak valid." }
+            require(categoryNames.put(id, name) == null) { "ID kategori ganda: $id" }
+        }
+        val imageIds = mutableMapOf<Int, Pair<String, Pair<Int, Int>>>()
+        var missingImages = 0
+        for (i in 0 until images.length()) {
+            val item = images.getJSONObject(i)
+            val id = item.optInt("id", -1)
+            val fileName = item.optString("file_name")
+            val width = item.optInt("width", 0)
+            val height = item.optInt("height", 0)
+            require(id > 0 && width > 0 && height > 0) { "Metadata gambar ke-${i + 1} tidak valid." }
+            require(!imageIds.containsKey(id)) { "ID gambar ganda: $id" }
+            imageIds[id] = fileName to (width to height)
+            val actual = imageEntries[fileName]
+            if (actual == null) {
+                missingImages++
+            } else {
+                require(actual.first == width && actual.second == height) {
+                    "Ukuran gambar tidak cocok: $fileName (COCO ${width}x${height}, file ${actual.first}x${actual.second})"
+                }
+            }
+        }
+        require(missingImages == 0) { "$missingImages gambar pada annotations.json tidak ditemukan di ZIP." }
+        require(imageEntries.size == images.length()) { "Jumlah gambar dalam ZIP tidak sama dengan daftar COCO." }
+
+        var validAnnotations = 0
+        var invalidAnnotations = 0
+        val usedCategories = mutableSetOf<String>()
+        for (i in 0 until annotations.length()) {
+            val ann = annotations.getJSONObject(i)
+            val imageId = ann.optInt("image_id", -1)
+            val categoryId = ann.optInt("category_id", -1)
+            val image = imageIds[imageId]
+            val category = categoryNames[categoryId]
+            val segmentation = ann.optJSONArray("segmentation")
+            val polygon = segmentation?.optJSONArray(0)
+            var valid = image != null && category != null && polygon != null && polygon.length() >= 6 && polygon.length() % 2 == 0
+            if (valid && polygon != null && image != null) {
+                for (p in 0 until polygon.length()) {
+                    val value = polygon.optDouble(p, Double.NaN)
+                    val bound = if (p % 2 == 0) image.second.first.toDouble() else image.second.second.toDouble()
+                    if (!value.isFinite() || value < 0.0 || value > bound) { valid = false; break }
+                }
+            }
+            if (valid && category != null) {
+                validAnnotations++
+                usedCategories.add(category)
+            } else invalidAnnotations++
+        }
+        require(invalidAnnotations == 0) { "$invalidAnnotations anotasi memiliki polygon, kategori, atau referensi gambar yang tidak valid." }
+        val unannotated = images.length() - imageIds.keys.count { id ->
+            (0 until annotations.length()).any { annotations.getJSONObject(it).optInt("image_id") == id }
+        }
+        val categorySummary = categoryNames.values.sorted().joinToString(", ")
+        val warnings = mutableListOf<String>()
+        if (validAnnotations == 0) warnings.add("Belum ada polygon anotasi; dataset hanya berisi gambar.")
+        if (unannotated > 0) warnings.add("$unannotated gambar belum memiliki anotasi (dianggap background/negative sample).")
+        if (usedCategories.isEmpty()) warnings.add("Belum ada kelas objek yang terpakai.")
+        return buildString {
+            append("LULUS — struktur ZIP dan COCO valid.\n\n")
+            append("Gambar: ${images.length()}\n")
+            append("Polygon valid: $validAnnotations\n")
+            append("Kategori tersedia: ${categorySummary.ifBlank { "-" }}\n")
+            append("Ukuran ZIP terbaca: ${"%.1f".format(totalBytes / (1024.0 * 1024.0))} MB\n")
+            append("README: ${if (readmeFound) "ada" else "tidak ada"}\n")
+            if (warnings.isNotEmpty()) append("\nCATATAN:\n• " + warnings.joinToString("\n• "))
+            append("\n\nCatatan: validasi ini memeriksa struktur dan data, bukan ketepatan gambar polygon. Model AI tetap harus dilatih di komputer.")
+        }
     }
 
     private fun statusOrToast(message: String) {
