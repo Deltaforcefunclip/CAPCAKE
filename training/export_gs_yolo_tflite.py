@@ -8,6 +8,7 @@ the exported model instead of guessing an output layout.
 import argparse
 import hashlib
 import json
+import zipfile
 from pathlib import Path
 
 from ultralytics import YOLO
@@ -111,10 +112,36 @@ def main():
     }
     sidecar = args.out / "model_runtime_spec.json"
     sidecar.write_text(json.dumps(metadata, indent=2), encoding="utf-8")
+
+    # Build a CAPCAKE package for the dedicated raw-YOLO runtime contract.
+    manifest = {
+        "schemaVersion": 1,
+        "modelId": args.model_id,
+        "displayName": "CAPCAKE Weapon Segmentation",
+        "version": args.version,
+        "runtime": "tflite_yolo_seg_raw_v1",
+        "task": "segment",
+        "modelFile": "model.tflite",
+        "inputWidth": args.imgsz,
+        "inputHeight": args.imgsz,
+        "labels": labels,
+        "targetPolicy": {
+            "preferred": ["weapon"] if "weapon" in labels else [labels[0]],
+            "fallback": [],
+            "fallbackOnlyWhenPreferredMissing": True,
+        },
+        "modelSha256": metadata["modelSha256"],
+    }
+    package = args.out / f"{args.model_id}_{args.version}.gspkg"
+    with zipfile.ZipFile(package, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.write(destination, "model.tflite")
+        archive.writestr("manifest.json", json.dumps(manifest, indent=2))
+
     print(json.dumps(metadata, indent=2))
     print(f"Raw TFLite: {destination.resolve()}")
     print(f"Tensor spec: {sidecar.resolve()}")
-    print("NOT IMPORTABLE IN CAPCAKE GS YET: Android YOLO-seg adapter is still required.")
+    print(f"CAPCAKE package: {package.resolve()}")
+    print("Package runtime: tflite_yolo_seg_raw_v1")
 
 
 if __name__ == "__main__":
