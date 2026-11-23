@@ -1973,9 +1973,8 @@ class MainActivity : AppCompatActivity() {
             onGestureStart = { pushUndoSnapshot() },
             onTransformChanged = { clip ->
                 if (overlayCropModeEnabled) {
-                    // Perbarui crop langsung pada TextureView. Tidak ada setVideoEffects,
-                    // prepare(), seek(), atau restart decoder selama handle digeser.
-                    applyOverlayPreviewTransform(clip)
+                    // Saat menggeser handle, hanya kotak merah yang bergerak.
+                    // Frame video tidak ditransformasi sampai konfirmasi crop.
                     overlaySelectionOverlay?.postInvalidateOnAnimation()
                 } else {
                     applyOverlayPreviewTransform(clip)
@@ -5079,12 +5078,10 @@ class MainActivity : AppCompatActivity() {
         val videoWidth = clip.videoWidth
         val videoHeight = clip.videoHeight
         if (parentWidth > 0 && parentHeight > 0 && videoWidth > 0 && videoHeight > 0) {
-            // Setelah crop diterapkan, ukuran tampilan mengikuti rasio area yang tersisa,
-            // bukan lagi rasio sumber video sebelum dipotong.
-            val visibleWidth = (1f - clip.cropLeft - clip.cropRight).coerceAtLeast(0.03f)
-            val visibleHeight = (1f - clip.cropTop - clip.cropBottom).coerceAtLeast(0.03f)
-            val aspect = (videoWidth.toFloat() * visibleWidth) /
-                (videoHeight.toFloat() * visibleHeight)
+            // Bingkai PlayerView selalu memakai ukuran/rasio sumber.
+            // Crop hanya mengubah bagian gambar yang terlihat di dalam bingkai,
+            // bukan mengubah posisi atau ukuran overlay.
+            val aspect = videoWidth.toFloat() / videoHeight.toFloat()
             val fittedWidth: Int
             val fittedHeight: Int
             if (aspect >= parentWidth.toFloat() / parentHeight.toFloat()) {
@@ -5106,9 +5103,8 @@ class MainActivity : AppCompatActivity() {
         view.rotation = clip.rotationDegrees
         view.translationX = clip.transformX
         view.translationY = clip.transformY
-        // TextureView memotong area sumber secara visual tanpa mengubah decoder.
-        // Post dipakai agar ukuran surface sudah mengikuti layout crop yang baru.
-        view.post { applyOverlayPreviewCropTransform(clip, view) }
+        // Jangan terapkan crop di sini. Transformasi crop hanya dijalankan
+        // sekali saat pengguna menekan konfirmasi Selesai Crop.
         overlaySelectionOverlay?.invalidate()
     }
 
@@ -5346,14 +5342,20 @@ class MainActivity : AppCompatActivity() {
         val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return
         overlayCropModeEnabled = !overlayCropModeEnabled
         overlaySelectionOverlay?.setCropMode(overlayCropModeEnabled)
+        val previewView = overlayPreviewSessions[clip.id]?.view
         if (overlayCropModeEnabled) {
-            Toast.makeText(this, "Geser titik putih untuk memotong overlay.", Toast.LENGTH_SHORT).show()
+            // Saat mulai mengatur crop, tampilkan gambar sumber utuh.
+            // Selama handle digeser, gambar/PlayerView tidak ikut bergerak atau berubah ukuran.
+            previewView?.post {
+                (previewView.videoSurfaceView as? android.view.TextureView)?.setTransform(Matrix())
+            }
+            Toast.makeText(this, "Geser kotak merah, lalu tekan Selesai Crop untuk menerapkan.", Toast.LENGTH_SHORT).show()
         } else {
-            // Terapkan rasio baru ke PlayerView dan pasang efek crop hanya sekali,
-            // setelah pengguna selesai menggeser handle. Jangan rebuild decoder
-            // pada setiap gerakan jari selama proses crop.
-            applyOverlayPreviewTransform(clip)
-            syncOverlayVideoPreview()
+            // Konfirmasi: terapkan crop sekali pada isi TextureView.
+            // Bingkai PlayerView, posisi, dan skalanya tetap menggunakan geometri sumber.
+            previewView?.let { view ->
+                view.post { applyOverlayPreviewCropTransform(clip, view) }
+            }
             saveCurrentProject()
             Toast.makeText(this, "Crop overlay diterapkan.", Toast.LENGTH_SHORT).show()
         }
