@@ -58,3 +58,18 @@ The first CAPCAKE foundation commit intentionally does not bundle an untrained
 model or add an inference dependency. The Training Center can later train and
 export a model using this contract; CAPCAKE can import the resulting package
 without rebuilding the app for each model update.
+
+
+## Runtime TFLite: tflite_ssd_mask_v1
+
+CAPCAKE menyediakan adapter TFLite untuk model instance segmentation dengan kontrak tensor:
+- Input tunggal FLOAT32 `[1,H,W,3]`, RGB ternormalisasi 0..1.
+- Output 0 boxes FLOAT32 `[1,N,4]`, urutan koordinat ternormalisasi `y1,x1,y2,x2`.
+- Output 1 class index FLOAT32 `[1,N]`; indeks kelas 1-based diterjemahkan ke daftar labels manifest.
+- Output 2 confidence FLOAT32 `[1,N]`.
+- Output 3 jumlah deteksi FLOAT32 `[1]`.
+- Output 4 mask FLOAT32 `[1,N,MH,MW]`, probabilitas foreground 0..1; nilai >=0.5 menjadi mask objek.
+
+Set `runtime` ke `tflite_ssd_mask_v1` dan `task` ke `detect_segment`. Confidence minimum deteksi 0.35. Model detect-only tidak cukup untuk GS karena bounding box tidak memberi kontur kendaraan. GsFrameProcessor menolak frame bila target atau segmentation mask tidak tersedia; frame tidak akan diubah secara membabi buta.
+
+Pemrosesan frame dipisahkan dari decode/mux video. Pipeline video nantinya mengambil frame sesuai GsProcessingProfile (maksimum 30 FPS), memprosesnya melalui GsFrameProcessor, lalu menyusun hasil dengan durasi sumber tetap.
