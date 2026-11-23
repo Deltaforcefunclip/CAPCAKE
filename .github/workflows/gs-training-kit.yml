@@ -1,0 +1,22 @@
+name: GS Training Kit Checks
+on:
+  push:
+    branches: [ "main", "master", "feature/rife-motion-blur-foundation" ]
+    paths:
+      - "training/**"
+      - ".github/workflows/gs-training-kit.yml"
+  pull_request:
+    paths:
+      - "training/**"
+      - ".github/workflows/gs-training-kit.yml"
+  workflow_dispatch:
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -r training/requirements.txt
+      - run: python -m py_compile training/prepare_gs_dataset.py
