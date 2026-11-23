@@ -1970,6 +1970,7 @@ class MainActivity : AppCompatActivity() {
             this,
             clipProvider = { overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } },
             previewVisible = { clip -> overlayPreviewSessions[clip.id]?.view?.visibility == View.VISIBLE },
+            previewViewProvider = { clip -> overlayPreviewSessions[clip.id]?.view },
             onGestureStart = { pushUndoSnapshot() },
             onTransformChanged = { clip ->
                 if (overlayCropModeEnabled) {
