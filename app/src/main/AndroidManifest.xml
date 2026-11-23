@@ -5,6 +5,7 @@
         android:label="CAPCAKE"
         android:theme="@style/AppTheme"
         android:supportsRtl="true">
+        <activity android:name=".gs.GsTrainingCenterActivity" android:exported="false" />
         <activity
             android:name=".MainActivity"
             android:configChanges="orientation|screenSize|keyboardHidden"
