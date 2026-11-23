@@ -3377,6 +3377,176 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Jendela GS khusus untuk klip overlay yang sedang terseleksi.
+     * Tombol Play/Render disiapkan secara visual; fungsinya akan ditentukan
+     * pada tahap berikutnya.
+     */
+    private fun showOverlayGsPopup() {
+        val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId }
+        if (clip == null) {
+            showMessage("Pilih satu klip overlay terlebih dahulu.")
+            return
+        }
+
+        val previewWidth = dp(232)
+        val popupContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(25, 25, 25))
+                cornerRadius = dp(12).toFloat()
+                setStroke(dp(1), green)
+            }
+            elevation = dp(20).toFloat()
+        }
+
+        val previewFrame = FrameLayout(this).apply {
+            setBackgroundColor(Color.BLACK)
+        }
+        val previewPlayerView = PlayerView(this).apply {
+            useController = false
+            resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
+            setBackgroundColor(Color.BLACK)
+        }
+        val previewPlayer = ExoPlayer.Builder(this).build()
+        previewPlayerView.player = previewPlayer
+        previewFrame.addView(
+            previewPlayerView,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+        popupContent.addView(
+            previewFrame,
+            LinearLayout.LayoutParams(previewWidth, dp(130))
+        )
+
+        runCatching {
+            previewPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(clip.sourceUri)))
+            previewPlayer.seekTo(clip.sourceStartMs)
+            previewPlayer.prepare()
+            previewPlayer.playWhenReady = false
+        }.onFailure {
+            Log.w("CAPCAKE_GS", "Gagal memuat preview klip overlay", it)
+        }
+
+        val progressFrame = FrameLayout(this).apply {
+            setPadding(0, dp(8), 0, dp(8))
+        }
+        val progressBar = ProgressBar(
+            this,
+            null,
+            android.R.attr.progressBarStyleHorizontal
+        ).apply {
+            max = 100
+            progress = 0
+            progressTintList = android.content.res.ColorStateList.valueOf(green)
+            progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.DKGRAY)
+        }
+        progressFrame.addView(
+            progressBar,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(8),
+                Gravity.CENTER
+            )
+        )
+        val progressPercent = TextView(this).apply {
+            text = "0%"
+            textSize = 10f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+        }
+        progressFrame.addView(
+            progressPercent,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                dp(22),
+                Gravity.CENTER
+            )
+        )
+        popupContent.addView(
+            progressFrame,
+            LinearLayout.LayoutParams(previewWidth, dp(28))
+        )
+
+        fun makeGsButton(label: String, accent: Boolean = false): TextView {
+            return TextView(this).apply {
+                text = label
+                textSize = 12f
+                gravity = Gravity.CENTER
+                setTextColor(if (accent) Color.BLACK else Color.WHITE)
+                isClickable = true
+                isFocusable = true
+                setPadding(dp(8), dp(9), dp(8), dp(9))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(if (accent) green else Color.rgb(48, 48, 48))
+                    cornerRadius = dp(7).toFloat()
+                }
+            }
+        }
+
+        val actionRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val playButton = makeGsButton("▶ Play")
+        val renderButton = makeGsButton("Render", true)
+        actionRow.addView(playButton, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+            rightMargin = dp(5)
+        })
+        actionRow.addView(renderButton, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
+            leftMargin = dp(5)
+        })
+        popupContent.addView(actionRow, LinearLayout.LayoutParams(previewWidth, dp(38)))
+
+        val confirmRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER
+        }
+        val cancelButton = makeGsButton("Cancel")
+        val okButton = makeGsButton("OK", true)
+        confirmRow.addView(cancelButton, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+            rightMargin = dp(5)
+        })
+        confirmRow.addView(okButton, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
+            leftMargin = dp(5)
+        })
+        popupContent.addView(
+            confirmRow,
+            LinearLayout.LayoutParams(previewWidth, dp(36)).apply {
+                topMargin = dp(8)
+            }
+        )
+
+        val popup = android.widget.PopupWindow(
+            popupContent,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        ).apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            isOutsideTouchable = true
+            elevation = dp(20).toFloat()
+            setOnDismissListener {
+                previewPlayerView.player = null
+                previewPlayer.release()
+            }
+        }
+        cancelButton.setOnClickListener { popup.dismiss() }
+        okButton.setOnClickListener { popup.dismiss() }
+
+        popup.showAtLocation(
+            editorOverlayRoot,
+            Gravity.CENTER,
+            0,
+            0
+        )
+    }
+
+    /**
      * Popup MOVE ditempatkan tepat di atas menu utama tanpa menutupi timeline.
      * Pilihan hanya bekerja pada klip video main timeline yang sedang terseleksi.
      */
@@ -3542,7 +3712,7 @@ class MainActivity : AppCompatActivity() {
                 "P̲T̲" to "Preset Text"
             )
         } else if (selectedOverlayVideoClipId != null) {
-            listOf("♫" to "Volume", "⚙" to "Modifikasi", "🟩" to "Chroma Key", "▱" to if (overlayCropModeEnabled) "Selesai Crop" else "Crop", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus")
+            listOf("♫" to "Volume", "⚙" to "Modifikasi", "🟩" to "Chroma Key", "▱" to if (overlayCropModeEnabled) "Selesai Crop" else "Crop", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus", "GS" to "GS")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3695,6 +3865,7 @@ class MainActivity : AppCompatActivity() {
                         else videoClipManager.find(selectedVideoClipId)?.let { showVideoClipVolume(it) }
                     }
                     "Modifikasi" -> showOverlayVideoModifyDialog()
+                    "GS" -> showOverlayGsPopup()
                     "Chroma Key" -> showOverlayChromaKeyDialog()
                     "Crop", "Selesai Crop" -> toggleOverlayCropMode()
                     "Edit Text" -> editSelectedText()
