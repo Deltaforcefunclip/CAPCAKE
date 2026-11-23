@@ -3376,6 +3376,155 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
     }
 
+    /**
+     * Popup MOVE ditempatkan tepat di atas menu utama tanpa menutupi timeline.
+     * Pilihan hanya bekerja pada klip video main timeline yang sedang terseleksi.
+     */
+    private fun showMoveVideoToOverlayPopup() {
+        val selected = videoClipManager.find(selectedVideoClipId)
+        if (selected == null || !videoSelected) {
+            showMessage("Pilih satu klip video di timeline utama terlebih dahulu.")
+            return
+        }
+
+        val popupContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(8), dp(7), dp(8), dp(7))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(25, 25, 25))
+                cornerRadius = dp(10).toFloat()
+                setStroke(dp(1), green)
+            }
+            elevation = dp(18).toFloat()
+        }
+        fun addChoice(label: String, action: () -> Unit) {
+            val button = TextView(this).apply {
+                text = label
+                textSize = 13f
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                isClickable = true
+                isFocusable = true
+                setPadding(dp(18), dp(11), dp(18), dp(11))
+                background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(Color.rgb(38, 38, 38))
+                    cornerRadius = dp(6).toFloat()
+                }
+                setOnClickListener {
+                    action()
+                }
+            }
+            popupContent.addView(
+                button,
+                LinearLayout.LayoutParams(dp(205), dp(42)).apply {
+                    bottomMargin = dp(5)
+                }
+            )
+        }
+        val popup = android.widget.PopupWindow(
+            popupContent,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+            true
+        ).apply {
+            setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))
+            isOutsideTouchable = true
+            elevation = dp(18).toFloat()
+        }
+        addChoice("Pindah sebagai overlay") {
+            popup.dismiss()
+            transferSelectedMainVideoToOverlay(copy = false)
+        }
+        addChoice("Salin sebagai overlay") {
+            popup.dismiss()
+            transferSelectedMainVideoToOverlay(copy = true)
+        }
+        popupContent.getChildAt(popupContent.childCount - 1)?.let { last ->
+            (last.layoutParams as? LinearLayout.LayoutParams)?.bottomMargin = 0
+        }
+        // Menu utama berada di bagian paling bawah editor; popup dinaikkan
+        // setinggi area menu agar terlihat menempel tepat di atasnya.
+        popup.showAtLocation(
+            editorOverlayRoot,
+            Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL,
+            0,
+            dp(126)
+        )
+    }
+
+    private fun transferSelectedMainVideoToOverlay(copy: Boolean) {
+        val clip = videoClipManager.find(selectedVideoClipId) ?: run {
+            showMessage("Klip video yang dipilih tidak ditemukan.")
+            return
+        }
+        val originalStart = clip.timelineStartMs
+        val originalPosition = timelineController.positionMs
+        val sourceDuration = clip.durationMs.coerceAtLeast(1L)
+        val sourceUri = Uri.parse(clip.sourceUri)
+        val dimensions = readOverlayVideoDimensions(sourceUri)
+        val displayName = runCatching {
+            sourceUri.lastPathSegment?.substringAfterLast('/')?.substringBefore('?')
+        }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Overlay Video"
+
+        val lane = findAvailableOverlayTrack(
+            overlayVideoClips,
+            originalStart,
+            sourceDuration,
+            maxTrackIndex = 31
+        )
+        if (lane == null) {
+            showMessage("Tidak ada layer overlay kosong pada waktu klip tersebut.")
+            return
+        }
+
+        pushUndoSnapshot()
+        val overlay = OverlayVideoClip(
+            sourceUri = clip.sourceUri,
+            startTimeMs = originalStart,
+            sourceStartMs = clip.sourceStartMs,
+            durationMs = sourceDuration,
+            sourceDurationMs = clip.sourceDurationMs.coerceAtLeast(sourceDuration),
+            name = displayName,
+            trackIndex = lane,
+            volume = clip.volume.coerceIn(0f, 2f),
+            videoWidth = dimensions.first,
+            videoHeight = dimensions.second
+        )
+        overlayVideoClips.add(overlay)
+
+        if (!copy) {
+            videoClipManager.remove(clip.id)
+            selectedVideoClipId = null
+            videoSelected = false
+            selectedAudioClipId = null
+            selectedTextClipId = null
+            selectedEffectClipId = null
+            selectedOverlayVideoClipId = overlay.id
+            activeLayerGroup = "OVERLAY"
+
+            val newDuration = videoClipManager.durationMs
+            val nextPosition = originalPosition.coerceAtMost(newDuration)
+            timeline.setDuration(newDuration, nextPosition)
+            refreshEditedPreview(nextPosition)
+        } else {
+            selectedVideoClipId = null
+            videoSelected = false
+            selectedOverlayVideoClipId = overlay.id
+            activeLayerGroup = "OVERLAY"
+        }
+
+        updateLayerGroupVisibility()
+        refreshOverlayVideoTracks()
+        updateToolMenu()
+        saveCurrentProject()
+        syncOverlayVideoPreview()
+        Toast.makeText(
+            this,
+            if (copy) "Klip disalin ke layer overlay." else "Klip dipindahkan ke layer overlay.",
+            Toast.LENGTH_SHORT
+        ).show()
+    }
+
     private fun updateToolMenu() {
 
         if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
@@ -3421,7 +3570,8 @@ class MainActivity : AppCompatActivity() {
                 "◇" to "Stabilkan",
                 "▤" to "Duplikat",
                 "◐" to "Opasitas",
-                "♪" to "Irama"
+                "♪" to "Irama",
+                "⇧" to "MOVE"
             )
 
         } else {
@@ -3525,6 +3675,8 @@ class MainActivity : AppCompatActivity() {
                             showMessage("Geser playhead ke bagian dalam klip video yang dipilih.")
                         }
                     }
+
+                    "MOVE" -> showMoveVideoToOverlayPopup()
 
                     "Sesuaikan" -> {
                         videoClipManager.find(selectedVideoClipId)?.let { showVideoColorGrading(it) }
