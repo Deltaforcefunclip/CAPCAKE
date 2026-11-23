@@ -1971,7 +1971,16 @@ class MainActivity : AppCompatActivity() {
             clipProvider = { overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } },
             previewVisible = { clip -> overlayPreviewSessions[clip.id]?.view?.visibility == View.VISIBLE },
             onGestureStart = { pushUndoSnapshot() },
-            onTransformChanged = { clip -> applyOverlayPreviewTransform(clip); syncOverlayVideoPreview() },
+            onTransformChanged = { clip ->
+                if (overlayCropModeEnabled) {
+                    // Selama crop, perbarui hanya garis/handle. Memasang ulang
+                    // Media3 Crop pada setiap MOVE membuat overlay membeku.
+                    overlaySelectionOverlay?.postInvalidateOnAnimation()
+                } else {
+                    applyOverlayPreviewTransform(clip)
+                    syncOverlayVideoPreview()
+                }
+            },
             onGestureEnd = { saveCurrentProject() }
         ).apply { elevation = dp(18).toFloat() }
         previewFrame.addView(overlaySelectionOverlay, FrameLayout.LayoutParams(-1, -1))
@@ -5069,7 +5078,12 @@ class MainActivity : AppCompatActivity() {
         val videoWidth = clip.videoWidth
         val videoHeight = clip.videoHeight
         if (parentWidth > 0 && parentHeight > 0 && videoWidth > 0 && videoHeight > 0) {
-            val aspect = videoWidth.toFloat() / videoHeight.toFloat()
+            // Setelah crop diterapkan, ukuran tampilan mengikuti rasio area yang tersisa,
+            // bukan lagi rasio sumber video sebelum dipotong.
+            val visibleWidth = (1f - clip.cropLeft - clip.cropRight).coerceAtLeast(0.03f)
+            val visibleHeight = (1f - clip.cropTop - clip.cropBottom).coerceAtLeast(0.03f)
+            val aspect = (videoWidth.toFloat() * visibleWidth) /
+                (videoHeight.toFloat() * visibleHeight)
             val fittedWidth: Int
             val fittedHeight: Int
             if (aspect >= parentWidth.toFloat() / parentHeight.toFloat()) {
@@ -5309,11 +5323,16 @@ class MainActivity : AppCompatActivity() {
         if (overlayCropModeEnabled) {
             Toast.makeText(this, "Geser titik putih untuk memotong overlay.", Toast.LENGTH_SHORT).show()
         } else {
+            // Terapkan rasio baru ke PlayerView dan pasang efek crop hanya sekali,
+            // setelah pengguna selesai menggeser handle. Jangan rebuild decoder
+            // pada setiap gerakan jari selama proses crop.
+            applyOverlayPreviewTransform(clip)
+            syncOverlayVideoPreview()
             saveCurrentProject()
             Toast.makeText(this, "Crop overlay diterapkan.", Toast.LENGTH_SHORT).show()
         }
         updateToolMenu()
-        overlaySelectionOverlay?.invalidate()
+        overlaySelectionOverlay?.postInvalidateOnAnimation()
     }
 
     private fun updateOverlayChromaKeyShader(clip: OverlayVideoClip) {
