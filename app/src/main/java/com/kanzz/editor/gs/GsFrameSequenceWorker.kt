@@ -22,7 +22,8 @@ class GsFrameSequenceWorker(
     private val durationMs: Long,
     private val outputDir: File,
     private val onProgress: (phase: Phase, percent: Int, completed: Int, total: Int) -> Unit,
-    private val onComplete: (Result) -> Unit
+    private val onComplete: (Result) -> Unit,
+    private val onError: (Throwable) -> Unit
 ) {
     enum class Phase { DETECTING, WRITING_FRAMES, COMPLETE }
     data class Result(val directory: File, val frameCount: Int, val fps: Double, val durationMs: Long)
@@ -94,21 +95,11 @@ class GsFrameSequenceWorker(
             onComplete(Result(outputDir, completed, profile.outputFps, clipDuration))
         } catch (error: Throwable) {
             outputDir.deleteRecursively()
-            onComplete(ResultFailure(error))
+            onError(error)
         } finally {
             runCatching { model?.close() }
             runCatching { retriever.release() }
         }
     }
 
-    // Kept as a sealed callback payload without hiding the original exception.
-    private fun onComplete(failure: ResultFailure) {
-        onFailure(failure.error)
-    }
-
-    private fun onFailure(error: Throwable) {
-        onComplete(ResultFailure(error))
-    }
-
-    data class ResultFailure(val error: Throwable)
 }
