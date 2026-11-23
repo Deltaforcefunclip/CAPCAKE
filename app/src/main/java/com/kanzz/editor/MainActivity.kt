@@ -1729,19 +1729,13 @@ class MainActivity : AppCompatActivity() {
                 val viewW = width.toFloat()
                 val viewH = height.toFloat()
                 if (viewW <= 0f || viewH <= 0f) return
-                // Ambil ukuran area video aktual dari TextureView, bukan rasio kanvas.
-                // Dengan begitu bingkai seleksi mengikuti bentuk video asli (portrait/landscape).
-                val contentFrame = playerView.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
-                val playerLocation = IntArray(2)
-                val overlayLocation = IntArray(2)
-                playerView.getLocationOnScreen(playerLocation)
-                getLocationOnScreen(overlayLocation)
-                val boxW = (contentFrame?.width ?: 0).takeIf { it > 0 }?.toFloat() ?: viewW
-                val boxH = (contentFrame?.height ?: 0).takeIf { it > 0 }?.toFloat() ?: viewH
-                val baseCx = if (contentFrame != null && contentFrame.width > 0)
-                    playerLocation[0] - overlayLocation[0] + contentFrame.left + boxW / 2f else viewW / 2f
-                val baseCy = if (contentFrame != null && contentFrame.height > 0)
-                    playerLocation[1] - overlayLocation[1] + contentFrame.top + boxH / 2f else viewH / 2f
+                // Bingkai seleksi mengikuti area gambar video yang benar-benar tampil,
+                // bukan seluruh content frame/kanvas rasio yang bisa berbentuk persegi.
+                val contentRect = getMainVideoContentRectInSelectionOverlay()
+                val boxW = contentRect.width()
+                val boxH = contentRect.height()
+                val baseCx = contentRect.centerX()
+                val baseCy = contentRect.centerY()
                 val halfW = boxW / 2f
                 val halfH = boxH / 2f
                 canvas.save()
@@ -1780,18 +1774,12 @@ class MainActivity : AppCompatActivity() {
             setOnTouchListener { _, event ->
                 val clip = videoClipManager.find(selectedVideoClipId)
                 if (!videoSelected || clip == null) return@setOnTouchListener false
-                val contentFrame = playerView.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
-                val playerLocation = IntArray(2)
-                val overlayLocation = IntArray(2)
-                playerView.getLocationOnScreen(playerLocation)
-                getLocationOnScreen(overlayLocation)
-                val boxW = (contentFrame?.width ?: 0).takeIf { it > 0 }?.toFloat() ?: width.toFloat()
-                val boxH = (contentFrame?.height ?: 0).takeIf { it > 0 }?.toFloat() ?: height.toFloat()
-                val cx = (if (contentFrame != null && contentFrame.width > 0)
-                    playerLocation[0] - overlayLocation[0] + contentFrame.left + boxW / 2f else width / 2f) +
+                val contentRect = getMainVideoContentRectInSelectionOverlay()
+                val boxW = contentRect.width()
+                val boxH = contentRect.height()
+                val cx = contentRect.centerX() +
                     (if (selectedPreviewRatio.isNotBlank()) previewTranslateX else 0f) + clip.transformX
-                val cy = (if (contentFrame != null && contentFrame.height > 0)
-                    playerLocation[1] - overlayLocation[1] + contentFrame.top + boxH / 2f else height / 2f) +
+                val cy = contentRect.centerY() +
                     (if (selectedPreviewRatio.isNotBlank()) previewTranslateY else 0f) + clip.transformY
                 val factor = clip.transformScale * if (selectedPreviewRatio.isNotBlank()) previewScale else 1f
                 val totalAngle = Math.toRadians((previewRotation + clip.rotationDegrees).toDouble())
@@ -4962,6 +4950,81 @@ class MainActivity : AppCompatActivity() {
             }
         }
         dialog.show()
+    }
+
+    /**
+     * Area piksel video utama yang benar-benar terlihat di dalam content frame.
+     * PlayerView dapat memiliki kanvas rasio persegi, sementara sumber videonya portrait/landscape.
+     */
+    private fun getMainVideoContentRectInSelectionOverlay(): RectF {
+        val overlay = videoSelectionOverlay
+        val contentFrame = playerView.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
+        val playerLocation = IntArray(2)
+        val overlayLocation = IntArray(2)
+        playerView.getLocationOnScreen(playerLocation)
+        overlay.getLocationOnScreen(overlayLocation)
+
+        val frameW = (contentFrame?.width ?: 0).takeIf { it > 0 }?.toFloat()
+            ?: overlay.width.toFloat().coerceAtLeast(1f)
+        val frameH = (contentFrame?.height ?: 0).takeIf { it > 0 }?.toFloat()
+            ?: overlay.height.toFloat().coerceAtLeast(1f)
+        val size = player.videoSize
+        var sourceW = size.width.toFloat()
+        var sourceH = size.height.toFloat()
+        if (size.unappliedRotationDegrees == 90 || size.unappliedRotationDegrees == 270) {
+            val swap = sourceW
+            sourceW = sourceH
+            sourceH = swap
+        }
+        val aspect = if (sourceW > 0f && sourceH > 0f) sourceW / sourceH else frameW / frameH
+        val fittedW: Float
+        val fittedH: Float
+        if (aspect >= frameW / frameH) {
+            fittedW = frameW
+            fittedH = frameW / aspect
+        } else {
+            fittedH = frameH
+            fittedW = frameH * aspect
+        }
+        val left = if (contentFrame != null && contentFrame.width > 0)
+            playerLocation[0] - overlayLocation[0] + contentFrame.left.toFloat()
+        else (overlay.width - frameW) / 2f
+        val top = if (contentFrame != null && contentFrame.height > 0)
+            playerLocation[1] - overlayLocation[1] + contentFrame.top.toFloat()
+        else (overlay.height - frameH) / 2f
+        val cx = left + frameW / 2f
+        val cy = top + frameH / 2f
+        return RectF(cx - fittedW / 2f, cy - fittedH / 2f, cx + fittedW / 2f, cy + fittedH / 2f)
+    }
+
+    /** Skala compositor yang mempertahankan ukuran overlay dalam piksel relatif terhadap kanvas preview. */
+    private fun calculateOverlayExportScale(
+        clip: OverlayVideoClip,
+        canvasWidth: Int,
+        canvasHeight: Int
+    ): Pair<Float, Float> {
+        val previewW = previewFrameContainer.width.coerceAtLeast(1).toFloat()
+        val previewH = previewFrameContainer.height.coerceAtLeast(1).toFloat()
+        val sourceW = clip.videoWidth.takeIf { it > 0 }?.toFloat() ?: previewW
+        val sourceH = clip.videoHeight.takeIf { it > 0 }?.toFloat() ?: previewH
+
+        fun fit(containerW: Float, containerH: Float): Pair<Float, Float> {
+            val aspect = sourceW / sourceH.coerceAtLeast(1f)
+            return if (aspect >= containerW / containerH) {
+                containerW to (containerW / aspect)
+            } else {
+                (containerH * aspect) to containerH
+            }
+        }
+
+        val previewFit = fit(previewW, previewH)
+        val exportW = canvasWidth.coerceAtLeast(2).toFloat()
+        val exportH = canvasHeight.coerceAtLeast(2).toFloat()
+        val exportFit = fit(exportW, exportH)
+        val baseScale = clip.transformScale.coerceIn(0.2f, 4f)
+        val scaleX = baseScale * (previewFit.first / previewW) / (exportFit.first / exportW)
+        val scaleY = baseScale * (previewFit.second / previewH) / (exportFit.second / exportH)
+        return scaleX.coerceIn(0.01f, 20f) to scaleY.coerceIn(0.01f, 20f)
     }
 
     private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
@@ -8719,11 +8782,9 @@ class MainActivity : AppCompatActivity() {
                     // sudah dipastikan dari sumber utama (Original) atau rasio manual.
                     // Presentation FIT meniru perilaku PlayerView overlay di preview:
                     // sumber overlay diperkecil proporsional agar muat di dalam kanvas.
-                    val frameW = playerView.width.coerceAtLeast(1).toFloat()
-                    val frameH = playerView.height.coerceAtLeast(1).toFloat()
-                    // Gunakan dimensi kanvas export yang PERSIS sama dengan sequence video utama.
-                    // Satu Presentation ukuran tetap menggantikan resize berbasis rasio yang
-                    // dapat menghasilkan ukuran output berbeda antar-sumber overlay.
+                    val frameW = previewFrameContainer.width.coerceAtLeast(1).toFloat()
+                    val frameH = previewFrameContainer.height.coerceAtLeast(1).toFloat()
+                    // Ukuran kanvas export mengikuti rasio/resolusi yang dipilih pengguna.
                     val canvasWidth = (exportWidth ?: frameW.toInt()).coerceAtLeast(2)
                     val canvasHeight = (exportHeight ?: frameH.toInt()).coerceAtLeast(2)
                     add(
@@ -8733,15 +8794,14 @@ class MainActivity : AppCompatActivity() {
                             Presentation.LAYOUT_SCALE_TO_FIT
                         )
                     )
-                    val scale = overlayClip.transformScale.coerceIn(0.2f, 4f)
+                    val exportScale = calculateOverlayExportScale(overlayClip, canvasWidth, canvasHeight)
                     val tx = (2f * overlayClip.transformX / frameW).coerceIn(-1f, 1f)
                     val ty = (-2f * overlayClip.transformY / frameH).coerceIn(-1f, 1f)
                     recordPlaybackDiagnostic(
                         "EXPORT_OVERLAY id=${overlayClip.id.take(8)} " +
-                            "scale=$scale rotation=${overlayClip.rotationDegrees} " +
-                            "x=${overlayClip.transformX} y=${overlayClip.transformY} " +
-                            "frame=${frameW.toInt()}x${frameH.toInt()} " +
-                            "canvas=${canvasWidth}x${canvasHeight} " +
+                            "scale=${overlayClip.transformScale} exportScale=${exportScale.first},${exportScale.second} " +
+                            "rotation=${overlayClip.rotationDegrees} x=${overlayClip.transformX} y=${overlayClip.transformY} " +
+                            "previewFrame=${frameW.toInt()}x${frameH.toInt()} canvas=${canvasWidth}x${canvasHeight} " +
                             "compositorAnchor=$tx,$ty"
                     )
                     // Transformasi dipindahkan ke compositor. Ini menghindari satu
@@ -8898,13 +8958,15 @@ class MainActivity : AppCompatActivity() {
                     ): OverlaySettings {
                         val overlayClip = exportOverlayClips.getOrNull(inputId)
                             ?: return StaticOverlaySettings.Builder().build()
-                        val frameW = playerView.width.coerceAtLeast(1).toFloat()
-                        val frameH = playerView.height.coerceAtLeast(1).toFloat()
-                        val scale = overlayClip.transformScale.coerceIn(0.2f, 4f)
+                        val frameW = previewFrameContainer.width.coerceAtLeast(1).toFloat()
+                        val frameH = previewFrameContainer.height.coerceAtLeast(1).toFloat()
+                        val canvasWidth = (exportWidth ?: frameW.toInt()).coerceAtLeast(2)
+                        val canvasHeight = (exportHeight ?: frameH.toInt()).coerceAtLeast(2)
+                        val exportScale = calculateOverlayExportScale(overlayClip, canvasWidth, canvasHeight)
                         val tx = (2f * overlayClip.transformX / frameW).coerceIn(-1f, 1f)
                         val ty = (-2f * overlayClip.transformY / frameH).coerceIn(-1f, 1f)
                         return StaticOverlaySettings.Builder()
-                            .setScale(scale, scale)
+                            .setScale(exportScale.first, exportScale.second)
                             .setRotationDegrees(-overlayClip.rotationDegrees)
                             .setBackgroundFrameAnchor(tx, ty)
                             .setOverlayFrameAnchor(0f, 0f)
