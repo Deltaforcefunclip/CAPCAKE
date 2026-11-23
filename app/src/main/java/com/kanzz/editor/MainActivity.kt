@@ -3458,6 +3458,13 @@ class MainActivity : AppCompatActivity() {
         actionRow.addView(renderButton, LinearLayout.LayoutParams(0, dp(38), 1f).apply { leftMargin = dp(5) })
         popupContent.addView(actionRow, LinearLayout.LayoutParams(previewWidth, dp(38)))
 
+        val trainingButton = makeGsButton("⚙  GS Training Center")
+        popupContent.addView(trainingButton, LinearLayout.LayoutParams(previewWidth, dp(36)).apply { topMargin = dp(6) })
+        trainingButton.setOnClickListener {
+            popup.dismiss()
+            startActivity(android.content.Intent(this, com.kanzz.editor.gs.GsTrainingCenterActivity::class.java))
+        }
+
         val confirmRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         val cancelButton = makeGsButton("Cancel")
         val okButton = makeGsButton("OK", true)
