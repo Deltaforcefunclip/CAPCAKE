@@ -5168,9 +5168,23 @@ class MainActivity : AppCompatActivity() {
     // Efek Crop Media3 tetap digunakan pada jalur export.
     private fun buildOverlayPreviewEffects(
         clip: OverlayVideoClip,
-        chromaEffect: ChromaKeyGlEffect? = null
+        chromaEffect: ChromaKeyGlEffect? = null,
+        includeCrop: Boolean = true
     ): List<androidx.media3.common.Effect> {
         val effects = mutableListOf<androidx.media3.common.Effect>()
+        if (includeCrop && (
+                clip.cropLeft > 0f || clip.cropTop > 0f ||
+                clip.cropRight > 0f || clip.cropBottom > 0f
+            )
+        ) {
+            val cropLeft = -1f + 2f * clip.cropLeft.coerceIn(0f, 0.97f)
+            val cropRight = 1f - 2f * clip.cropRight.coerceIn(0f, 0.97f)
+            val cropBottom = -1f + 2f * clip.cropBottom.coerceIn(0f, 0.97f)
+            val cropTop = 1f - 2f * clip.cropTop.coerceIn(0f, 0.97f)
+            if (cropLeft < cropRight && cropBottom < cropTop) {
+                effects.add(Crop(cropLeft, cropRight, cropBottom, cropTop))
+            }
+        }
         if (clip.chromaKeyEnabled) {
             effects.add(chromaEffect ?: ChromaKeyGlEffect(
                 clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
@@ -5343,18 +5357,29 @@ class MainActivity : AppCompatActivity() {
         overlayCropModeEnabled = !overlayCropModeEnabled
         overlaySelectionOverlay?.setCropMode(overlayCropModeEnabled)
         val previewView = overlayPreviewSessions[clip.id]?.view
+        val session = overlayPreviewSessions[clip.id]
         if (overlayCropModeEnabled) {
-            // Saat mulai mengatur crop, tampilkan gambar sumber utuh.
-            // Selama handle digeser, gambar/PlayerView tidak ikut bergerak atau berubah ukuran.
-            previewView?.post {
-                (previewView.videoSurfaceView as? android.view.TextureView)?.setTransform(Matrix())
+            // Lepas crop lama agar pengguna mengatur batas dari gambar sumber utuh.
+            // Hanya dijalankan saat masuk mode crop, bukan ketika handle digeser.
+            session?.let {
+                runCatching {
+                    it.player.setVideoEffects(buildOverlayPreviewEffects(
+                        clip, it.chromaKeyEffect, includeCrop = false
+                    ))
+                }
             }
             Toast.makeText(this, "Geser kotak merah, lalu tekan Selesai Crop untuk menerapkan.", Toast.LENGTH_SHORT).show()
         } else {
-            // Konfirmasi: terapkan crop sekali pada isi TextureView.
-            // Bingkai PlayerView, posisi, dan skalanya tetap menggunakan geometri sumber.
-            previewView?.let { view ->
-                view.post { applyOverlayPreviewCropTransform(clip, view) }
+            // Terapkan Crop melalui pipeline Media3 satu kali saat konfirmasi.
+            // Posisi dan ukuran PlayerView tetap; tidak ada pemrosesan selama handle digeser.
+            session?.let {
+                runCatching {
+                    it.player.setVideoEffects(buildOverlayPreviewEffects(
+                        clip, it.chromaKeyEffect, includeCrop = true
+                    ))
+                }.onFailure { error ->
+                    recordPlaybackDiagnostic("OVERLAY_CROP_PREVIEW_ERROR clip=${clip.id.take(8)} ${error.message}")
+                }
             }
             saveCurrentProject()
             Toast.makeText(this, "Crop overlay diterapkan.", Toast.LENGTH_SHORT).show()
