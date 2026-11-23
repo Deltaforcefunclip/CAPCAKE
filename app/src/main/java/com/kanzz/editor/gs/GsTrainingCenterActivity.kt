@@ -1,6 +1,7 @@
 package com.kanzz.editor.gs
 
 import android.graphics.*
+import android.media.MediaMetadataRetriever
 import android.os.Bundle
 import android.view.Gravity
 import android.view.MotionEvent
@@ -13,6 +14,7 @@ import org.json.JSONObject
 import java.io.File
 import java.io.OutputStream
 import java.util.UUID
+import java.util.concurrent.Executors
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
 import kotlin.math.abs
@@ -22,9 +24,12 @@ import kotlin.math.min
 /** Dataset preparation on-device; neural-network training is intentionally external. */
 class GsTrainingCenterActivity : AppCompatActivity() {
     private data class Annotation(val label: String, val polygon: List<Pair<Float, Float>>)
-    private data class Sample(val file: File, val annotations: MutableList<Annotation> = mutableListOf())
+    private data class Sample(val file: File, val annotations: MutableList<Annotation> = mutableListOf(), val sourceVideo: String? = null, val timestampMs: Long? = null)
 
     private val samples = mutableListOf<Sample>()
+    private val videoImportExecutor = Executors.newSingleThreadExecutor()
+    private val videoSampleIntervalMs = 500L
+    private val maxVideoFramesPerImport = 300
     private val labels = listOf("tank", "armored_vehicle", "weapon")
     private var currentIndex = -1
     private lateinit var store: GsModelStore
@@ -35,6 +40,12 @@ class GsTrainingCenterActivity : AppCompatActivity() {
     private lateinit var modelInfo: TextView
     private val imageDir by lazy { File(filesDir, "gs/training/images").apply { mkdirs() } }
     private val metadataFile by lazy { File(filesDir, "gs/training/dataset.json") }
+
+    private val pickVideo = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@registerForActivityResult
+        statusOrToast("Mengekstrak frame video…")
+        videoImportExecutor.execute { extractVideoFrames(uri) }
+    }
 
     private val pickImages = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNullOrEmpty()) return@registerForActivityResult
@@ -82,6 +93,11 @@ class GsTrainingCenterActivity : AppCompatActivity() {
         }.onFailure { Toast.makeText(this, "Ekspor dataset gagal: ${it.message}", Toast.LENGTH_LONG).show() }
     }
 
+    override fun onDestroy() {
+        videoImportExecutor.shutdownNow()
+        super.onDestroy()
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = GsModelStore(this)
@@ -100,8 +116,10 @@ class GsTrainingCenterActivity : AppCompatActivity() {
         body.addView(modelRow)
         body.addView(button("Pilih model aktif") { chooseModel() }, full(42))
         body.addView(divider())
-        body.addView(label("1. DATASET GAMBAR", 16f, Color.WHITE))
-        body.addView(button("＋ Tambah gambar gameplay") { pickImages.launch(arrayOf("image/*")) }, full(44))
+        body.addView(label("1. DATASET VIDEO & GAMBAR", 16f, Color.WHITE))
+        body.addView(label("Video dipecah otomatis menjadi frame setiap 0,5 detik (maksimal 300 frame per video).", 12f, Color.LTGRAY))
+        body.addView(button("＋ Impor video gameplay") { pickVideo.launch(arrayOf("video/*")) }, full(44))
+        body.addView(button("＋ Tambah gambar satuan") { pickImages.launch(arrayOf("image/*")) }, full(40))
         sampleInfo = label("Belum ada gambar.", 12f, Color.LTGRAY); body.addView(sampleInfo)
         body.addView(label("Jenis objek untuk polygon berikutnya:", 12f, Color.LTGRAY))
         labelSpinner = Spinner(this).apply { adapter = ArrayAdapter(this@GsTrainingCenterActivity, android.R.layout.simple_spinner_dropdown_item, listOf("Tank", "Kendaraan lapis baja", "Senjata")) }
@@ -113,6 +131,8 @@ class GsTrainingCenterActivity : AppCompatActivity() {
         annotate.addView(button("Simpan objek") { saveAnnotation() }, weighted())
         annotate.addView(button("Hapus objek terakhir") { removeLastAnnotation() }, weighted())
         body.addView(annotate)
+        body.addView(button("Salin polygon ke frame berikutnya") { copyAnnotationsToNextFrame() }, full(40))
+        body.addView(label("Salin polygon mempercepat anotasi objek yang posisinya relatif tetap. Periksa setiap frame dan hapus/perbaiki jika objek bergerak.", 11f, Color.LTGRAY))
         val nav = row()
         nav.addView(button("‹ Sebelumnya") { showSample(currentIndex - 1) }, weighted())
         nav.addView(button("Berikutnya ›") { showSample(currentIndex + 1) }, weighted())
@@ -164,12 +184,63 @@ class GsTrainingCenterActivity : AppCompatActivity() {
     private fun updateSampleInfo() {
         if (currentIndex !in samples.indices) return
         val s = samples[currentIndex]
-        sampleInfo.text = "Gambar ${currentIndex + 1}/${samples.size} • ${s.file.name} • ${s.annotations.size} objek tersimpan"
+        val origin = if (s.sourceVideo != null) " • ${s.sourceVideo} @ ${s.timestampMs}ms" else ""
+        sampleInfo.text = "Frame ${currentIndex + 1}/${samples.size} • ${s.file.name} • ${s.annotations.size} objek$origin"
+    }
+
+    /** Copies current polygons as editable starting annotations for the next sampled frame. */
+    private fun copyAnnotationsToNextFrame() {
+        if (currentIndex !in samples.indices || currentIndex + 1 !in samples.indices) {
+            status.text = "Frame berikutnya belum tersedia."; return
+        }
+        val source = samples[currentIndex]
+        if (source.annotations.isEmpty()) { status.text = "Anotasi frame ini masih kosong."; return }
+        val target = samples[currentIndex + 1]
+        target.annotations.clear()
+        target.annotations.addAll(source.annotations.map { Annotation(it.label, it.polygon.toList()) })
+        persistDataset(); showSample(currentIndex + 1)
+        status.text = "${target.annotations.size} polygon disalin ke frame berikutnya. Periksa posisi objek dan hapus jika meleset."
+    }
+
+    private fun extractVideoFrames(uri: android.net.Uri) {
+        val retriever = MediaMetadataRetriever()
+        var added = 0
+        val sourceName = "video_${System.currentTimeMillis()}"
+        try {
+            contentResolver.openFileDescriptor(uri, "r")?.use { descriptor ->
+                retriever.setDataSource(descriptor.fileDescriptor)
+                val durationMs = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_DURATION)?.toLongOrNull()
+                    ?: error("Durasi video tidak terbaca")
+                val frameCount = ((durationMs + videoSampleIntervalMs - 1) / videoSampleIntervalMs)
+                    .coerceAtMost(maxVideoFramesPerImport.toLong()).toInt()
+                require(frameCount > 0) { "Video kosong" }
+                for (i in 0 until frameCount) {
+                    val timestampMs = i * videoSampleIntervalMs
+                    val frame = retriever.getFrameAtTime(timestampMs * 1000L, MediaMetadataRetriever.OPTION_CLOSEST) ?: continue
+                    val scale = min(1f, 1600f / max(frame.width, frame.height))
+                    val resized = if (scale < 1f) Bitmap.createScaledBitmap(frame,
+                        (frame.width * scale).toInt().coerceAtLeast(1),
+                        (frame.height * scale).toInt().coerceAtLeast(1), true) else frame
+                    val file = File(imageDir, "${sourceName}_${timestampMs}.jpg")
+                    file.outputStream().use { resized.compress(Bitmap.CompressFormat.JPEG, 92, it) }
+                    if (resized !== frame) resized.recycle()
+                    frame.recycle()
+                    synchronized(samples) { samples.add(Sample(file, mutableListOf(), sourceName, timestampMs)) }
+                    added++
+                }
+            } ?: error("Video tidak dapat dibuka")
+        } catch (t: Throwable) {
+            runOnUiThread { statusOrToast("Impor video gagal: ${t.message}") }
+        } finally { runCatching { retriever.release() } }
+        if (added > 0) runOnUiThread {
+            persistDataset(); showSample(samples.lastIndex)
+            status.text = "$added frame berhasil diambil. Tandai objek, lalu gunakan salin polygon untuk mempercepat frame berikutnya."
+        }
     }
 
     private fun persistDataset() {
         runCatching {
-            val root = JSONObject().put("version", 2)
+            val root = JSONObject().put("version", 3)
             val list = JSONArray()
             samples.filter { it.file.exists() }.forEach { sample ->
                 val anns = JSONArray()
@@ -178,7 +249,9 @@ class GsTrainingCenterActivity : AppCompatActivity() {
                     ann.polygon.forEach { points.put(JSONArray().put(it.first.toDouble()).put(it.second.toDouble())) }
                     anns.put(JSONObject().put("label", ann.label).put("polygon", points))
                 }
-                list.put(JSONObject().put("file", sample.file.name).put("annotations", anns))
+                list.put(JSONObject().put("file", sample.file.name).put("annotations", anns)
+                    .put("sourceVideo", sample.sourceVideo ?: JSONObject.NULL)
+                    .put("timestampMs", sample.timestampMs ?: JSONObject.NULL))
             }
             root.put("samples", list)
             metadataFile.parentFile?.mkdirs()
@@ -207,7 +280,8 @@ class GsTrainingCenterActivity : AppCompatActivity() {
                         }
                         if (polygon.size >= 3) annotations.add(Annotation(ann.optString("label", "tank"), polygon))
                     }
-                    samples.add(Sample(file, annotations))
+                    samples.add(Sample(file, annotations, item.optString("sourceVideo").takeIf { it.isNotBlank() && it != "null" },
+                        if (item.isNull("timestampMs")) null else item.optLong("timestampMs")))
                 }
             }
             // Recover older imported images that existed before metadata persistence was added.
