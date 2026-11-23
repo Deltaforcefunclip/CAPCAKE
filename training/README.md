@@ -8,9 +8,12 @@ Requires Python 3.10+ and Pillow:
 ```bash
 python -m pip install -r requirements.txt
 python prepare_gs_dataset.py CAPCAKE_GS_dataset.zip --out gs_training_data
+
+# Optional: one-video pipeline smoke test only
+python prepare_gs_dataset.py CAPCAKE_GS_dataset.zip --out gs_training_data --quick-smoke-test
 ```
 
-Output: `train/`, `val/`, and `dataset_summary.json`. Frames from one source video are grouped together where filenames carry the video prefix. With only one source video, no independent video-level validation split can be made.
+Output: `train/`, `val/`, and `dataset_summary.json`. Frames from one source video are grouped together where filenames carry the video prefix. With only one source video, no independent video-level validation split can be made. For a **pipeline smoke test only**, you may deliberately split frames from that same video using `--quick-smoke-test` (or `--allow-same-video-validation`). This is not a valid accuracy/generalization evaluation because neighboring frames can be very similar. The default remains the leakage-safe video-grouped split.
 
 ## 2. Convert to YOLO segmentation format
 ```bash
