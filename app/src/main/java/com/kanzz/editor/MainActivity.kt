@@ -128,6 +128,7 @@ class MainActivity : AppCompatActivity() {
         var lastHardSeekAtMs: Long = 0L,
         var lastMasterSpeed: Float = 1f,
         var effectSignature: String? = null,
+        var chromaKeyEffect: ChromaKeyGlEffect? = null,
         var failed: Boolean = false
     )
     private val overlayPreviewSessions = linkedMapOf<String, OverlayPreviewSession>()
@@ -5147,7 +5148,10 @@ class MainActivity : AppCompatActivity() {
         overlayPreviewSessions.clear()
     }
 
-    private fun buildOverlayPreviewEffects(clip: OverlayVideoClip): List<androidx.media3.common.Effect> {
+    private fun buildOverlayPreviewEffects(
+        clip: OverlayVideoClip,
+        chromaEffect: ChromaKeyGlEffect? = null
+    ): List<androidx.media3.common.Effect> {
         val effects = mutableListOf<androidx.media3.common.Effect>()
         if (clip.cropLeft > 0f || clip.cropTop > 0f || clip.cropRight > 0f || clip.cropBottom > 0f) {
             val left = -1f + 2f * clip.cropLeft.coerceIn(0f, 0.97f)
@@ -5157,7 +5161,9 @@ class MainActivity : AppCompatActivity() {
             if (left < right && bottom < top) effects.add(Crop(left, right, bottom, top))
         }
         if (clip.chromaKeyEnabled) {
-            effects.add(ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness))
+            effects.add(chromaEffect ?: ChromaKeyGlEffect(
+                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
+            ))
         }
         return effects
     }
@@ -5201,7 +5207,9 @@ class MainActivity : AppCompatActivity() {
             overlayView.elevation = dp(4).toFloat() + clip.trackIndex
             applyOverlayPreviewTransform(clip)
 
-            val effectSignature = "${clip.chromaKeyEnabled}:${clip.chromaKeyColor}:${clip.chromaKeyThreshold}:${clip.chromaKeySoftness}:${clip.cropLeft}:${clip.cropTop}:${clip.cropRight}:${clip.cropBottom}"
+            // Threshold/softness/warna diperbarui langsung pada uniform shader.
+            // Hanya perubahan struktur pipeline (aktif/nonaktif/crop) yang memerlukan pemasangan ulang.
+            val effectSignature = "${clip.chromaKeyEnabled}:${clip.cropLeft}:${clip.cropTop}:${clip.cropRight}:${clip.cropBottom}"
             val localPosition = if (selectedPreviewOnly) 0L else (position - clip.startTimeMs).coerceAtLeast(0L)
             if (session.preparedClipId != clip.id) {
                 val item = MediaItem.Builder()
@@ -5214,7 +5222,10 @@ class MainActivity : AppCompatActivity() {
                     ).build()
                 try {
                     overlayPlayer.setMediaItem(item, localPosition)
-                    overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip))
+                    session.chromaKeyEffect = if (clip.chromaKeyEnabled) {
+                        ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
+                    } else null
+                    overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
                     session.effectSignature = effectSignature
                     overlayPlayer.volume = clip.volume.coerceIn(0f, 2f)
                     overlayPlayer.prepare()
@@ -5233,9 +5244,11 @@ class MainActivity : AppCompatActivity() {
             } else if (!session.failed) {
                 if (session.effectSignature != effectSignature) {
                     runCatching {
-                        overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip))
+                        session.chromaKeyEffect = if (clip.chromaKeyEnabled) {
+                            ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
+                        } else null
+                        overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
                         session.effectSignature = effectSignature
-                        overlayPlayer.seekTo(localPosition)
                         recordPlaybackDiagnostic("OVERLAY_EFFECT_UPDATED clip=${clip.id.take(8)} enabled=${clip.chromaKeyEnabled}")
                     }.onFailure {
                         recordPlaybackDiagnostic("OVERLAY_EFFECT_ERROR clip=${clip.id.take(8)} ${it.javaClass.simpleName}: ${it.message}")
@@ -5300,6 +5313,13 @@ class MainActivity : AppCompatActivity() {
         overlaySelectionOverlay?.invalidate()
     }
 
+    private fun updateOverlayChromaKeyShader(clip: OverlayVideoClip) {
+        val session = overlayPreviewSessions[clip.id] ?: return
+        session.chromaKeyEffect?.updateParameters(
+            clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
+        )
+    }
+
     private fun showOverlayChromaKeyDialog() {
         val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return
         val oldEnabled = clip.chromaKeyEnabled
@@ -5343,6 +5363,8 @@ class MainActivity : AppCompatActivity() {
         colorGroup.setOnCheckedChangeListener { group, checkedId ->
             val selected = group.findViewById<RadioButton>(checkedId)
             selectedColor = (selected?.tag as? Int) ?: selectedColor
+            clip.chromaKeyColor = selectedColor
+            updateOverlayChromaKeyShader(clip)
         }
         content.addView(TextView(this).apply {
             text = "Warna layar"; setTextColor(Color.LTGRAY); textSize = 12f
@@ -5366,7 +5388,7 @@ class MainActivity : AppCompatActivity() {
                     updateLabel(progress); update(progress / 100f)
                     clip.chromaKeyEnabled = enabled.isChecked
                     clip.chromaKeyColor = selectedColor
-                    syncOverlayVideoPreview()
+                    updateOverlayChromaKeyShader(clip)
                 }
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {}
@@ -5379,6 +5401,7 @@ class MainActivity : AppCompatActivity() {
         enabled.setOnCheckedChangeListener { _, checked ->
             clip.chromaKeyEnabled = checked
             clip.chromaKeyColor = selectedColor
+            // Toggle on/off memang mengubah pipeline, tetapi tidak melakukan seek video.
             syncOverlayVideoPreview()
         }
 
@@ -5391,6 +5414,7 @@ class MainActivity : AppCompatActivity() {
                 clip.chromaKeyThreshold = oldThreshold
                 clip.chromaKeySoftness = oldSoftness
                 undoStack.removeLastOrNull()
+                updateOverlayChromaKeyShader(clip)
                 syncOverlayVideoPreview()
             }
             .setPositiveButton("Terapkan") { _, _ ->
@@ -5405,6 +5429,7 @@ class MainActivity : AppCompatActivity() {
                 clip.chromaKeyThreshold = oldThreshold
                 clip.chromaKeySoftness = oldSoftness
                 undoStack.removeLastOrNull()
+                updateOverlayChromaKeyShader(clip)
                 syncOverlayVideoPreview()
             }
             .show()
