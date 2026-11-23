@@ -3166,9 +3166,7 @@ class MainActivity : AppCompatActivity() {
 
         // Navigasi clip baru mengambil alih target scrub lama. Hapus callback tertunda
         // agar seek lama tidak datang setelah animasi navigasi selesai.
-        handler.removeCallbacks(scrubSeekRunnable)
         handler.removeCallbacks(scrubFinishRunnable)
-        scrubSeekScheduled = false
         if (isTimelineScrubbing) {
             player.setScrubbingModeEnabled(false)
             player.setSeekParameters(SeekParameters.EXACT)
