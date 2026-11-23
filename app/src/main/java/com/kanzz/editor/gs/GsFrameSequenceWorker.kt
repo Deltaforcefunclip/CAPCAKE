@@ -93,13 +93,13 @@ class GsFrameSequenceWorker(
             // Second, separately reported stage: validate and index every processed frame.
             val manifestFile = File(outputDir, "sequence.json")
             manifestFile.bufferedWriter().use { writer ->
-                writer.append("{\\"fps\\":${profile.outputFps},\\"durationMs\\":$clipDuration,\\"frames\\":[")
+                writer.append("{\"fps\":${profile.outputFps},\"durationMs\":$clipDuration,\"frames\":[")
                 frameFiles.forEachIndexed { index, file ->
                     check(!cancelled.get()) { "Proses GS dibatalkan." }
                     check(file.isFile && file.length() > 0L) { "Frame GS hilang atau kosong: ${file.name}" }
                     if (index > 0) writer.append(',')
                     val timestampMs = (index * 1000.0 / profile.outputFps).toLong()
-                    writer.append("{\\"file\\":\\"${file.name}\\",\\"timeMs\\":$timestampMs}")
+                    writer.append("{\"file\":\"${file.name}\",\"timeMs\":$timestampMs}")
                     onProgress(
                         Phase.WRITING_FRAMES,
                         (50 + (index + 1) * 50 / frameFiles.size.coerceAtLeast(1)).coerceIn(50, 99),
