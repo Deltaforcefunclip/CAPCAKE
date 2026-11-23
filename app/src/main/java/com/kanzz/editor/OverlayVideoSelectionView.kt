@@ -26,8 +26,10 @@ class OverlayVideoSelectionView(
     private val density = resources.displayMetrics.density
     private val green = Color.rgb(24, 213, 138)
     private val border = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = green; style = Paint.Style.STROKE; strokeWidth = 2f * density }
+    private val cropBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.RED; style = Paint.Style.STROKE; strokeWidth = 2f * density }
     private val handle = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; style = Paint.Style.FILL }
     private val handleBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = green; style = Paint.Style.STROKE; strokeWidth = 1.5f * density }
+    private val cropHandleBorder = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.RED; style = Paint.Style.STROKE; strokeWidth = 1.5f * density }
     private val guide = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = green; alpha = 190; strokeWidth = 1f * density }
     private val stem = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = green; strokeWidth = 2f * density }
     private var mode = 0
@@ -100,12 +102,17 @@ class OverlayVideoSelectionView(
             val t = -g.hh + 2f * g.hh * c.cropTop
             val b = g.hh - 2f * g.hh * c.cropBottom
             val cropRect = RectF(l, t, r, b)
-            canvas.drawRect(cropRect, border)
+            canvas.drawRect(cropRect, cropBorder)
             val points = arrayOf(
                 l to t, r to t, l to b, r to b,
                 ((l+r)/2f) to t, ((l+r)/2f) to b, l to ((t+b)/2f), r to ((t+b)/2f)
             )
-            points.forEach { (x,y) -> canvas.drawCircle(x,y,6f*density,handle); canvas.drawCircle(x,y,6f*density,handleBorder) }
+            val halfHandle = 6f * density
+            points.forEach { (x,y) ->
+                val square = RectF(x-halfHandle, y-halfHandle, x+halfHandle, y+halfHandle)
+                canvas.drawRect(square, handle)
+                canvas.drawRect(square, cropHandleBorder)
+            }
         } else {
             canvas.drawRect(RectF(-g.hw, -g.hh, g.hw, g.hh), border)
             val corners = arrayOf(-g.hw to -g.hh, g.hw to -g.hh, -g.hw to g.hh, g.hw to g.hh)
