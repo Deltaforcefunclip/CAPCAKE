@@ -42,6 +42,7 @@ class GsFrameSequenceWorker(
                 ?: throw IllegalStateException("Belum ada model GS aktif. Impor model .gspkg terlebih dahulu.")
             val runtime = when (installed.manifest.runtime) {
                 GsTfliteSsdMaskRuntime.RUNTIME_ID -> GsTfliteSsdMaskRuntime()
+                GsTfliteYoloSegRuntime.RUNTIME_ID -> GsTfliteYoloSegRuntime()
                 else -> throw IllegalStateException("Runtime model tidak didukung: ${installed.manifest.runtime}")
             }
             model = runtime.load(installed.manifest, installed.modelFile)
