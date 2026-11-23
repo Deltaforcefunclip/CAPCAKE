@@ -24,8 +24,6 @@ class GsFrameProcessor(
         val selected = if (preferred.isNotEmpty()) preferred else {
             GsTargetSelector.select(detections, emptyList(), model.manifest.fallbackLabels)
         }
-        require(selected.isNotEmpty()) { "Objek target tidak ditemukan pada frame ini." }
-
         val keepMask = Bitmap.createBitmap(frame.width, frame.height, Bitmap.Config.ARGB_8888)
         val maskCanvas = Canvas(keepMask)
         val paint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
