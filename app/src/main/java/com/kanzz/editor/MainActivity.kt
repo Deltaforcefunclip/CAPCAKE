@@ -5277,8 +5277,10 @@ class MainActivity : AppCompatActivity() {
                             overlayPlayer.setPlaybackSpeed(masterSpeed)
                     }
                 } else if (isTimelineScrubbing) {
-                    if (now - session.lastHardSeekAtMs >= 100L &&
-                        kotlin.math.abs(overlayPlayer.currentPosition - localPosition) > 55L
+                    // Scrub lambat tetap harus menggerakkan frame overlay.
+                    // Ambang drift kecil mencegah posisi tertahan di dalam toleransi lama 55 ms.
+                    if (now - session.lastHardSeekAtMs >= 60L &&
+                        kotlin.math.abs(overlayPlayer.currentPosition - localPosition) > 12L
                     ) {
                         overlayPlayer.seekTo(localPosition)
                         session.lastHardSeekAtMs = now
