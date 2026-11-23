@@ -353,6 +353,9 @@ class MainActivity : AppCompatActivity() {
     private var isRefreshingEditedPreview = false
     private var previewQualityShortSide = 720
     private var selectedPreviewRatio = ""
+    // Cache rasio sumber utama agar bingkai seleksi tidak bergantung pada ukuran jendela PlayerView.
+    private var cachedMainVideoAspectSourceUri: String? = null
+    private var cachedMainVideoAspectRatio: Float? = null
     private var previewRatioOverlay: View? = null
     private var previewScale = 1f
     private var previewRotation = 0f
@@ -4958,25 +4961,48 @@ class MainActivity : AppCompatActivity() {
      */
     private fun getMainVideoContentRectInSelectionOverlay(): RectF {
         val overlay = videoSelectionOverlay
-        val contentFrame = playerView.findViewById<View>(androidx.media3.ui.R.id.exo_content_frame)
-        val playerLocation = IntArray(2)
-        val overlayLocation = IntArray(2)
-        playerView.getLocationOnScreen(playerLocation)
-        overlay.getLocationOnScreen(overlayLocation)
+        val frameW = previewFrameContainer.width.toFloat().coerceAtLeast(1f)
+        val frameH = previewFrameContainer.height.toFloat().coerceAtLeast(1f)
 
-        val frameW = (contentFrame?.width ?: 0).takeIf { it > 0 }?.toFloat()
-            ?: overlay.width.toFloat().coerceAtLeast(1f)
-        val frameH = (contentFrame?.height ?: 0).takeIf { it > 0 }?.toFloat()
-            ?: overlay.height.toFloat().coerceAtLeast(1f)
-        val size = player.videoSize
-        var sourceW = size.width.toFloat()
-        var sourceH = size.height.toFloat()
-        if (size.unappliedRotationDegrees == 90 || size.unappliedRotationDegrees == 270) {
-            val swap = sourceW
-            sourceW = sourceH
-            sourceH = swap
+        // Utamakan ukuran video aktif dari decoder. Jika belum tersedia (misalnya
+        // sebelum frame pertama), baca metadata file sumber klip yang sedang dipilih.
+        val videoSize = player.videoSize
+        var aspect = if (videoSize.width > 0 && videoSize.height > 0) {
+            var w = videoSize.width.toFloat()
+            var h = videoSize.height.toFloat()
+            if (videoSize.unappliedRotationDegrees == 90 || videoSize.unappliedRotationDegrees == 270) {
+                val swap = w; w = h; h = swap
+            }
+            w / h.coerceAtLeast(1f)
+        } else 0f
+
+        val selected = videoClipManager.find(selectedVideoClipId)
+        val sourceUri = selected?.sourceUri
+        if (aspect <= 0f && !sourceUri.isNullOrBlank()) {
+            if (cachedMainVideoAspectSourceUri != sourceUri) {
+                cachedMainVideoAspectSourceUri = sourceUri
+                cachedMainVideoAspectRatio = null
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(this, Uri.parse(sourceUri))
+                    val w = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH)?.toFloatOrNull()
+                    val h = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT)?.toFloatOrNull()
+                    val rotation = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION)?.toIntOrNull() ?: 0
+                    if (w != null && h != null && w > 0f && h > 0f) {
+                        cachedMainVideoAspectRatio = if (rotation == 90 || rotation == 270) h / w else w / h
+                    }
+                } catch (error: Exception) {
+                    recordPlaybackDiagnostic("SELECTION_ASPECT_METADATA_ERROR ${error.javaClass.simpleName}: ${error.message}")
+                } finally {
+                    runCatching { retriever.release() }
+                }
+            }
+            aspect = cachedMainVideoAspectRatio ?: 0f
         }
-        val aspect = if (sourceW > 0f && sourceH > 0f) sourceW / sourceH else frameW / frameH
+        if (aspect <= 0f) aspect = frameW / frameH
+
+        // PlayerView memakai RESIZE_MODE_FIT: gambar sumber dipusatkan dan
+        // diperkecil proporsional di dalam seluruh preview frame.
         val fittedW: Float
         val fittedH: Float
         if (aspect >= frameW / frameH) {
@@ -4986,12 +5012,8 @@ class MainActivity : AppCompatActivity() {
             fittedH = frameH
             fittedW = frameH * aspect
         }
-        val left = if (contentFrame != null && contentFrame.width > 0)
-            playerLocation[0] - overlayLocation[0] + contentFrame.left.toFloat()
-        else (overlay.width - frameW) / 2f
-        val top = if (contentFrame != null && contentFrame.height > 0)
-            playerLocation[1] - overlayLocation[1] + contentFrame.top.toFloat()
-        else (overlay.height - frameH) / 2f
+        val left = (overlay.width - frameW) / 2f
+        val top = (overlay.height - frameH) / 2f
         val cx = left + frameW / 2f
         val cy = top + frameH / 2f
         return RectF(cx - fittedW / 2f, cy - fittedH / 2f, cx + fittedW / 2f, cy + fittedH / 2f)
@@ -5023,8 +5045,11 @@ class MainActivity : AppCompatActivity() {
         val exportFit = fit(exportW, exportH)
         val baseScale = clip.transformScale.coerceIn(0.2f, 4f)
         val scaleX = baseScale * (previewFit.first / previewW) / (exportFit.first / exportW)
-        val scaleY = baseScale * (previewFit.second / previewH) / (exportFit.second / exportH)
-        return scaleX.coerceIn(0.01f, 20f) to scaleY.coerceIn(0.01f, 20f)
+        // Satu faktor skala seragam menjaga rasio overlay. Skala Y yang dihitung
+        // terpisah sebelumnya membuat overlay tertekan vertikal ketika rasio output
+        // berbeda dari area preview. Pertahankan hitungan lebar yang sudah cocok.
+        val uniformScale = scaleX.coerceIn(0.01f, 20f)
+        return uniformScale to uniformScale
     }
 
     private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
