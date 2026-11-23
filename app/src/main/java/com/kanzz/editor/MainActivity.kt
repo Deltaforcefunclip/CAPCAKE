@@ -356,6 +356,9 @@ class MainActivity : AppCompatActivity() {
     // Cache rasio sumber utama agar bingkai seleksi tidak bergantung pada ukuran jendela PlayerView.
     private var cachedMainVideoAspectSourceUri: String? = null
     private var cachedMainVideoAspectRatio: Float? = null
+    // Rasio sumber utama khusus untuk konversi ukuran overlay saat export.
+    private var cachedOverlayScaleReferenceUri: String? = null
+    private var cachedOverlayScaleReferenceAspect: Float? = null
     private var previewRatioOverlay: View? = null
     private var previewScale = 1f
     private var previewRotation = 0f
@@ -5019,7 +5022,12 @@ class MainActivity : AppCompatActivity() {
         return RectF(cx - fittedW / 2f, cy - fittedH / 2f, cx + fittedW / 2f, cy + fittedH / 2f)
     }
 
-    /** Skala compositor yang mempertahankan ukuran overlay dalam piksel relatif terhadap kanvas preview. */
+    /**
+     * Konversi skala overlay berdasarkan gambar VIDEO UTAMA, bukan rasio video overlay.
+     * Preview dan export sama-sama menampilkan sumber utama dengan FIT; saat rasio
+     * kanvas berubah, area gambar utama yang terlihat ikut berubah. Overlay harus
+     * mengikuti perubahan area gambar tersebut agar ukuran relatifnya tetap sama.
+     */
     private fun calculateOverlayExportScale(
         clip: OverlayVideoClip,
         canvasWidth: Int,
@@ -5027,28 +5035,69 @@ class MainActivity : AppCompatActivity() {
     ): Pair<Float, Float> {
         val previewW = previewFrameContainer.width.coerceAtLeast(1).toFloat()
         val previewH = previewFrameContainer.height.coerceAtLeast(1).toFloat()
-        val sourceW = clip.videoWidth.takeIf { it > 0 }?.toFloat() ?: previewW
-        val sourceH = clip.videoHeight.takeIf { it > 0 }?.toFloat() ?: previewH
+        val exportW = canvasWidth.coerceAtLeast(2).toFloat()
+        val exportH = canvasHeight.coerceAtLeast(2).toFloat()
 
-        fun fit(containerW: Float, containerH: Float): Pair<Float, Float> {
-            val aspect = sourceW / sourceH.coerceAtLeast(1f)
-            return if (aspect >= containerW / containerH) {
-                containerW to (containerW / aspect)
+        // Referensi selalu klip utama pertama, bukan dimensi video overlay.
+        val mainSourceUri = videoClipManager.clips.firstOrNull()?.sourceUri
+        var mainAspect = 0f
+        if (!mainSourceUri.isNullOrBlank()) {
+            if (cachedOverlayScaleReferenceUri != mainSourceUri) {
+                cachedOverlayScaleReferenceUri = mainSourceUri
+                cachedOverlayScaleReferenceAspect = null
+                val retriever = MediaMetadataRetriever()
+                try {
+                    retriever.setDataSource(this, Uri.parse(mainSourceUri))
+                    val width = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_VIDEO_WIDTH
+                    )?.toFloatOrNull() ?: 0f
+                    val height = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_VIDEO_HEIGHT
+                    )?.toFloatOrNull() ?: 0f
+                    val rotation = retriever.extractMetadata(
+                        MediaMetadataRetriever.METADATA_KEY_VIDEO_ROTATION
+                    )?.toIntOrNull() ?: 0
+                    if (width > 0f && height > 0f) {
+                        cachedOverlayScaleReferenceAspect =
+                            if (rotation % 180 != 0) height / width else width / height
+                    }
+                } catch (_: Exception) {
+                    cachedOverlayScaleReferenceAspect = null
+                } finally {
+                    try { retriever.release() } catch (_: Exception) {}
+                }
+            }
+            mainAspect = cachedOverlayScaleReferenceAspect ?: 0f
+        }
+        if (mainAspect <= 0f) {
+            mainAspect = cachedMainVideoAspectRatio
+                ?: (previewW / previewH.coerceAtLeast(1f))
+        }
+
+        fun fittedImage(containerW: Float, containerH: Float): Pair<Float, Float> {
+            return if (mainAspect >= containerW / containerH) {
+                containerW to (containerW / mainAspect)
             } else {
-                (containerH * aspect) to containerH
+                (containerH * mainAspect) to containerH
             }
         }
 
-        val previewFit = fit(previewW, previewH)
-        val exportW = canvasWidth.coerceAtLeast(2).toFloat()
-        val exportH = canvasHeight.coerceAtLeast(2).toFloat()
-        val exportFit = fit(exportW, exportH)
-        val baseScale = clip.transformScale.coerceIn(0.2f, 4f)
-        val scaleX = baseScale * (previewFit.first / previewW) / (exportFit.first / exportW)
-        // Satu faktor skala seragam menjaga rasio overlay. Skala Y yang dihitung
-        // terpisah sebelumnya membuat overlay tertekan vertikal ketika rasio output
-        // berbeda dari area preview. Pertahankan hitungan lebar yang sudah cocok.
-        val uniformScale = scaleX.coerceIn(0.01f, 20f)
+        val previewImage = fittedImage(previewW, previewH)
+        val exportImage = fittedImage(exportW, exportH)
+        val previewImageFraction = previewImage.first / previewW
+        val exportImageFraction = exportImage.first / exportW
+        val ratioCorrection = previewImageFraction /
+            exportImageFraction.coerceAtLeast(0.0001f)
+        val uniformScale = (clip.transformScale * ratioCorrection).coerceIn(0.01f, 20f)
+
+        recordPlaybackDiagnostic(
+            "OVERLAY_SCALE_REFERENCE mainAspect=$mainAspect " +
+                "preview=${previewW.toInt()}x${previewH.toInt()} " +
+                "export=${exportW.toInt()}x${exportH.toInt()} " +
+                "previewFit=${previewImage.first.toInt()}x${previewImage.second.toInt()} " +
+                "exportFit=${exportImage.first.toInt()}x${exportImage.second.toInt()} " +
+                "correction=$ratioCorrection scale=$uniformScale"
+        )
         return uniformScale to uniformScale
     }
 
