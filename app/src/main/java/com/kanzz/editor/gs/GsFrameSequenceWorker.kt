@@ -1,0 +1,114 @@
+package com.kanzz.editor.gs
+
+import android.content.Context
+import android.graphics.Bitmap
+import android.media.MediaMetadataRetriever
+import android.net.Uri
+import java.io.File
+import java.io.FileOutputStream
+import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.ceil
+import kotlin.math.max
+
+/**
+ * Real first-stage GS pass. It decodes sampled source frames, runs the installed
+ * segmentation model and stores green-screen PNG frames for the encoder stage.
+ * All callbacks are emitted from the worker thread; callers must marshal to UI.
+ */
+class GsFrameSequenceWorker(
+    context: Context,
+    private val source: Uri,
+    private val sourceStartMs: Long,
+    private val durationMs: Long,
+    private val outputDir: File,
+    private val onProgress: (phase: Phase, percent: Int, completed: Int, total: Int) -> Unit,
+    private val onComplete: (Result) -> Unit
+) {
+    enum class Phase { DETECTING, WRITING_FRAMES, COMPLETE }
+    data class Result(val directory: File, val frameCount: Int, val fps: Double, val durationMs: Long)
+
+    private val appContext = context.applicationContext
+    private val cancelled = AtomicBoolean(false)
+
+    fun cancel() { cancelled.set(true) }
+
+    fun run() {
+        var model: GsVisionModel? = null
+        val retriever = MediaMetadataRetriever()
+        try {
+            val store = GsModelStore(appContext)
+            val installed = store.getActiveModel()
+                ?: throw IllegalStateException("Belum ada model GS aktif. Impor model .gspkg terlebih dahulu.")
+            val runtime = when (installed.manifest.runtime) {
+                GsTfliteSsdMaskRuntime.RUNTIME_ID -> GsTfliteSsdMaskRuntime()
+                else -> throw IllegalStateException("Runtime model tidak didukung: ${installed.manifest.runtime}")
+            }
+            model = runtime.load(installed.manifest, installed.modelFile)
+            retriever.setDataSource(appContext, source)
+            val fpsValue = retriever.extractMetadata(MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE)
+                ?.toDoubleOrNull() ?: 30.0
+            val profile = GsProcessingProfile.fromSourceFps(fpsValue)
+            val clipDuration = durationMs.coerceAtLeast(1L)
+            val total = max(1, ceil(clipDuration * profile.processingFps / 1000.0).toInt())
+            if (outputDir.exists()) outputDir.deleteRecursively()
+            check(outputDir.mkdirs()) { "Tidak bisa membuat folder hasil GS." }
+            val processor = GsFrameProcessor(model)
+            var completed = 0
+
+            for (index in 0 until total) {
+                check(!cancelled.get()) { "Proses GS dibatalkan." }
+                val relativeMs = if (total == 1) 0L else
+                    (index * 1_000_000.0 / profile.processingFps).toLong() / 1000L
+                if (relativeMs >= clipDuration) break
+                val frame = retriever.getFrameAtTime(
+                    (sourceStartMs + relativeMs) * 1000L,
+                    MediaMetadataRetriever.OPTION_CLOSEST
+                ) ?: throw IllegalStateException("Gagal membaca frame pada ${relativeMs} ms.")
+                val processed = try {
+                    processor.process(frame)
+                } finally {
+                    frame.recycle()
+                }
+                try {
+                    val file = File(outputDir, "gs_%06d.png".format(index))
+                    FileOutputStream(file).use { stream ->
+                        check(processed.bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
+                            "Gagal menyimpan frame GS."
+                        }
+                    }
+                } finally {
+                    processed.bitmap.recycle()
+                }
+                completed++
+                val detectPercent = (completed * 50 / total).coerceIn(0, 50)
+                onProgress(Phase.DETECTING, detectPercent, completed, total)
+                onProgress(
+                    Phase.WRITING_FRAMES,
+                    (50 + completed * 50 / total).coerceIn(50, 99),
+                    completed,
+                    total
+                )
+            }
+            check(!cancelled.get()) { "Proses GS dibatalkan." }
+            onProgress(Phase.COMPLETE, 100, completed, total)
+            onComplete(Result(outputDir, completed, profile.outputFps, clipDuration))
+        } catch (error: Throwable) {
+            outputDir.deleteRecursively()
+            onComplete(ResultFailure(error))
+        } finally {
+            runCatching { model?.close() }
+            runCatching { retriever.release() }
+        }
+    }
+
+    // Kept as a sealed callback payload without hiding the original exception.
+    private fun onComplete(failure: ResultFailure) {
+        onFailure(failure.error)
+    }
+
+    private fun onFailure(error: Throwable) {
+        onComplete(ResultFailure(error))
+    }
+
+    data class ResultFailure(val error: Throwable)
+}
