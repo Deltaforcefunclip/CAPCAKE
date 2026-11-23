@@ -2062,10 +2062,6 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(22), dp(5), dp(22), dp(5))
         }
 
-        trainingButton.setOnClickListener {
-            popup.dismiss()
-            startActivity(android.content.Intent(this, com.kanzz.editor.gs.GsTrainingCenterActivity::class.java))
-        }
         playButton.setOnClickListener {
             recordPlaybackDiagnostic("PLAY_BUTTON_TAP isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
             // Tombol play selalu melepas seleksi clip dari semua jenis layer.
@@ -3493,6 +3489,10 @@ class MainActivity : AppCompatActivity() {
         playButton.setOnClickListener {
             previewPlayer.playWhenReady = !previewPlayer.isPlaying
             playButton.text = if (previewPlayer.isPlaying) "Ⅱ Pause" else "▶ Play"
+        }
+        trainingButton.setOnClickListener {
+            popup.dismiss()
+            startActivity(android.content.Intent(this, com.kanzz.editor.gs.GsTrainingCenterActivity::class.java))
         }
         renderButton.setOnClickListener {
             if (renderStarted) return@setOnClickListener
