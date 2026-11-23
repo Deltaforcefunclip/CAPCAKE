@@ -41,7 +41,7 @@ class GsModelStore(context: Context) {
                     val manifestFile = File(directory, GsModelManifest.PACKAGE_MANIFEST_FILE)
                     val modelFile = File(directory, GsModelManifest.PACKAGE_MODEL_FILE)
                     require(manifestFile.isFile && modelFile.isFile)
-                    val manifest = GsModelManifest.fromJson(manifestFile.readText())
+                    val manifest = GsModelManifest.fromJson(JSONObject(manifestFile.readText()))
                     require(sha256(modelFile) == manifest.modelSha256.lowercase())
                     InstalledModel(directory.name, manifest, modelFile)
                 }.getOrNull()
