@@ -129,6 +129,7 @@ class MainActivity : AppCompatActivity() {
         var lastMasterSpeed: Float = 1f,
         var effectSignature: String? = null,
         var chromaKeyEffect: ChromaKeyGlEffect? = null,
+        var lastChromaRefreshAtMs: Long = 0L,
         var failed: Boolean = false
     )
     private val overlayPreviewSessions = linkedMapOf<String, OverlayPreviewSession>()
@@ -5318,6 +5319,15 @@ class MainActivity : AppCompatActivity() {
         session.chromaKeyEffect?.updateParameters(
             clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
         )
+        // Saat pause tidak ada frame baru untuk menggambar uniform yang berubah.
+        // Refresh frame terakhir secara terbatas, tanpa memasang ulang efek/pipeline.
+        if (!player.isPlaying) {
+            val now = android.os.SystemClock.elapsedRealtime()
+            if (now - session.lastChromaRefreshAtMs >= 110L) {
+                session.lastChromaRefreshAtMs = now
+                session.player.seekTo(session.player.currentPosition)
+            }
+        }
     }
 
     private fun showOverlayChromaKeyDialog() {
