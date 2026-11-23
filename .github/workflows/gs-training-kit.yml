@@ -19,4 +19,4 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install -r training/requirements.txt
-      - run: python -m py_compile training/prepare_gs_dataset.py
+      - run: python -m py_compile training/prepare_gs_dataset.py training/convert_coco_to_yolo_seg.py training/train_gs_seg.py
