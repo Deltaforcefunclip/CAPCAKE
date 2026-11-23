@@ -63,6 +63,7 @@ import androidx.media3.effect.CanvasOverlay
 import androidx.media3.effect.OverlayEffect
 import androidx.media3.effect.RgbMatrix
 import androidx.media3.transformer.Effects
+import com.kanzz.editor.gs.GsFrameSequenceWorker
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
@@ -177,6 +178,7 @@ class MainActivity : AppCompatActivity() {
     private var exportTransformer: Transformer? = null
     // Penyalinan file dan pembacaan metadata hasil export tidak boleh membebani UI thread.
     private val exportFinalizeExecutor = Executors.newSingleThreadExecutor()
+    private val gsProcessingExecutor = Executors.newSingleThreadExecutor()
     private var exportDialog: androidx.appcompat.app.AlertDialog? = null
     private var exportProgressBar: ProgressBar? = null
     private var exportProgressText: TextView? = null
@@ -3377,9 +3379,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Jendela GS khusus untuk klip overlay yang sedang terseleksi.
-     * Tombol Play/Render disiapkan secara visual; fungsinya akan ditentukan
-     * pada tahap berikutnya.
+     * GS first pass: decode source frames, run the active segmentation model,
+     * and save the green-screen frame sequence off the UI thread.
      */
     private fun showOverlayGsPopup() {
         val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId }
@@ -3400,10 +3401,7 @@ class MainActivity : AppCompatActivity() {
             }
             elevation = dp(20).toFloat()
         }
-
-        val previewFrame = FrameLayout(this).apply {
-            setBackgroundColor(Color.BLACK)
-        }
+        val previewFrame = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
         val previewPlayerView = PlayerView(this).apply {
             useController = false
             resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
@@ -3411,69 +3409,35 @@ class MainActivity : AppCompatActivity() {
         }
         val previewPlayer = ExoPlayer.Builder(this).build()
         previewPlayerView.player = previewPlayer
-        previewFrame.addView(
-            previewPlayerView,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                FrameLayout.LayoutParams.MATCH_PARENT
-            )
-        )
-        popupContent.addView(
-            previewFrame,
-            LinearLayout.LayoutParams(previewWidth, dp(130))
-        )
+        previewFrame.addView(previewPlayerView, FrameLayout.LayoutParams(-1, -1))
+        popupContent.addView(previewFrame, LinearLayout.LayoutParams(previewWidth, dp(130)))
 
         runCatching {
             previewPlayer.setMediaItem(MediaItem.fromUri(Uri.parse(clip.sourceUri)))
             previewPlayer.seekTo(clip.sourceStartMs)
             previewPlayer.prepare()
             previewPlayer.playWhenReady = false
-        }.onFailure {
-            Log.w("CAPCAKE_GS", "Gagal memuat preview klip overlay", it)
-        }
+        }.onFailure { Log.w("CAPCAKE_GS", "Gagal memuat preview klip overlay", it) }
 
-        val progressFrame = FrameLayout(this).apply {
-            setPadding(0, dp(8), 0, dp(8))
-        }
-        val progressBar = ProgressBar(
-            this,
-            null,
-            android.R.attr.progressBarStyleHorizontal
-        ).apply {
+        val progressFrame = FrameLayout(this).apply { setPadding(0, dp(8), 0, dp(8)) }
+        val progressBar = ProgressBar(this, null, android.R.attr.progressBarStyleHorizontal).apply {
             max = 100
             progress = 0
             progressTintList = android.content.res.ColorStateList.valueOf(green)
             progressBackgroundTintList = android.content.res.ColorStateList.valueOf(Color.DKGRAY)
         }
-        progressFrame.addView(
-            progressBar,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                dp(8),
-                Gravity.CENTER
-            )
-        )
+        progressFrame.addView(progressBar, FrameLayout.LayoutParams(-1, dp(8), Gravity.CENTER))
         val progressPercent = TextView(this).apply {
-            text = "0%"
+            text = "Siap"
             textSize = 10f
             gravity = Gravity.CENTER
             setTextColor(Color.WHITE)
         }
-        progressFrame.addView(
-            progressPercent,
-            FrameLayout.LayoutParams(
-                FrameLayout.LayoutParams.MATCH_PARENT,
-                dp(22),
-                Gravity.CENTER
-            )
-        )
-        popupContent.addView(
-            progressFrame,
-            LinearLayout.LayoutParams(previewWidth, dp(28))
-        )
+        progressFrame.addView(progressPercent, FrameLayout.LayoutParams(-1, dp(22), Gravity.CENTER))
+        popupContent.addView(progressFrame, LinearLayout.LayoutParams(previewWidth, dp(28)))
 
-        fun makeGsButton(label: String, accent: Boolean = false): TextView {
-            return TextView(this).apply {
+        fun makeGsButton(label: String, accent: Boolean = false): TextView =
+            TextView(this).apply {
                 text = label
                 textSize = 12f
                 gravity = Gravity.CENTER
@@ -3486,41 +3450,23 @@ class MainActivity : AppCompatActivity() {
                     cornerRadius = dp(7).toFloat()
                 }
             }
-        }
 
-        val actionRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
+        val actionRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         val playButton = makeGsButton("▶ Play")
         val renderButton = makeGsButton("Render", true)
-        actionRow.addView(playButton, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-            rightMargin = dp(5)
-        })
-        actionRow.addView(renderButton, LinearLayout.LayoutParams(0, dp(38), 1f).apply {
-            leftMargin = dp(5)
-        })
+        actionRow.addView(playButton, LinearLayout.LayoutParams(0, dp(38), 1f).apply { rightMargin = dp(5) })
+        actionRow.addView(renderButton, LinearLayout.LayoutParams(0, dp(38), 1f).apply { leftMargin = dp(5) })
         popupContent.addView(actionRow, LinearLayout.LayoutParams(previewWidth, dp(38)))
 
-        val confirmRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER
-        }
+        val confirmRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         val cancelButton = makeGsButton("Cancel")
         val okButton = makeGsButton("OK", true)
-        confirmRow.addView(cancelButton, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
-            rightMargin = dp(5)
-        })
-        confirmRow.addView(okButton, LinearLayout.LayoutParams(0, dp(36), 1f).apply {
-            leftMargin = dp(5)
-        })
-        popupContent.addView(
-            confirmRow,
-            LinearLayout.LayoutParams(previewWidth, dp(36)).apply {
-                topMargin = dp(8)
-            }
-        )
+        confirmRow.addView(cancelButton, LinearLayout.LayoutParams(0, dp(36), 1f).apply { rightMargin = dp(5) })
+        confirmRow.addView(okButton, LinearLayout.LayoutParams(0, dp(36), 1f).apply { leftMargin = dp(5) })
+        popupContent.addView(confirmRow, LinearLayout.LayoutParams(previewWidth, dp(36)).apply { topMargin = dp(8) })
 
+        var worker: GsFrameSequenceWorker? = null
+        var renderStarted = false
         val popup = android.widget.PopupWindow(
             popupContent,
             android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
@@ -3531,19 +3477,81 @@ class MainActivity : AppCompatActivity() {
             isOutsideTouchable = true
             elevation = dp(20).toFloat()
             setOnDismissListener {
+                if (renderStarted) worker?.cancel()
                 previewPlayerView.player = null
                 previewPlayer.release()
             }
         }
-        cancelButton.setOnClickListener { popup.dismiss() }
-        okButton.setOnClickListener { popup.dismiss() }
 
-        popup.showAtLocation(
-            editorOverlayRoot,
-            Gravity.CENTER,
-            0,
-            0
-        )
+        playButton.setOnClickListener {
+            previewPlayer.playWhenReady = !previewPlayer.isPlaying
+            playButton.text = if (previewPlayer.isPlaying) "Ⅱ Pause" else "▶ Play"
+        }
+        renderButton.setOnClickListener {
+            if (renderStarted) return@setOnClickListener
+            renderStarted = true
+            renderButton.isEnabled = false
+            progressBar.progress = 0
+            progressPercent.text = "Memeriksa model GS…"
+            val outputDir = File(cacheDir, "gs_frames_${System.currentTimeMillis()}")
+            val sourceUri = Uri.parse(clip.sourceUri)
+            val sourceStart = clip.sourceStartMs
+            val sourceDuration = clip.durationMs.coerceAtLeast(1L)
+            worker = GsFrameSequenceWorker(
+                context = this,
+                source = sourceUri,
+                sourceStartMs = sourceStart,
+                durationMs = sourceDuration,
+                outputDir = outputDir,
+                onProgress = { phase, percent, completed, total ->
+                    handler.post {
+                        if (!popup.isShowing) return@post
+                        progressBar.progress = percent
+                        progressBar.progressTintList = android.content.res.ColorStateList.valueOf(
+                            if (phase == GsFrameSequenceWorker.Phase.DETECTING) green else Color.rgb(45, 145, 255)
+                        )
+                        progressPercent.text = when (phase) {
+                            GsFrameSequenceWorker.Phase.DETECTING -> "Deteksi & segmentasi • $completed/$total • $percent%"
+                            GsFrameSequenceWorker.Phase.WRITING_FRAMES -> "Menyimpan frame • $completed/$total • $percent%"
+                            GsFrameSequenceWorker.Phase.COMPLETE -> "Frame selesai • 100%"
+                        }
+                    }
+                },
+                onComplete = { result ->
+                    handler.post {
+                        if (!popup.isShowing) return@post
+                        progressBar.progress = 100
+                        progressPercent.text = "Frame siap: ${result.frameCount} • ${result.fps.toInt()} FPS"
+                        showMessage("Tahap GS 1 selesai. Frame hijau tersimpan sementara; penggabungan menjadi video belum dilakukan.")
+                        renderButton.isEnabled = true
+                        renderButton.text = "Selesai"
+                    }
+                },
+                onError = { error ->
+                    handler.post {
+                        if (!popup.isShowing) return@post
+                        progressPercent.text = "GS gagal"
+                        renderButton.isEnabled = true
+                        renderStarted = false
+                        Log.e("CAPCAKE_GS", "GS frame processing failed", error)
+                        showMessage(error.message ?: "Proses GS gagal.")
+                    }
+                }
+            )
+            gsProcessingExecutor.execute { worker?.run() }
+        }
+        cancelButton.setOnClickListener {
+            worker?.cancel()
+            popup.dismiss()
+        }
+        okButton.setOnClickListener {
+            if (renderStarted && progressBar.progress < 100) {
+                showMessage("Tunggu proses GS selesai sebelum menekan OK.")
+            } else {
+                popup.dismiss()
+            }
+        }
+        popup.showAtLocation(editorOverlayRoot, Gravity.CENTER, 0, 0)
     }
 
     /**
