@@ -1,34 +1,33 @@
 # CAPCAKE GS Training Kit
 
-## Status
-This kit performs safe COCO polygon dataset validation and train/validation
-preparation. It does **not** train model weights yet. A compatible instance
-segmentation model must ultimately export the CAPCAKE runtime contract
-`tflite_ssd_mask_v1` (FLOAT32 RGB input; boxes, classes, scores, count, masks).
+## Current stage
+The kit validates/prepares COCO polygon data and trains an Ultralytics YOLO instance-segmentation checkpoint. The first dataset should contain **weapon** annotations only. This creates a training checkpoint; it does not yet create a CAPCAKE-compatible `.gspkg`.
 
-## Prepare a dataset
+## 1. Prepare the COCO ZIP
 Requires Python 3.10+ and Pillow:
 ```bash
 python -m pip install -r requirements.txt
 python prepare_gs_dataset.py CAPCAKE_GS_dataset.zip --out gs_training_data
 ```
 
-Output:
-- `train/images/` and `train/annotations.json`
-- `val/images/` and `val/annotations.json`
-- `dataset_summary.json`
+Output: `train/`, `val/`, and `dataset_summary.json`. Frames from one source video are grouped together where filenames carry the video prefix. With only one source video, no independent video-level validation split can be made.
 
-Frames extracted from the same source gameplay video are grouped into the
-same split to reduce near-duplicate frame leakage. A single-source-video
-dataset cannot provide a true independent video validation set; collect
-several different gameplay videos before judging generalization.
+## 2. Convert to YOLO segmentation format
+```bash
+python convert_coco_to_yolo_seg.py gs_training_data --out gs_yolo_dataset
+```
+The converter preserves category names and polygon coordinates and writes `data.yaml`.
 
-## Required next training/export stage
-Train an instance-segmentation architecture that can be converted to the
-CAPCAKE tensor contract. Do not package a detect-only model: GS needs per-object
-masks to preserve the detected vehicle silhouette. After export, package
-exactly `manifest.json` and `model.tflite` in a `.gspkg` ZIP, with SHA-256
-matching the model file. See repository `GS_MODEL_PACKAGE.md`.
+## 3. Train
+Install training dependencies separately (PyTorch installation may need to match the computer's CUDA setup):
+```bash
+python -m pip install -r requirements-train.txt
+python train_gs_seg.py --data gs_yolo_dataset/data.yaml --epochs 100 --imgsz 640
+```
+The best checkpoint is written to `runs/gs/weapon-seg-v1/weights/best.pt`. Start with a small number of epochs to smoke-test the pipeline if compute is limited.
 
-The Android app only imports/runs a compatible model; dataset preparation on
-this computer is separate from APK installation.
+## Runtime compatibility warning
+YOLO segmentation output tensors are **not** the existing CAPCAKE `tflite_ssd_mask_v1` tensor contract. Do not rename or package `best.pt` as `.gspkg`. A separate export/runtime adapter must be implemented and tested on Android before the trained model can be imported into GS. The existing runtime contract expects FLOAT32 RGB input and SSD-style boxes/classes/scores/count/masks. This training stage deliberately stops at a verified segmentation checkpoint.
+
+## APK
+Dataset conversion/training runs outside Android. Changes in this folder do not require installing a new APK.
