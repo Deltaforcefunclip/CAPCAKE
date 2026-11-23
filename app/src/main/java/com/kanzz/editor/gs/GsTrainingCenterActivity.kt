@@ -12,14 +12,18 @@ import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.OutputStream
+import java.util.UUID
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlin.math.abs
 import kotlin.math.max
 import kotlin.math.min
 
 /** Dataset preparation on-device; neural-network training is intentionally external. */
 class GsTrainingCenterActivity : AppCompatActivity() {
-    private data class Sample(val file: File, var label: String = "tank", var polygon: List<Pair<Float, Float>> = emptyList())
+    private data class Annotation(val label: String, val polygon: List<Pair<Float, Float>>)
+    private data class Sample(val file: File, val annotations: MutableList<Annotation> = mutableListOf())
+
     private val samples = mutableListOf<Sample>()
     private val labels = listOf("tank", "armored_vehicle", "weapon")
     private var currentIndex = -1
@@ -30,6 +34,7 @@ class GsTrainingCenterActivity : AppCompatActivity() {
     private lateinit var sampleInfo: TextView
     private lateinit var modelInfo: TextView
     private val imageDir by lazy { File(filesDir, "gs/training/images").apply { mkdirs() } }
+    private val metadataFile by lazy { File(filesDir, "gs/training/dataset.json") }
 
     private val pickImages = registerForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNullOrEmpty()) return@registerForActivityResult
@@ -40,15 +45,16 @@ class GsTrainingCenterActivity : AppCompatActivity() {
                     ?: error("Gambar tidak dapat dibaca")
                 val scale = min(1f, 1600f / max(bitmap.width, bitmap.height))
                 val resized = if (scale < 1f) Bitmap.createScaledBitmap(bitmap, (bitmap.width * scale).toInt().coerceAtLeast(1), (bitmap.height * scale).toInt().coerceAtLeast(1), true) else bitmap
-                val file = File(imageDir, "gs_${System.currentTimeMillis()}_$added.jpg")
+                val file = File(imageDir, "gs_${UUID.randomUUID()}.jpg")
                 file.outputStream().use { resized.compress(Bitmap.CompressFormat.JPEG, 92, it) }
                 if (resized !== bitmap) resized.recycle()
                 bitmap.recycle()
                 samples.add(Sample(file)); added++
             }.onFailure { Toast.makeText(this, it.message ?: "Gagal membaca gambar", Toast.LENGTH_SHORT).show() }
         }
+        persistDataset()
         if (samples.isNotEmpty()) showSample(samples.lastIndex)
-        status.text = "$added gambar ditambahkan. Usap objek pada gambar untuk membuat polygon."
+        status.text = "$added gambar ditambahkan. Tandai objek pertama, lalu simpan objek."
     }
 
     private val importModel = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
@@ -70,6 +76,7 @@ class GsTrainingCenterActivity : AppCompatActivity() {
     private val exportDataset = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
         if (uri == null) return@registerForActivityResult
         runCatching {
+            persistDataset()
             contentResolver.openOutputStream(uri)?.use { writeDataset(it) } ?: error("Tujuan tidak dapat dibuat")
             Toast.makeText(this, "Dataset COCO berhasil diekspor.", Toast.LENGTH_LONG).show()
         }.onFailure { Toast.makeText(this, "Ekspor dataset gagal: ${it.message}", Toast.LENGTH_LONG).show() }
@@ -78,12 +85,13 @@ class GsTrainingCenterActivity : AppCompatActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         store = GsModelStore(this)
+        loadDataset()
         val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(15), dp(12), dp(15), dp(12)); setBackgroundColor(Color.rgb(17, 19, 20)) }
         val scroll = ScrollView(this)
         val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroll.addView(body); root.addView(scroll, LinearLayout.LayoutParams(-1, 0, 1f))
         body.addView(label("GS TRAINING CENTER", 22f, Color.rgb(24, 213, 138)))
-        body.addView(label("Kumpulkan gambar gameplay dan tandai bentuk tank/kendaraan/senjata.", 13f, Color.LTGRAY))
+        body.addView(label("Kumpulkan gambar gameplay dan tandai banyak objek dalam satu gambar.", 13f, Color.LTGRAY))
         body.addView(label("Alur: gambar → polygon objek → ekspor dataset → training model di komputer → impor .gspkg.", 12f, Color.WHITE))
         modelInfo = label("", 12f, Color.WHITE); body.addView(modelInfo)
         val modelRow = row()
@@ -95,14 +103,15 @@ class GsTrainingCenterActivity : AppCompatActivity() {
         body.addView(label("1. DATASET GAMBAR", 16f, Color.WHITE))
         body.addView(button("＋ Tambah gambar gameplay") { pickImages.launch(arrayOf("image/*")) }, full(44))
         sampleInfo = label("Belum ada gambar.", 12f, Color.LTGRAY); body.addView(sampleInfo)
-        body.addView(label("Jenis objek:", 12f, Color.LTGRAY))
+        body.addView(label("Jenis objek untuk polygon berikutnya:", 12f, Color.LTGRAY))
         labelSpinner = Spinner(this).apply { adapter = ArrayAdapter(this@GsTrainingCenterActivity, android.R.layout.simple_spinner_dropdown_item, listOf("Tank", "Kendaraan lapis baja", "Senjata")) }
         body.addView(labelSpinner, full(42))
         preview = PolygonView(this)
         body.addView(preview, LinearLayout.LayoutParams(-1, dp(270)).apply { topMargin = dp(6) })
         val annotate = row()
-        annotate.addView(button("Hapus tanda") { if (currentIndex >= 0) { samples[currentIndex].polygon = emptyList(); preview.setImage(samples[currentIndex].file, emptyList()) } }, weighted())
-        annotate.addView(button("Simpan anotasi") { saveAnnotation() }, weighted())
+        annotate.addView(button("Bersihkan garis") { preview.clearDraft() }, weighted())
+        annotate.addView(button("Simpan objek") { saveAnnotation() }, weighted())
+        annotate.addView(button("Hapus objek terakhir") { removeLastAnnotation() }, weighted())
         body.addView(annotate)
         val nav = row()
         nav.addView(button("‹ Sebelumnya") { showSample(currentIndex - 1) }, weighted())
@@ -110,7 +119,7 @@ class GsTrainingCenterActivity : AppCompatActivity() {
         body.addView(nav)
         body.addView(divider())
         body.addView(label("2. EKSPOR DATASET", 16f, Color.WHITE))
-        body.addView(label("Menghasilkan ZIP berisi gambar dan COCO polygon segmentation. Proses training neural network belum dilakukan di Android; dataset ini disiapkan untuk training eksternal.", 12f, Color.LTGRAY))
+        body.addView(label("Setiap gambar dapat memiliki beberapa polygon objek. Dataset tersimpan otomatis di penyimpanan aplikasi. Training model tetap dilakukan secara eksternal.", 12f, Color.LTGRAY))
         body.addView(button("Ekspor dataset COCO (.zip)") {
             if (samples.isEmpty()) Toast.makeText(this, "Tambahkan gambar terlebih dahulu.", Toast.LENGTH_SHORT).show()
             else exportDataset.launch("CAPCAKE_GS_dataset.zip")
@@ -119,26 +128,98 @@ class GsTrainingCenterActivity : AppCompatActivity() {
         root.addView(button("TUTUP") { finish() }, full(44))
         setContentView(root)
         refreshModel()
+        if (samples.isNotEmpty()) showSample(0)
     }
 
     private fun saveAnnotation() {
         if (currentIndex !in samples.indices) { status.text = "Pilih gambar terlebih dahulu."; return }
-        val polygon = preview.polygon()
+        val polygon = preview.draftPolygon()
         if (polygon.size < 3) { status.text = "Buat polygon minimal 3 titik dengan mengusap objek."; return }
-        val sample = samples[currentIndex]
-        sample.label = listOf("tank", "armored_vehicle", "weapon")[labelSpinner.selectedItemPosition.coerceIn(0, 2)]
-        sample.polygon = polygon
-        status.text = "Anotasi tersimpan: ${sample.label} • ${polygon.size} titik."
-        showSample(currentIndex)
+        val label = labels[labelSpinner.selectedItemPosition.coerceIn(0, 2)]
+        samples[currentIndex].annotations.add(Annotation(label, polygon))
+        persistDataset()
+        preview.setAnnotations(samples[currentIndex].annotations)
+        status.text = "Objek $label tersimpan. Total objek pada gambar: ${samples[currentIndex].annotations.size}. Tandai objek berikutnya."
+        updateSampleInfo()
+    }
+
+    private fun removeLastAnnotation() {
+        if (currentIndex !in samples.indices) return
+        val list = samples[currentIndex].annotations
+        if (list.isNotEmpty()) {
+            list.removeAt(list.lastIndex); persistDataset()
+            preview.setAnnotations(list)
+            status.text = "Objek terakhir dihapus."
+            updateSampleInfo()
+        } else status.text = "Belum ada objek untuk dihapus."
     }
 
     private fun showSample(index: Int) {
         if (index !in samples.indices) { if (samples.isNotEmpty()) Toast.makeText(this, "Tidak ada gambar lain.", Toast.LENGTH_SHORT).show(); return }
         currentIndex = index
-        val s = samples[index]
-        labelSpinner.setSelection(labels.indexOf(s.label).coerceAtLeast(0))
-        preview.setImage(s.file, s.polygon)
-        sampleInfo.text = "Gambar ${index + 1}/${samples.size} • ${s.file.name} • ${if (s.polygon.size >= 3) "sudah ditandai" else "belum ditandai"}"
+        preview.setImage(samples[index].file, samples[index].annotations)
+        updateSampleInfo()
+    }
+
+    private fun updateSampleInfo() {
+        if (currentIndex !in samples.indices) return
+        val s = samples[currentIndex]
+        sampleInfo.text = "Gambar ${currentIndex + 1}/${samples.size} • ${s.file.name} • ${s.annotations.size} objek tersimpan"
+    }
+
+    private fun persistDataset() {
+        runCatching {
+            val root = JSONObject().put("version", 2)
+            val list = JSONArray()
+            samples.filter { it.file.exists() }.forEach { sample ->
+                val anns = JSONArray()
+                sample.annotations.forEach { ann ->
+                    val points = JSONArray()
+                    ann.polygon.forEach { points.put(JSONArray().put(it.first.toDouble()).put(it.second.toDouble())) }
+                    anns.put(JSONObject().put("label", ann.label).put("polygon", points))
+                }
+                list.put(JSONObject().put("file", sample.file.name).put("annotations", anns))
+            }
+            root.put("samples", list)
+            metadataFile.parentFile?.mkdirs()
+            metadataFile.writeText(root.toString())
+        }.onFailure { statusOrToast("Gagal menyimpan dataset: ${it.message}") }
+    }
+
+    private fun loadDataset() {
+        imageDir.mkdirs()
+        runCatching {
+            if (metadataFile.isFile) {
+                val root = JSONObject(metadataFile.readText())
+                val list = root.optJSONArray("samples") ?: JSONArray()
+                for (i in 0 until list.length()) {
+                    val item = list.getJSONObject(i)
+                    val file = File(imageDir, item.getString("file"))
+                    if (!file.isFile || file.parentFile != imageDir) continue
+                    val annotations = mutableListOf<Annotation>()
+                    val arr = item.optJSONArray("annotations") ?: JSONArray()
+                    for (j in 0 until arr.length()) {
+                        val ann = arr.getJSONObject(j); val pts = ann.optJSONArray("polygon") ?: JSONArray()
+                        val polygon = mutableListOf<Pair<Float, Float>>()
+                        for (k in 0 until pts.length()) {
+                            val pair = pts.optJSONArray(k) ?: continue
+                            if (pair.length() >= 2) polygon.add(pair.getDouble(0).toFloat().coerceIn(0f, 1f) to pair.getDouble(1).toFloat().coerceIn(0f, 1f))
+                        }
+                        if (polygon.size >= 3) annotations.add(Annotation(ann.optString("label", "tank"), polygon))
+                    }
+                    samples.add(Sample(file, annotations))
+                }
+            }
+            // Recover older imported images that existed before metadata persistence was added.
+            imageDir.listFiles()?.filter { it.isFile && it.extension.lowercase() in setOf("jpg", "jpeg", "png") && samples.none { s -> s.file.name == it.name } }
+                ?.forEach { samples.add(Sample(it)) }
+            persistDataset()
+        }.onFailure { Toast.makeText(this, "Pemulihan dataset gagal: ${it.message}", Toast.LENGTH_LONG).show() }
+    }
+
+    private fun statusOrToast(message: String) {
+        if (::status.isInitialized) status.text = message
+        else Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
     }
 
     private fun refreshModel() {
@@ -156,6 +237,15 @@ class GsTrainingCenterActivity : AppCompatActivity() {
             }.show()
     }
 
+    private fun polygonArea(points: List<Pair<Float, Float>>, width: Int, height: Int): Double {
+        var sum = 0.0
+        for (i in points.indices) {
+            val a = points[i]; val b = points[(i + 1) % points.size]
+            sum += (a.first * width).toDouble() * (b.second * height) - (b.first * width).toDouble() * (a.second * height)
+        }
+        return abs(sum) / 2.0
+    }
+
     private fun writeDataset(output: OutputStream) {
         val images = JSONArray(); val annotations = JSONArray()
         val categories = JSONArray().put(JSONObject().put("id", 1).put("name", "tank"))
@@ -166,20 +256,22 @@ class GsTrainingCenterActivity : AppCompatActivity() {
             samples.forEachIndexed { index, sample ->
                 val bitmap = BitmapFactory.decodeFile(sample.file.absolutePath) ?: error("Gambar rusak: ${sample.file.name}")
                 val width = bitmap.width; val height = bitmap.height; bitmap.recycle()
-                images.put(JSONObject().put("id", index + 1).put("file_name", "images/${sample.file.name}").put("width", width).put("height", height))
+                val imageId = index + 1
+                images.put(JSONObject().put("id", imageId).put("file_name", "images/${sample.file.name}").put("width", width).put("height", height))
                 zip.putNextEntry(ZipEntry("images/${sample.file.name}"))
                 sample.file.inputStream().buffered().use { it.copyTo(zip) }; zip.closeEntry()
-                if (sample.polygon.size >= 3) {
-                    val xs = sample.polygon.map { it.first.coerceIn(0f, 1f) }; val ys = sample.polygon.map { it.second.coerceIn(0f, 1f) }
+                sample.annotations.forEach { ann ->
+                    if (ann.polygon.size < 3) return@forEach
+                    val xs = ann.polygon.map { it.first.coerceIn(0f, 1f) }; val ys = ann.polygon.map { it.second.coerceIn(0f, 1f) }
                     val polygon = JSONArray()
-                    sample.polygon.forEach { polygon.put((it.first.coerceIn(0f, 1f) * width).toDouble()); polygon.put((it.second.coerceIn(0f, 1f) * height).toDouble()) }
+                    ann.polygon.forEach { polygon.put((it.first.coerceIn(0f, 1f) * width).toDouble()); polygon.put((it.second.coerceIn(0f, 1f) * height).toDouble()) }
                     val minX = xs.minOrNull()!! * width; val maxX = xs.maxOrNull()!! * width
                     val minY = ys.minOrNull()!! * height; val maxY = ys.maxOrNull()!! * height
-                    val category = when (sample.label) { "armored_vehicle" -> 2; "weapon" -> 3; else -> 1 }
-                    annotations.put(JSONObject().put("id", annotationId++).put("image_id", index + 1).put("category_id", category)
+                    val category = when (ann.label) { "armored_vehicle" -> 2; "weapon" -> 3; else -> 1 }
+                    annotations.put(JSONObject().put("id", annotationId++).put("image_id", imageId).put("category_id", category)
                         .put("segmentation", JSONArray().put(polygon))
                         .put("bbox", JSONArray().put(minX).put(minY).put(maxX - minX).put(maxY - minY))
-                        .put("area", (maxX - minX) * (maxY - minY)).put("iscrowd", 0))
+                        .put("area", polygonArea(ann.polygon, width, height)).put("iscrowd", 0))
                 }
             }
             val coco = JSONObject().put("info", JSONObject().put("description", "CAPCAKE GS custom segmentation dataset"))
@@ -187,15 +279,15 @@ class GsTrainingCenterActivity : AppCompatActivity() {
             zip.putNextEntry(ZipEntry("annotations.json")); zip.write(coco.toString(2).toByteArray()); zip.closeEntry()
             zip.putNextEntry(ZipEntry("README.txt"))
             zip.write(("CAPCAKE GS DATASET\nCOCO polygon segmentation. Classes: tank, armored_vehicle, weapon.\n" +
-                "Images without polygons are negative/background samples. Train an instance-segmentation model externally.\n" +
-                "Export the trained compatible TFLite model as model.tflite plus manifest.json in a .gspkg ZIP.\n").toByteArray())
+                "Each image may contain multiple polygon annotations. Images without polygons are negative/background samples.\n" +
+                "Train an instance-segmentation model externally. Export compatible TFLite as model.tflite plus manifest.json in a .gspkg ZIP.\n").toByteArray())
             zip.closeEntry(); zip.finish()
         }
     }
 
     private fun label(s: String, size: Float, color: Int) = TextView(this).apply { text = s; textSize = size; setTextColor(color); setPadding(0, dp(5), 0, dp(5)) }
     private fun button(s: String, action: () -> Unit) = TextView(this).apply {
-        text = s; textSize = 13f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); setPadding(dp(7), dp(8), dp(7), dp(8))
+        text = s; textSize = 12f; gravity = Gravity.CENTER; setTextColor(Color.WHITE); setPadding(dp(5), dp(8), dp(5), dp(8))
         background = android.graphics.drawable.GradientDrawable().apply { setColor(Color.rgb(43, 48, 49)); cornerRadius = dp(7).toFloat(); setStroke(dp(1), Color.rgb(75, 88, 88)) }
         setOnClickListener { action() }
     }
@@ -207,13 +299,21 @@ class GsTrainingCenterActivity : AppCompatActivity() {
 
     private class PolygonView(context: android.content.Context) : View(context) {
         private var bitmap: Bitmap? = null
-        private val rect = RectF()
         private val points = mutableListOf<Pair<Float, Float>>()
+        private val annotations = mutableListOf<List<Pair<Float, Float>>>()
         private val imagePaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
         private val pathPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.rgb(24, 213, 138); style = Paint.Style.STROKE; strokeWidth = 4f }
         private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.YELLOW }
-        fun setImage(file: File, saved: List<Pair<Float, Float>>) { bitmap?.recycle(); bitmap = BitmapFactory.decodeFile(file.absolutePath); points.clear(); points.addAll(saved); invalidate() }
-        fun polygon() = points.toList()
+        fun setImage(file: File, saved: List<Annotation>) {
+            bitmap?.recycle(); bitmap = BitmapFactory.decodeFile(file.absolutePath)
+            setAnnotations(saved)
+        }
+        fun setAnnotations(saved: List<Annotation>) {
+            annotations.clear(); annotations.addAll(saved.map { it.polygon })
+            points.clear(); invalidate()
+        }
+        fun draftPolygon() = points.toList()
+        fun clearDraft() { points.clear(); invalidate() }
         private fun imageRect(): RectF {
             val b = bitmap ?: return RectF()
             val scale = min(width.toFloat() / b.width, height.toFloat() / b.height)
@@ -222,22 +322,29 @@ class GsTrainingCenterActivity : AppCompatActivity() {
         }
         override fun onDraw(canvas: Canvas) {
             super.onDraw(canvas); canvas.drawColor(Color.BLACK)
-            val b = bitmap ?: return; val r = imageRect(); rect.set(r); canvas.drawBitmap(b, null, r, imagePaint)
-            if (points.isNotEmpty()) {
-                val path = Path()
-                points.forEachIndexed { i, p ->
-                    val x = r.left + p.first * r.width(); val y = r.top + p.second * r.height()
-                    if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
-                    canvas.drawCircle(x, y, 4f, dotPaint)
-                }
-                if (points.size >= 3) path.close()
-                canvas.drawPath(path, pathPaint)
+            val b = bitmap ?: return; val r = imageRect(); canvas.drawBitmap(b, null, r, imagePaint)
+            annotations.forEach { drawPolygon(canvas, r, it, false) }
+            if (points.isNotEmpty()) drawPolygon(canvas, r, points, true)
+        }
+        private fun drawPolygon(canvas: Canvas, r: RectF, polygon: List<Pair<Float, Float>>, draft: Boolean) {
+            val path = Path()
+            polygon.forEachIndexed { i, p ->
+                val x = r.left + p.first * r.width(); val y = r.top + p.second * r.height()
+                if (i == 0) path.moveTo(x, y) else path.lineTo(x, y)
+                if (draft) canvas.drawCircle(x, y, 4f, dotPaint)
             }
+            if (polygon.size >= 3) path.close()
+            pathPaint.color = if (draft) Color.YELLOW else Color.rgb(24, 213, 138)
+            canvas.drawPath(path, pathPaint)
         }
         override fun onTouchEvent(e: MotionEvent): Boolean {
-            val b = bitmap ?: return false; val r = imageRect()
+            bitmap ?: return false
+            val r = imageRect()
             if (e.action == MotionEvent.ACTION_DOWN || e.action == MotionEvent.ACTION_MOVE) {
-                if (r.contains(e.x, e.y)) { points.add(((e.x-r.left)/r.width()) to ((e.y-r.top)/r.height())); invalidate() }
+                if (r.contains(e.x, e.y)) {
+                    points.add(((e.x-r.left)/r.width()).coerceIn(0f, 1f) to ((e.y-r.top)/r.height()).coerceIn(0f, 1f))
+                    invalidate()
+                }
                 return true
             }
             if (e.action == MotionEvent.ACTION_UP) { performClick(); return true }
