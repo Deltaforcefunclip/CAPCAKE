@@ -2062,6 +2062,10 @@ class MainActivity : AppCompatActivity() {
             setPadding(dp(22), dp(5), dp(22), dp(5))
         }
 
+        trainingButton.setOnClickListener {
+            popup.dismiss()
+            startActivity(android.content.Intent(this, com.kanzz.editor.gs.GsTrainingCenterActivity::class.java))
+        }
         playButton.setOnClickListener {
             recordPlaybackDiagnostic("PLAY_BUTTON_TAP isPlaying=${player.isPlaying} state=${player.playbackState} position=${player.currentPosition}ms")
             // Tombol play selalu melepas seleksi clip dari semua jenis layer.
@@ -3460,10 +3464,6 @@ class MainActivity : AppCompatActivity() {
 
         val trainingButton = makeGsButton("⚙  GS Training Center")
         popupContent.addView(trainingButton, LinearLayout.LayoutParams(previewWidth, dp(36)).apply { topMargin = dp(6) })
-        trainingButton.setOnClickListener {
-            popup.dismiss()
-            startActivity(android.content.Intent(this, com.kanzz.editor.gs.GsTrainingCenterActivity::class.java))
-        }
 
         val confirmRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
         val cancelButton = makeGsButton("Cancel")
