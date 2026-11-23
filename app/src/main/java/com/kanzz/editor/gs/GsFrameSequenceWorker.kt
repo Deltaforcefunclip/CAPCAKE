@@ -56,10 +56,10 @@ class GsFrameSequenceWorker(
             val processor = GsFrameProcessor(model)
             var completed = 0
 
+            val frameFiles = ArrayList<File>(total)
             for (index in 0 until total) {
                 check(!cancelled.get()) { "Proses GS dibatalkan." }
-                val relativeMs = if (total == 1) 0L else
-                    (index * 1_000_000.0 / profile.processingFps).toLong() / 1000L
+                val relativeMs = (index * 1_000_000.0 / profile.processingFps).toLong() / 1000L
                 if (relativeMs >= clipDuration) break
                 val frame = retriever.getFrameAtTime(
                     (sourceStartMs + relativeMs) * 1000L,
@@ -70,8 +70,8 @@ class GsFrameSequenceWorker(
                 } finally {
                     frame.recycle()
                 }
+                val file = File(outputDir, "gs_%06d.png".format(index))
                 try {
-                    val file = File(outputDir, "gs_%06d.png".format(index))
                     FileOutputStream(file).use { stream ->
                         check(processed.bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)) {
                             "Gagal menyimpan frame GS."
@@ -80,17 +80,35 @@ class GsFrameSequenceWorker(
                 } finally {
                     processed.bitmap.recycle()
                 }
+                frameFiles += file
                 completed++
-                val detectPercent = (completed * 50 / total).coerceIn(0, 50)
-                onProgress(Phase.DETECTING, detectPercent, completed, total)
                 onProgress(
-                    Phase.WRITING_FRAMES,
-                    (50 + completed * 50 / total).coerceIn(50, 99),
+                    Phase.DETECTING,
+                    (completed * 50 / total).coerceIn(0, 50),
                     completed,
                     total
                 )
             }
-            check(!cancelled.get()) { "Proses GS dibatalkan." }
+
+            // Second, separately reported stage: validate and index every processed frame.
+            val manifestFile = File(outputDir, "sequence.json")
+            manifestFile.bufferedWriter().use { writer ->
+                writer.append("{\\"fps\\":${profile.outputFps},\\"durationMs\\":$clipDuration,\\"frames\\":[")
+                frameFiles.forEachIndexed { index, file ->
+                    check(!cancelled.get()) { "Proses GS dibatalkan." }
+                    check(file.isFile && file.length() > 0L) { "Frame GS hilang atau kosong: ${file.name}" }
+                    if (index > 0) writer.append(',')
+                    val timestampMs = (index * 1000.0 / profile.outputFps).toLong()
+                    writer.append("{\\"file\\":\\"${file.name}\\",\\"timeMs\\":$timestampMs}")
+                    onProgress(
+                        Phase.WRITING_FRAMES,
+                        (50 + (index + 1) * 50 / frameFiles.size.coerceAtLeast(1)).coerceIn(50, 99),
+                        index + 1,
+                        frameFiles.size
+                    )
+                }
+                writer.append("]}")
+            }
             onProgress(Phase.COMPLETE, 100, completed, total)
             onComplete(Result(outputDir, completed, profile.outputFps, clipDuration))
         } catch (error: Throwable) {
