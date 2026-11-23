@@ -29,8 +29,17 @@ python train_gs_seg.py --data gs_yolo_dataset/data.yaml --epochs 100 --imgsz 640
 ```
 The best checkpoint is written to `runs/gs/weapon-seg-v1/weights/best.pt`. Start with a small number of epochs to smoke-test the pipeline if compute is limited.
 
+## 4. Export raw TFLite for Android adapter development
+
+After training, export the checkpoint and record the exact TFLite tensor layout:
+```bash
+python export_gs_yolo_tflite.py --weights runs/gs/weapon-seg-v1/weights/best.pt --imgsz 640 --out gs_export
+```
+
+This produces `gs_export/model.tflite` and `gs_export/model_runtime_spec.json`. The spec records the real input/output tensor names, shapes, dtypes, labels, and SHA-256. Keep these two files together when sharing the exported model for Android integration.
+
 ## Runtime compatibility warning
-YOLO segmentation output tensors are **not** the existing CAPCAKE `tflite_ssd_mask_v1` tensor contract. Do not rename or package `best.pt` as `.gspkg`. A separate export/runtime adapter must be implemented and tested on Android before the trained model can be imported into GS. The existing runtime contract expects FLOAT32 RGB input and SSD-style boxes/classes/scores/count/masks. This training stage deliberately stops at a verified segmentation checkpoint.
+YOLO segmentation output tensors are **not** the existing CAPCAKE `tflite_ssd_mask_v1` tensor contract. Do not rename or package `best.pt` as `.gspkg`. A separate Android YOLO-seg decoder/runtime adapter must be implemented and tested against the tensor spec before the trained model can be imported into GS. The existing runtime contract expects FLOAT32 RGB input and SSD-style boxes/classes/scores/count/masks. This training/export stage deliberately stops at a raw TFLite model plus its tensor specification; it does not create a CAPCAKE .gspkg.
 
 ## APK
 Dataset conversion/training runs outside Android. Changes in this folder do not require installing a new APK.
