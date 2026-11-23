@@ -56,7 +56,16 @@ class OverlayVideoSelectionView(
     private fun geometry(c: OverlayVideoClip): G {
         val vw = c.videoWidth.takeIf { it > 0 }?.toFloat() ?: 16f
         val vh = c.videoHeight.takeIf { it > 0 }?.toFloat() ?: 9f
-        val aspect = (vw / vh).coerceIn(0.1f, 10f)
+        // Setelah crop diterapkan, rasio konten yang terlihat berubah.
+        // Saat mode crop aktif, tetap gunakan rasio sumber agar handle crop
+        // bergerak pada batas asli; setelah diterapkan, bingkai seleksi mengikuti rasio hasil crop.
+        val visibleWidth = (1f - c.cropLeft - c.cropRight).coerceAtLeast(0.03f)
+        val visibleHeight = (1f - c.cropTop - c.cropBottom).coerceAtLeast(0.03f)
+        val aspect = if (cropMode) {
+            (vw / vh).coerceIn(0.1f, 10f)
+        } else {
+            ((vw * visibleWidth) / (vh * visibleHeight)).coerceIn(0.1f, 10f)
+        }
         // Samakan batas bingkai dengan area video FIT yang benar-benar tampil di PlayerView.
         val maxW = width.toFloat().coerceAtLeast(1f)
         val maxH = height.toFloat().coerceAtLeast(1f)
