@@ -9329,10 +9329,16 @@ class MainActivity : AppCompatActivity() {
                     // Ukuran kanvas akhir sudah ditentukan oleh video utama pada compositor.
                     // Resize kedua dengan SCALE_TO_FIT membuat isi overlay mengecil lagi.
                 }
-                val overlayEdited = EditedMediaItem.Builder(overlayItem)
+                val overlayEditedBuilder = EditedMediaItem.Builder(overlayItem)
                     .setRemoveAudio(true)
                     .setEffects(Effects(emptyList(), overlayEffects))
-                    .build()
+                // Samakan cadence overlay dengan FPS export utama. Tanpa cap ini,
+                // overlay dapat memasok frame jauh lebih cepat daripada video utama
+                // dan menambah tekanan antrean pada MultipleInputVideoGraph.
+                if (outputFps != null) {
+                    overlayEditedBuilder.setFrameRate(outputFps.toInt().coerceAtLeast(1))
+                }
+                val overlayEdited = overlayEditedBuilder.build()
                 val overlaySequence = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
                 if (overlayStart > 0L) overlaySequence.addGap(overlayStart * 1000L)
                 overlaySequence.addItem(overlayEdited)
