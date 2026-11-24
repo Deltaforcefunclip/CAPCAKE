@@ -9223,12 +9223,32 @@ class MainActivity : AppCompatActivity() {
                 val causeDetails = generateSequence<Throwable>(exportException) { it.cause }
                     .take(8)
                     .joinToString(" <- ") { cause ->
-                        "${cause.javaClass.simpleName}: ${cause.message ?: "tanpa pesan"}"
+                        "${cause.javaClass.name}: ${cause.message ?: "tanpa pesan"}"
                     }
+                // Media3 menyimpan informasi codec pada ExportException.CodecInfo.
+                // Ambil secara reflektif agar diagnostik tetap kompatibel dengan
+                // beberapa versi Media3 tanpa mengunci tipe internal tertentu.
+                val codecDetails = runCatching {
+                    exportException.javaClass.methods
+                        .firstOrNull { it.name == "getCodecInfo" && it.parameterCount == 0 }
+                        ?.invoke(exportException)?.toString()
+                }.getOrNull() ?: "tidak tersedia"
+                val exportResultDetails = runCatching {
+                    exportResult.toString()
+                }.getOrDefault("tidak tersedia")
+                val stackDetails = Log.getStackTraceString(exportException).take(7000)
                 recordPlaybackDiagnostic(
-                    "EXPORT_FAILED code=${exportException.errorCode} causes=$causeDetails"
+                    "EXPORT_FAILED code=${exportException.errorCode} " +
+                        "exception=${exportException.javaClass.name} " +
+                        "codecInfo=$codecDetails result=$exportResultDetails " +
+                        "causes=$causeDetails stack=$stackDetails"
                 )
-                Log.e("CAPCAKE_EXPORT", "Export gagal: $causeDetails", exportException)
+                Log.e(
+                    "CAPCAKE_EXPORT",
+                    "Export gagal: code=${exportException.errorCode} codecInfo=$codecDetails " +
+                        "result=$exportResultDetails causes=$causeDetails",
+                    exportException
+                )
                 showMessage(
                     "Ekspor gagal (kode ${exportException.errorCode}): " +
                         (exportException.cause?.message ?: exportException.message ?: "Kesalahan tidak diketahui")
