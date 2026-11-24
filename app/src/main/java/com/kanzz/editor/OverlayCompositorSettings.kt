@@ -27,10 +27,12 @@ class CapcakeVideoCompositorSettings(
     outputHeight: Int,
     layers: List<OverlayCompositorLayer>
 ) : VideoCompositorSettings {
-    private val outputSize = Size(outputWidth.coerceAtLeast(2), outputHeight.coerceAtLeast(2))
+    private val fallbackOutputSize = Size(outputWidth.coerceAtLeast(2), outputHeight.coerceAtLeast(2))
     private val overlayLayers = layers.toList()
 
-    override fun getOutputSize(inputSizes: List<Size>): Size = outputSize
+    // Main video sequence is appended last; preserve its actual post-effect size.
+    override fun getOutputSize(inputSizes: List<Size>): Size =
+        inputSizes.lastOrNull() ?: fallbackOutputSize
 
     override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): OverlaySettings {
         val layer = overlayLayers.getOrNull(inputId)
