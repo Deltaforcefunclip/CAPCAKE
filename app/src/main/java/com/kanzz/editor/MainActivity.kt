@@ -9543,15 +9543,6 @@ class MainActivity : AppCompatActivity() {
                 override fun videoNeedsEncoding(): Boolean =
                     defaultEncoderFactory.videoNeedsEncoding()
 
-                @OptIn(ExperimentalApi::class)
-                override fun isVideoFormatSupported(format: Format): Boolean {
-                    val requestedFormat = if (outputFps != null && outputFps > 0f) {
-                        format.buildUpon().setFrameRate(outputFps).build()
-                    } else {
-                        format
-                    }
-                    return defaultEncoderFactory.isVideoFormatSupported(requestedFormat)
-                }
             }
             val transformer = Transformer.Builder(this)
                 .setEncoderFactory(encoderFactory)
