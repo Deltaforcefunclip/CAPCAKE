@@ -33,6 +33,7 @@ import androidx.media3.common.audio.SonicAudioProcessor
 import androidx.media3.common.audio.SpeedProvider
 import androidx.media3.common.audio.ChannelMixingMatrix
 import androidx.media3.common.C
+import androidx.media3.common.VideoCompositorSettings
 import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.common.util.ExperimentalApi
@@ -8078,9 +8079,15 @@ class MainActivity : AppCompatActivity() {
         }
 
         try {
-            // Urutan utama berisi video beserta audio asli dari setiap klip video.
+            // Main track memakai sequence terpisah hanya jika ada Cross Dissolve.
+            // Tanpa Cross Dissolve, jalur export lama tetap dipakai.
             val sequences = mutableListOf<EditedMediaItemSequence>()
-            sequences.add(EditedMediaItemSequence.withAudioAndVideoFrom(editedItems))
+            val crossDissolvePlan = CrossDissolveExportPlan.build(
+                videoClipManager.clips,
+                editedItems,
+                videoClipManager.transitions
+            )
+            sequences.addAll(crossDissolvePlan.sequences)
 
             // Setiap layer audio menjadi sequence terpisah agar beberapa layer dapat
             // bercampur bersamaan, sementara addGap menjaga posisi klip di timeline.
@@ -8143,7 +8150,11 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
-            val composition = Composition.Builder(sequences).build()
+            val compositionBuilder = Composition.Builder(sequences)
+            crossDissolvePlan.compositorSettings?.let { settings ->
+                compositionBuilder.setVideoCompositorSettings(settings)
+            }
+            val composition = compositionBuilder.build()
             // Encode portrait frames in portrait dimensions instead of relying
             // only on a 90-degree rotation flag in MP4 metadata.
             val transformer = Transformer.Builder(this)
