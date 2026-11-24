@@ -409,11 +409,23 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    // Scrubbing langsung mengikuti posisi jari; Media3 mengelola antrean seek.
+    // Scrubbing memakai latest-position-wins dengan batas 20 seek/detik.
+    // Gerakan jari tetap halus, tetapi decoder tidak dipaksa seek setiap 16 ms.
     private var pendingScrubPositionMs = 0L
     private var isTimelineScrubbing = false
+    private var scrubSeekScheduled = false
+    private val scrubSeekRunnable = Runnable {
+        scrubSeekScheduled = false
+        if (isTimelineScrubbing) {
+            seekTimelinePosition(
+                pendingScrubPositionMs.coerceIn(0L, videoClipManager.durationMs)
+            )
+        }
+    }
     private val scrubFinishRunnable = Runnable {
         if (isTimelineScrubbing) {
+            handler.removeCallbacks(scrubSeekRunnable)
+            scrubSeekScheduled = false
             // Akhiri mode scrubbing, lalu pastikan frame terakhir diposisikan secara presisi.
             player.setScrubbingModeEnabled(false)
             player.setSeekParameters(SeekParameters.EXACT)
@@ -3181,6 +3193,8 @@ class MainActivity : AppCompatActivity() {
         // Navigasi clip baru mengambil alih target scrub lama. Hapus callback tertunda
         // agar seek lama tidak datang setelah animasi navigasi selesai.
         handler.removeCallbacks(scrubFinishRunnable)
+        handler.removeCallbacks(scrubSeekRunnable)
+        scrubSeekScheduled = false
         if (isTimelineScrubbing) {
             player.setScrubbingModeEnabled(false)
             player.setSeekParameters(SeekParameters.EXACT)
@@ -3199,11 +3213,12 @@ class MainActivity : AppCompatActivity() {
         updatePlayButton()
     }
 
-    /** Kirim setiap posisi terbaru tanpa throttle dan tanpa membatasi ke keyframe terdekat. */
+    /** Kirim posisi terbaru maksimal setiap 50 ms; posisi akhir tetap di-seek presisi. */
     private fun requestScrubSeek(positionMs: Long) {
         pendingScrubPositionMs = positionMs.coerceIn(0L, videoClipManager.durationMs)
-        if (!isTimelineScrubbing) return
-        seekTimelinePosition(pendingScrubPositionMs)
+        if (!isTimelineScrubbing || scrubSeekScheduled) return
+        scrubSeekScheduled = true
+        handler.postDelayed(scrubSeekRunnable, 50L)
     }
 
     /** Memetakan waktu timeline ke grup playback dan offset sumber yang benar. */
