@@ -9444,36 +9444,31 @@ class MainActivity : AppCompatActivity() {
             // sehingga komposisi benar-benar memiliki beberapa input video.
             val compositionBuilder = Composition.Builder(sequences)
             if (exportOverlayClips.isNotEmpty()) {
-                compositionBuilder.setVideoCompositorSettings(object : VideoCompositorSettings {
-                    // Ukuran output harus mengikuti video utama, bukan file overlay
-                    // yang kebetulan menjadi input pertama compositor.
-                    override fun getOutputSize(inputSizes: List<Size>): Size {
-                        return inputSizes.last()
-                    }
-
-                    // Transformasi overlay dilakukan compositor agar tidak membuat
-                    // rantai efek GL tambahan yang menghabiskan texture pool.
-                    override fun getOverlaySettings(
-                        inputId: Int,
-                        presentationTimeUs: Long
-                    ): OverlaySettings {
-                        val overlayClip = exportOverlayClips.getOrNull(inputId)
-                            ?: return StaticOverlaySettings.Builder().build()
-                        val frameW = previewFrameContainer.width.coerceAtLeast(1).toFloat()
-                        val frameH = previewFrameContainer.height.coerceAtLeast(1).toFloat()
-                        val canvasWidth = (exportWidth ?: frameW.toInt()).coerceAtLeast(2)
-                        val canvasHeight = (exportHeight ?: frameH.toInt()).coerceAtLeast(2)
-                        val exportScale = calculateOverlayExportScale(overlayClip, canvasWidth, canvasHeight)
-                        val tx = (2f * overlayClip.transformX / frameW).coerceIn(-1f, 1f)
-                        val ty = (-2f * overlayClip.transformY / frameH).coerceIn(-1f, 1f)
-                        return StaticOverlaySettings.Builder()
-                            .setScale(exportScale.first, exportScale.second)
-                            .setRotationDegrees(-overlayClip.rotationDegrees)
-                            .setBackgroundFrameAnchor(tx, ty)
-                            .setOverlayFrameAnchor(0f, 0f)
-                            .build()
-                    }
-                })
+                val frameW = previewFrameContainer.width.coerceAtLeast(1).toFloat()
+                val frameH = previewFrameContainer.height.coerceAtLeast(1).toFloat()
+                val canvasWidth = (exportWidth ?: frameW.toInt()).coerceAtLeast(2)
+                val canvasHeight = (exportHeight ?: frameH.toInt()).coerceAtLeast(2)
+                val compositorLayers = exportOverlayClips.map { overlayClip ->
+                    val exportScale = calculateOverlayExportScale(
+                        overlayClip, canvasWidth, canvasHeight
+                    )
+                    OverlayCompositorLayer(
+                        scaleX = exportScale.first,
+                        scaleY = exportScale.second,
+                        rotationDegrees = -overlayClip.rotationDegrees,
+                        backgroundAnchorX = (2f * overlayClip.transformX / frameW)
+                            .coerceIn(-1f, 1f),
+                        backgroundAnchorY = (-2f * overlayClip.transformY / frameH)
+                            .coerceIn(-1f, 1f)
+                    )
+                }
+                compositionBuilder.setVideoCompositorSettings(
+                    CapcakeVideoCompositorSettings(
+                        canvasWidth,
+                        canvasHeight,
+                        compositorLayers
+                    )
+                )
             }
             val composition = compositionBuilder.build()
             // Encode portrait frames in portrait dimensions instead of relying
