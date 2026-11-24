@@ -124,6 +124,17 @@ vec3 applyColorGrading(vec3 color) {
 void main() {
     vec2 sampleCoord = clamp((vTextureCoord - vec2(0.5)) / max(uPullInZoom, 1.0) + vec2(0.5), 0.0, 1.0);
     vec4 sharpSample = texture2D(sTexture, sampleCoord);
+
+    // Jalur normal tanpa efek: hentikan sebelum 8 texture sample tambahan.
+    // Sebelumnya shader baru melakukan early-out setelah menghitung pullBlurred,
+    // padahal seluruh sampel itu tidak dipakai saat semua parameter efek nol.
+    if (uIntensity <= 0.001 && uHasColorGrade < 0.5 &&
+        uPullInBlur <= 0.001 && uPullInFade <= 0.001 &&
+        abs(uPullInZoom - 1.0) <= 0.001) {
+        gl_FragColor = sharpSample;
+        return;
+    }
+
     vec2 pullStep = vec2(0.003 + uPullInBlur * 0.012);
     vec3 pullBlurred = sharpSample.rgb * 0.20;
     pullBlurred += texture2D(sTexture, clamp(sampleCoord + vec2(pullStep.x, 0.0), 0.0, 1.0)).rgb * 0.12;
@@ -138,11 +149,6 @@ void main() {
     // Fade transisi diarahkan ke hitam agar preview dan hasil export konsisten.
     sampled.rgb *= 1.0 - clamp(uPullInFade, 0.0, 1.0);
 
-    // Jalur normal: lewati HSV, kernel detail, blur 8 arah, dan kalkulasi efek.
-    if (uIntensity <= 0.001 && uHasColorGrade < 0.5 && uPullInBlur <= 0.001 && uPullInFade <= 0.001 && abs(uPullInZoom - 1.0) <= 0.001) {
-        gl_FragColor = sampled;
-        return;
-    }
     vec3 graded = applyColorCorrection(applyColorGrading(sampled.rgb));
 
     // Local contrast/detail controls use a compact neighborhood kernel.

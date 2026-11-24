@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ "main", "master" ]
+    branches: [ "main", "master", "feature/rife-motion-blur-foundation" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
@@ -22,6 +22,31 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: 8.9
+      - name: Install Android NDK and CMake
+        run: |
+          yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platforms;android-35" "build-tools;35.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
+
+      - name: Download ncnn Vulkan runtime
+        run: |
+          mkdir -p app/src/main/cpp
+          cd app/src/main/cpp
+          curl -fL -o ncnn.zip https://github.com/Tencent/ncnn/releases/download/20240820/ncnn-20240820-android-vulkan.zip
+          unzip -q ncnn.zip
+          mv ncnn-20240820-android-vulkan ncnn
+          rm ncnn.zip
+
+      - name: Download RIFE v4.6 native sources and model
+        run: |
+          git clone --depth 1 https://github.com/nihui/rife-ncnn-vulkan.git /tmp/rife
+          DEST=app/src/main/cpp
+          cd /tmp/rife/src
+          for f in *; do case "$f" in main.cpp|CMakeLists.txt|*.cmake) ;; *) cp -r "$f" "$GITHUB_WORKSPACE/$DEST/" ;; esac; done
+          cd "$GITHUB_WORKSPACE/$DEST"
+          for f in *.comp; do n=$(basename "$f" .comp); { printf "static const char %s_comp_data[] = {" "$n"; xxd -i < "$f" | tr -d "\\n"; printf "};\\n"; } > "$n.comp.hex.h"; done
+          mkdir -p "$GITHUB_WORKSPACE/app/src/main/assets/models/rife-v4.6"
+          cp -r /tmp/rife/models/rife-v4.6/* "$GITHUB_WORKSPACE/app/src/main/assets/models/rife-v4.6/"
+
       - name: Build Debug APK
         run: gradle assembleDebug
       - name: Upload APK
