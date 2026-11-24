@@ -1,10 +1,10 @@
 package com.kanzz.editor
 
 import androidx.media3.common.OverlaySettings
-import androidx.media3.common.StaticOverlaySettings
 import androidx.media3.common.VideoCompositorSettings
 import androidx.media3.common.util.Size
 import androidx.media3.common.util.UnstableApi
+import androidx.media3.effect.StaticOverlaySettings
 
 /**
  * Immutable compositor input mapping for one export snapshot.
