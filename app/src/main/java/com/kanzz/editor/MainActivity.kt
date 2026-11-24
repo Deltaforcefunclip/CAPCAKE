@@ -7,6 +7,7 @@ import android.graphics.*
 import android.media.MediaMetadataRetriever
 import android.media.MediaExtractor
 import android.media.MediaFormat
+import android.media.metrics.LogSessionId
 import android.net.Uri
 import android.os.Bundle
 import android.os.Environment
@@ -48,6 +49,8 @@ import androidx.media3.exoplayer.audio.DefaultAudioSink
 import androidx.media3.exoplayer.analytics.AnalyticsListener
 import androidx.media3.ui.PlayerView
 import androidx.media3.transformer.Composition
+import androidx.media3.common.Format
+import androidx.media3.transformer.Codec
 import androidx.media3.transformer.DefaultEncoderFactory
 import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.ExportException
@@ -9494,11 +9497,62 @@ class MainActivity : AppCompatActivity() {
             val composition = compositionBuilder.build()
             // Encode portrait frames in portrait dimensions instead of relying
             // only on a 90-degree rotation flag in MP4 metadata.
-            val encoderFactory = DefaultEncoderFactory.Builder(this)
+            val defaultEncoderFactory = DefaultEncoderFactory.Builder(this)
                 // Izinkan Media3 memilih konfigurasi encoder yang didukung perangkat,
                 // termasuk penyesuaian resolusi bila ukuran yang diminta tidak tersedia.
-.setEnableFallback(true)
+                .setEnableFallback(true)
                 .build()
+            // Media3 dapat menerima Format encoder tanpa frameRate eksplisit dan
+            // DefaultEncoderFactory kemudian memakai fallback internal 30 FPS.
+            // Teruskan target FPS proyek langsung ke format encoder agar konfigurasi
+            // MediaCodec tidak diam-diam kembali ke 30 FPS.
+            val encoderFactory = object : Codec.EncoderFactory {
+                override fun createForAudioEncoding(
+                    format: Format,
+                    logSessionId: LogSessionId?
+                ): Codec = defaultEncoderFactory.createForAudioEncoding(format, logSessionId)
+
+                override fun createForVideoEncoding(
+                    format: Format,
+                    logSessionId: LogSessionId?
+                ): Codec {
+                    val requestedFormat = if (outputFps != null && outputFps > 0f) {
+                        format.buildUpon().setFrameRate(outputFps).build()
+                    } else {
+                        format
+                    }
+                    recordPlaybackDiagnostic(
+                        "ENCODER_REQUEST mime=${requestedFormat.sampleMimeType} " +
+                            "size=${requestedFormat.width}x${requestedFormat.height} " +
+                            "fps=${requestedFormat.frameRate}"
+                    )
+                    val codec = defaultEncoderFactory.createForVideoEncoding(
+                        requestedFormat,
+                        logSessionId
+                    )
+                    recordPlaybackDiagnostic(
+                        "ENCODER_CONFIG input=${codec.inputFormat} " +
+                            "configuration=${codec.configurationFormat}"
+                    )
+                    return codec
+                }
+
+                override fun audioNeedsEncoding(): Boolean =
+                    defaultEncoderFactory.audioNeedsEncoding()
+
+                override fun videoNeedsEncoding(): Boolean =
+                    defaultEncoderFactory.videoNeedsEncoding()
+
+                @OptIn(ExperimentalApi::class)
+                override fun isVideoFormatSupported(format: Format): Boolean {
+                    val requestedFormat = if (outputFps != null && outputFps > 0f) {
+                        format.buildUpon().setFrameRate(outputFps).build()
+                    } else {
+                        format
+                    }
+                    return defaultEncoderFactory.isVideoFormatSupported(requestedFormat)
+                }
+            }
             val transformer = Transformer.Builder(this)
                 .setEncoderFactory(encoderFactory)
                 .setVideoMimeType("video/avc")
@@ -9650,36 +9704,51 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun readExportedVideoFps(file: File): Float? {
-        // Baca metadata file hasil export agar pengujian pilihan FPS punya angka nyata.
+        // KEY_FRAME_RATE pada MP4 hanya metadata/hint encoder dan sering bernilai
+        // 30 walaupun timestamp sampel sebenarnya 60 FPS. Ukur dari PTS setiap frame.
         val extractor = MediaExtractor()
         try {
             extractor.setDataSource(file.absolutePath)
+            var videoTrack = -1
             for (index in 0 until extractor.trackCount) {
                 val format = extractor.getTrackFormat(index)
                 val mime = format.getString(MediaFormat.KEY_MIME) ?: continue
-                if (mime.startsWith("video/") &&
-                    format.containsKey(MediaFormat.KEY_FRAME_RATE)
-                ) {
-                    val fps = format.getInteger(MediaFormat.KEY_FRAME_RATE).toFloat()
-                    if (fps > 0f) return fps
+                if (mime.startsWith("video/")) {
+                    videoTrack = index
+                    break
                 }
             }
-        } catch (_: Exception) {
+            if (videoTrack < 0) return null
+
+            extractor.selectTrack(videoTrack)
+            var sampleCount = 0L
+            var firstPtsUs = -1L
+            var lastPtsUs = -1L
+            while (true) {
+                val ptsUs = extractor.sampleTime
+                if (ptsUs < 0L) break
+                if (firstPtsUs < 0L) firstPtsUs = ptsUs
+                lastPtsUs = ptsUs
+                sampleCount++
+                if (!extractor.advance()) break
+            }
+
+            val spanUs = lastPtsUs - firstPtsUs
+            if (sampleCount >= 2L && spanUs > 0L) {
+                val measuredFps = (sampleCount - 1L) * 1_000_000f / spanUs.toFloat()
+                Log.i(
+                    "CAPCAKE_EXPORT",
+                    "OUTPUT_FPS_MEASURED samples=$sampleCount firstPtsUs=$firstPtsUs " +
+                        "lastPtsUs=$lastPtsUs spanUs=$spanUs fps=$measuredFps"
+                )
+                return measuredFps.takeIf { it.isFinite() && it > 0f }
+            }
+        } catch (error: Exception) {
+            Log.w("CAPCAKE_EXPORT", "Gagal mengukur FPS dari timestamp sampel", error)
         } finally {
             try { extractor.release() } catch (_: Exception) {}
         }
-
-        val retriever = MediaMetadataRetriever()
-        return try {
-            retriever.setDataSource(file.absolutePath)
-            retriever.extractMetadata(
-                MediaMetadataRetriever.METADATA_KEY_CAPTURE_FRAMERATE
-            )?.toFloatOrNull()?.takeIf { it > 0f }
-        } catch (_: Exception) {
-            null
-        } finally {
-            try { retriever.release() } catch (_: Exception) {}
-        }
+        return null
     }
 
     private fun saveVideo(file: File): String {
