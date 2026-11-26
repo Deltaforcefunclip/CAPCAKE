@@ -21,12 +21,11 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: 9.3.1
+          gradle-version: 8.13
       - name: Install Android NDK and CMake
         run: |
           yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
-          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --list --channel=3 | grep -E "platforms;android-37([[:space:]]|$)" || true
-          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --channel=3 "platforms;android-37" "build-tools;36.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platforms;android-36" "build-tools;36.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
 
       - name: Download ncnn Vulkan runtime
         run: |
