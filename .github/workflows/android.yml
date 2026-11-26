@@ -2,7 +2,7 @@ name: Build Android APK
 
 on:
   push:
-    branches: [ "main", "master", "feature/rife-motion-blur-foundation" ]
+    branches: [ "main", "master", "feature/rife-motion-blur-foundation", "fix/export-60fps-overlay-composition" ]
   pull_request:
     branches: [ "main", "master" ]
   workflow_dispatch:
