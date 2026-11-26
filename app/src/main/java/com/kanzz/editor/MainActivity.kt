@@ -5415,20 +5415,17 @@ class MainActivity : AppCompatActivity() {
         val previewImage = fittedImage(previewW, previewH)
         val exportImage = fittedImage(exportW, exportH)
 
-        // Skala compositor memakai koordinat ternormalisasi (-1..1).
-        // Karena itu koreksi X dan Y harus dihitung terpisah. Menggunakan
-        // fraksi lebar saja membuat ukuran overlay meleset pada rasio kanvas
-        // portrait/landscape ketika video utama di-FIT dengan letterbox/pillarbox.
-        val previewFractionX = previewImage.first / previewW
-        val previewFractionY = previewImage.second / previewH
-        val exportFractionX = exportImage.first / exportW
-        val exportFractionY = exportImage.second / exportH
-        val correctionX = previewFractionX /
-            exportFractionX.coerceAtLeast(0.0001f)
-        val correctionY = previewFractionY /
-            exportFractionY.coerceAtLeast(0.0001f)
-        val scaleX = (clip.transformScale * correctionX).coerceIn(0.01f, 20f)
-        val scaleY = (clip.transformScale * correctionY).coerceIn(0.01f, 20f)
+        // Overlay harus tetap proporsional. Jangan mengoreksi sumbu X dan Y
+        // secara terpisah: pada rasio 3:4 atau 16:9 hal itu meregangkan gambar.
+        // Hitung satu faktor FIT dari ukuran gambar utama terhadap kanvas.
+        // Lebar hasil FIT dibagi aspect sumber sama dengan tinggi hasil FIT
+        // dibagi tinggi sumber, sehingga faktor ini seragam untuk kedua sumbu.
+        val previewFitScale = previewImage.first / mainAspect.coerceAtLeast(0.0001f)
+        val exportFitScale = exportImage.first / mainAspect.coerceAtLeast(0.0001f)
+        val uniformCorrection = previewFitScale /
+            exportFitScale.coerceAtLeast(0.0001f)
+        val uniformScale = (clip.transformScale * uniformCorrection)
+            .coerceIn(0.01f, 20f)
 
         recordPlaybackDiagnostic(
             "OVERLAY_SCALE_REFERENCE mainAspect=$mainAspect " +
@@ -5436,9 +5433,10 @@ class MainActivity : AppCompatActivity() {
                 "export=${exportW.toInt()}x${exportH.toInt()} " +
                 "previewFit=${previewImage.first.toInt()}x${previewImage.second.toInt()} " +
                 "exportFit=${exportImage.first.toInt()}x${exportImage.second.toInt()} " +
-                "correction=$correctionX,$correctionY scale=$scaleX,$scaleY"
+                "fitScale=$previewFitScale,$exportFitScale correction=$uniformCorrection " +
+                "scale=$uniformScale"
         )
-        return scaleX to scaleY
+        return uniformScale to uniformScale
     }
 
     private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
