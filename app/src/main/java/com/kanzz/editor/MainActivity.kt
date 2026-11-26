@@ -15,7 +15,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import android.util.Rational
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.view.Gravity
@@ -57,7 +56,6 @@ import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
-import androidx.media3.transformer.VideoFrameAggregationParameters
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.effect.Presentation
@@ -9469,24 +9467,6 @@ class MainActivity : AppCompatActivity() {
             // VideoCompositorSettings hanya boleh dipasang jika ada video overlay
             // sehingga komposisi benar-benar memiliki beberapa input video.
             val compositionBuilder = Composition.Builder(sequences)
-            // Pada komposisi multi-sequence, sequence overlay diletakkan sebelum video
-            // utama demi urutan layer. Tanpa frame aggregation eksplisit, cadence dapat
-            // mengikuti timestamp sequence pertama (overlay), sehingga output 60 FPS
-            // macet/terbatas walaupun video utama dan encoder meminta 60 FPS.
-            // Media3 1.11.x juga memuat perbaikan pemilihan frame terdekat untuk
-            // timestamp antar-sequence yang tidak tepat sejajar.
-            if (exportOverlayClips.isNotEmpty() && outputFps != null && outputFps > 0f) {
-                val aggregationFps = outputFps.toInt().coerceAtLeast(1)
-                compositionBuilder.setVideoFrameAggregationParameters(
-                    VideoFrameAggregationParameters.Builder()
-                        .setFrameRate(Rational(aggregationFps, 1))
-                        .build()
-                )
-                recordPlaybackDiagnostic(
-                    "VIDEO_FRAME_AGGREGATION targetFps=$aggregationFps " +
-                        "overlaySequences=${exportOverlayClips.size}"
-                )
-            }
             if (exportOverlayClips.isNotEmpty()) {
                 val frameW = previewFrameContainer.width.coerceAtLeast(1).toFloat()
                 val frameH = previewFrameContainer.height.coerceAtLeast(1).toFloat()
