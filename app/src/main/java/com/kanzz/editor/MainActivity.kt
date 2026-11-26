@@ -5367,11 +5367,30 @@ class MainActivity : AppCompatActivity() {
      * konsisten saat kanvas berubah dari persegi ke portrait atau landscape,
      * tanpa memberi faktor skala berbeda pada X dan Y.
      */
-    private fun calculateOverlayExportScale(
+    /**
+     * Delapan titik geometri overlay pada koordinat preview:
+     * 4 sudut + titik tengah setiap sisi. Titik dipetakan dari area gambar
+     * video utama (FIT) ke area gambar utama pada kanvas ekspor (FIT).
+     *
+     * Skala akhir diturunkan dari panjang sisi hasil pemetaan, lalu dirata-rata
+     * secara geometris agar overlay tetap proporsional dan tidak meregang.
+     * Titik tengah tetap dipakai untuk mengukur kedua setengah sisi, sehingga
+     * pemetaan dapat didiagnosis meskipun sudut overlay berada di luar kanvas.
+     */
+    private data class OverlayExportGeometry(
+        val scale: Float,
+        val anchorX: Float,
+        val anchorY: Float,
+        val mappedPoints: List<PointF>,
+        val mappedWidth: Float,
+        val mappedHeight: Float
+    )
+
+    private fun calculateOverlayExportGeometry(
         clip: OverlayVideoClip,
         canvasWidth: Int,
         canvasHeight: Int
-    ): Pair<Float, Float> {
+    ): OverlayExportGeometry {
         val previewW = previewFrameContainer.width.coerceAtLeast(1).toFloat()
         val previewH = previewFrameContainer.height.coerceAtLeast(1).toFloat()
         val exportW = canvasWidth.coerceAtLeast(2).toFloat()
@@ -5383,33 +5402,108 @@ class MainActivity : AppCompatActivity() {
             previewW / previewH
         }.coerceAtLeast(0.0001f)
 
-        fun fittedShortSideFraction(width: Float, height: Float): Float {
+        val videoSize = player.videoSize
+        val mainAspect = if (videoSize.width > 0 && videoSize.height > 0) {
+            var width = videoSize.width.toFloat()
+            var height = videoSize.height.toFloat()
+            if (videoSize.unappliedRotationDegrees == 90 ||
+                videoSize.unappliedRotationDegrees == 270
+            ) {
+                val swap = width
+                width = height
+                height = swap
+            }
+            width / height.coerceAtLeast(1f)
+        } else {
+            cachedMainVideoAspectRatio ?: (previewW / previewH)
+        }.coerceAtLeast(0.0001f)
+
+        fun fitRect(width: Float, height: Float, aspect: Float): RectF {
             val fittedWidth: Float
             val fittedHeight: Float
-            if (overlayAspect >= width / height) {
+            if (aspect >= width / height) {
                 fittedWidth = width
-                fittedHeight = width / overlayAspect
+                fittedHeight = width / aspect
             } else {
                 fittedHeight = height
-                fittedWidth = height * overlayAspect
+                fittedWidth = height * aspect
             }
-            val canvasShortSide = minOf(width, height).coerceAtLeast(1f)
-            return minOf(fittedWidth, fittedHeight) / canvasShortSide
+            val left = (width - fittedWidth) / 2f
+            val top = (height - fittedHeight) / 2f
+            return RectF(left, top, left + fittedWidth, top + fittedHeight)
         }
 
-        val previewFraction = fittedShortSideFraction(previewW, previewH)
-        val exportFraction = fittedShortSideFraction(exportW, exportH)
-        val correction = previewFraction / exportFraction.coerceAtLeast(0.0001f)
-        val uniformScale = (clip.transformScale * correction).coerceIn(0.01f, 20f)
+        val previewMainRect = fitRect(previewW, previewH, mainAspect)
+        val exportMainRect = fitRect(exportW, exportH, mainAspect)
+        val previewOverlayRect = fitRect(previewW, previewH, overlayAspect)
+        val exportOverlayRect = fitRect(exportW, exportH, overlayAspect)
+
+        val halfW = previewOverlayRect.width() * clip.transformScale.coerceIn(0.2f, 4f) / 2f
+        val halfH = previewOverlayRect.height() * clip.transformScale.coerceIn(0.2f, 4f) / 2f
+        val centerX = previewW / 2f + clip.transformX
+        val centerY = previewH / 2f + clip.transformY
+        val radians = Math.toRadians(clip.rotationDegrees.toDouble())
+        val cosA = kotlin.math.cos(radians).toFloat()
+        val sinA = kotlin.math.sin(radians).toFloat()
+
+        // TL, top-middle, TR, right-middle, BR, bottom-middle, BL, left-middle.
+        val localPoints = listOf(
+            -halfW to -halfH, 0f to -halfH, halfW to -halfH, halfW to 0f,
+            halfW to halfH, 0f to halfH, -halfW to halfH, -halfW to 0f
+        )
+        val mappedPoints = localPoints.map { (localX, localY) ->
+            val previewX = centerX + localX * cosA - localY * sinA
+            val previewY = centerY + localX * sinA + localY * cosA
+            val u = (previewX - previewMainRect.left) /
+                previewMainRect.width().coerceAtLeast(1f)
+            val v = (previewY - previewMainRect.top) /
+                previewMainRect.height().coerceAtLeast(1f)
+            PointF(
+                exportMainRect.left + u * exportMainRect.width(),
+                exportMainRect.top + v * exportMainRect.height()
+            )
+        }
+
+        fun distance(a: Int, b: Int): Float {
+            val dx = mappedPoints[a].x - mappedPoints[b].x
+            val dy = mappedPoints[a].y - mappedPoints[b].y
+            return kotlin.math.sqrt(dx * dx + dy * dy)
+        }
+
+        // Ukur setiap sisi memakai dua segmen titik sudut-ke-tengah.
+        val mappedWidth = (
+            distance(0, 1) + distance(1, 2) +
+                distance(6, 7) + distance(7, 0)
+            ) / 2f
+        val mappedHeight = (
+            distance(2, 3) + distance(3, 4) +
+                distance(6, 5) + distance(5, 4)
+            ) / 2f
+
+        val scaleX = mappedWidth / exportOverlayRect.width().coerceAtLeast(1f)
+        val scaleY = mappedHeight / exportOverlayRect.height().coerceAtLeast(1f)
+        // Geometric mean mempertahankan skala seragam bila ada selisih pembulatan.
+        val uniformScale = kotlin.math.sqrt(
+            (scaleX.coerceAtLeast(0.0001f) * scaleY.coerceAtLeast(0.0001f)).toDouble()
+        ).toFloat().coerceIn(0.01f, 20f)
+
+        val mappedCenterX = mappedPoints.map { it.x }.average().toFloat()
+        val mappedCenterY = mappedPoints.map { it.y }.average().toFloat()
+        val anchorX = (2f * mappedCenterX / exportW - 1f).coerceIn(-1f, 1f)
+        val anchorY = (1f - 2f * mappedCenterY / exportH).coerceIn(-1f, 1f)
 
         recordPlaybackDiagnostic(
-            "OVERLAY_SCALE_REFERENCE overlayAspect=$overlayAspect " +
-                "preview=${previewW.toInt()}x${previewH.toInt()} " +
-                "export=${exportW.toInt()}x${exportH.toInt()} " +
-                "shortSideFraction=$previewFraction,$exportFraction " +
-                "correction=$correction scale=$uniformScale"
+            "OVERLAY_8_POINT id=${clip.id.take(8)} mainAspect=$mainAspect " +
+                "previewMain=${previewMainRect.width()}x${previewMainRect.height()} " +
+                "exportMain=${exportMainRect.width()}x${exportMainRect.height()} " +
+                "mapped=${mappedWidth}x${mappedHeight} " +
+                "scale=$uniformScale anchor=$anchorX,$anchorY " +
+                "points=${mappedPoints.joinToString(";") { "${it.x.toInt()},${it.y.toInt()}" }}"
         )
-        return uniformScale to uniformScale
+
+        return OverlayExportGeometry(
+            uniformScale, anchorX, anchorY, mappedPoints, mappedWidth, mappedHeight
+        )
     }
 
     private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
@@ -5578,19 +5672,7 @@ class MainActivity : AppCompatActivity() {
         // tetap dapat mengatur overlay yang belum mulai. Setelah melewati endTimeMs,
         // jangan hidupkan kembali PlayerView dari frame awal: itu meninggalkan
         // tekstur/frame kecil di tengah kanvas setelah overlay selesai.
-        val selectedClipForPreview = overlayVideoClips.firstOrNull {
-            it.id == selectedOverlayVideoClipId
-        }
-        val selectedPreviewOnly = activeClips.isEmpty() &&
-            !player.isPlaying &&
-            !isTimelineScrubbing &&
-            selectedClipForPreview != null &&
-            position < selectedClipForPreview.startTimeMs
-        val desiredClips = if (activeClips.isNotEmpty()) {
-            activeClips
-        } else {
-            if (selectedPreviewOnly) listOfNotNull(selectedClipForPreview) else emptyList()
-        }
+        val desiredClips = activeClips
         val desiredIds = desiredClips.map { it.id }.toSet()
 
         // Batasi decoder/tekstur hanya untuk clip yang sedang tampil.
@@ -5615,7 +5697,7 @@ class MainActivity : AppCompatActivity() {
             // Crop tidak lagi menjadi bagian signature efek preview.
             // Perubahan crop cukup memperbarui Matrix TextureView, bukan memasang ulang efek.
             val effectSignature = "${clip.chromaKeyEnabled}"
-            val localPosition = if (selectedPreviewOnly) 0L else (position - clip.startTimeMs).coerceAtLeast(0L)
+            val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
             if (session.preparedClipId != clip.id) {
                 val item = MediaItem.Builder()
                     .setUri(Uri.parse(clip.sourceUri))
@@ -5698,7 +5780,7 @@ class MainActivity : AppCompatActivity() {
                 }
             }
             if (!session.failed) {
-                val shouldPlay = player.isPlaying && !isTimelineScrubbing && !selectedPreviewOnly
+                val shouldPlay = player.isPlaying && !isTimelineScrubbing
                 overlayPlayer.playWhenReady = shouldPlay
                 if (!shouldPlay) overlayPlayer.pause()
             }
@@ -9305,12 +9387,14 @@ class MainActivity : AppCompatActivity() {
                             Presentation.LAYOUT_SCALE_TO_FIT
                         )
                     )
-                    val exportScale = calculateOverlayExportScale(overlayClip, canvasWidth, canvasHeight)
-                    val tx = (2f * overlayClip.transformX / frameW).coerceIn(-1f, 1f)
-                    val ty = (-2f * overlayClip.transformY / frameH).coerceIn(-1f, 1f)
+                    val geometry = calculateOverlayExportGeometry(
+                        overlayClip, canvasWidth, canvasHeight
+                    )
+                    val tx = geometry.anchorX
+                    val ty = geometry.anchorY
                     recordPlaybackDiagnostic(
                         "EXPORT_OVERLAY id=${overlayClip.id.take(8)} " +
-                            "scale=${overlayClip.transformScale} exportScale=${exportScale.first},${exportScale.second} " +
+                            "scale=${overlayClip.transformScale} exportScale=${geometry.scale} " +
                             "rotation=${overlayClip.rotationDegrees} x=${overlayClip.transformX} y=${overlayClip.transformY} " +
                             "previewFrame=${frameW.toInt()}x${frameH.toInt()} canvas=${canvasWidth}x${canvasHeight} " +
                             "compositorAnchor=$tx,$ty"
@@ -9461,17 +9545,15 @@ class MainActivity : AppCompatActivity() {
                 val canvasWidth = (exportWidth ?: frameW.toInt()).coerceAtLeast(2)
                 val canvasHeight = (exportHeight ?: frameH.toInt()).coerceAtLeast(2)
                 val compositorLayers = exportOverlayClips.map { overlayClip ->
-                    val exportScale = calculateOverlayExportScale(
+                    val geometry = calculateOverlayExportGeometry(
                         overlayClip, canvasWidth, canvasHeight
                     )
                     OverlayCompositorLayer(
-                        scaleX = exportScale.first,
-                        scaleY = exportScale.second,
+                        scaleX = geometry.scale,
+                        scaleY = geometry.scale,
                         rotationDegrees = -overlayClip.rotationDegrees,
-                        backgroundAnchorX = (2f * overlayClip.transformX / frameW)
-                            .coerceIn(-1f, 1f),
-                        backgroundAnchorY = (-2f * overlayClip.transformY / frameH)
-                            .coerceIn(-1f, 1f)
+                        backgroundAnchorX = geometry.anchorX,
+                        backgroundAnchorY = geometry.anchorY
                     )
                 }
                 compositionBuilder.setVideoCompositorSettings(
