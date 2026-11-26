@@ -5574,9 +5574,22 @@ class MainActivity : AppCompatActivity() {
         val activeClips = overlayVideoClips
             .filter { position >= it.startTimeMs && position < it.endTimeMs }
             .sortedBy { it.trackIndex }
-        val selectedPreviewOnly = activeClips.isEmpty() && !player.isPlaying && !isTimelineScrubbing
-        val desiredClips = if (activeClips.isNotEmpty()) activeClips else {
-            if (selectedPreviewOnly) listOfNotNull(overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId }) else emptyList()
+        // Preview diam saat playhead berada SEBELUM overlay terpilih, agar pengguna
+        // tetap dapat mengatur overlay yang belum mulai. Setelah melewati endTimeMs,
+        // jangan hidupkan kembali PlayerView dari frame awal: itu meninggalkan
+        // tekstur/frame kecil di tengah kanvas setelah overlay selesai.
+        val selectedClipForPreview = overlayVideoClips.firstOrNull {
+            it.id == selectedOverlayVideoClipId
+        }
+        val selectedPreviewOnly = activeClips.isEmpty() &&
+            !player.isPlaying &&
+            !isTimelineScrubbing &&
+            selectedClipForPreview != null &&
+            position < selectedClipForPreview.startTimeMs
+        val desiredClips = if (activeClips.isNotEmpty()) {
+            activeClips
+        } else {
+            if (selectedPreviewOnly) listOfNotNull(selectedClipForPreview) else emptyList()
         }
         val desiredIds = desiredClips.map { it.id }.toSet()
 
