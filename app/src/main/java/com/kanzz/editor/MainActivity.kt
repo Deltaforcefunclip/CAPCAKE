@@ -5473,11 +5473,11 @@ class MainActivity : AppCompatActivity() {
         // Ukur setiap sisi memakai dua segmen titik sudut-ke-tengah.
         val mappedWidth = (
             distance(0, 1) + distance(1, 2) +
-                distance(6, 7) + distance(7, 0)
+                distance(6, 5) + distance(5, 4)
             ) / 2f
         val mappedHeight = (
             distance(2, 3) + distance(3, 4) +
-                distance(6, 7) + distance(7, 0)
+                distance(0, 7) + distance(7, 6)
             ) / 2f
 
         val scaleX = mappedWidth / exportOverlayRect.width().coerceAtLeast(1f)
@@ -9553,7 +9553,10 @@ class MainActivity : AppCompatActivity() {
                         scaleY = geometry.scale,
                         rotationDegrees = -overlayClip.rotationDegrees,
                         backgroundAnchorX = geometry.anchorX,
-                        backgroundAnchorY = geometry.anchorY
+                        backgroundAnchorY = geometry.anchorY,
+                        activeStartTimeUs = overlayClip.startTimeMs.coerceAtLeast(0L) * 1_000L,
+                        activeEndTimeUs = (overlayClip.startTimeMs.coerceAtLeast(0L) +
+                            overlayClip.durationMs.coerceAtLeast(0L)) * 1_000L
                     )
                 }
                 compositionBuilder.setVideoCompositorSettings(
