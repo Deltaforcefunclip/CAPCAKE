@@ -5477,7 +5477,7 @@ class MainActivity : AppCompatActivity() {
             ) / 2f
         val mappedHeight = (
             distance(2, 3) + distance(3, 4) +
-                distance(6, 5) + distance(5, 4)
+                distance(6, 7) + distance(7, 0)
             ) / 2f
 
         val scaleX = mappedWidth / exportOverlayRect.width().coerceAtLeast(1f)
