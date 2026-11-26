@@ -8844,11 +8844,9 @@ class MainActivity : AppCompatActivity() {
                         override fun getNextSpeedChangeTimeUs(timeUs: Long): Long =
                             C.TIME_UNSET
                     })
-                // API frame-rate cap ini mengikuti timestamp setelah speed diterapkan.
-                // Jika pengguna tidak memilih FPS, sumber dibiarkan otomatis.
-                if (outputFps != null) {
-                    editedBuilder.setFrameRate(outputFps.toInt().coerceAtLeast(1))
-                }
+                // Jangan melakukan frame-rate conversion per klip di sini.
+                // Semua sumber harus masuk ke satu frame aggregator global agar
+                // video 30/60 FPS dapat diselaraskan tanpa konversi ganda.
                 editedBuilder.setEffects(
                         Effects(
                             audioProcessors,
@@ -9120,11 +9118,8 @@ class MainActivity : AppCompatActivity() {
                                     )
                                 }
 
-                                // Batas FPS per klip sebagai fallback pada Media3 stabil.
-                                if (outputFps != null) {
-                                    add(FrameDropEffect.createDefaultFrameDropEffect(outputFps))
-                                }
-
+                                // Pengaturan FPS dilakukan satu kali oleh frame aggregator
+                                // komposisi, bukan oleh efek per klip.
                             }
                         )
                     )
@@ -9353,12 +9348,8 @@ class MainActivity : AppCompatActivity() {
                 val overlayEditedBuilder = EditedMediaItem.Builder(overlayItem)
                     .setRemoveAudio(true)
                     .setEffects(Effects(emptyList(), overlayEffects))
-                // Samakan cadence overlay dengan FPS export utama. Tanpa cap ini,
-                // overlay dapat memasok frame jauh lebih cepat daripada video utama
-                // dan menambah tekanan antrean pada MultipleInputVideoGraph.
-                if (outputFps != null) {
-                    overlayEditedBuilder.setFrameRate(outputFps.toInt().coerceAtLeast(1))
-                }
+                // Cadence overlay ditangani bersama video utama oleh aggregator global.
+                // Cap per-item di sini dapat menyebabkan frame dibuang dua kali.
                 val overlayEdited = overlayEditedBuilder.build()
                 val overlaySequence = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
                 if (overlayStart > 0L) overlaySequence.addGap(overlayStart * 1000L)
@@ -9497,9 +9488,10 @@ class MainActivity : AppCompatActivity() {
                     )
                 )
             }
-            // Selaraskan seluruh sequence video ke FPS ekspor sebelum frame processor.
-            // Frame yang kurang diulang; frame yang berlebih dibuang.
-            if (exportOverlayClips.isNotEmpty() && outputFps != null && outputFps > 0f) {
+            // Satu master clock untuk SELURUH video: timeline utama, overlay,
+            // dan gambar. Jangan campur konversi FPS per-item dengan aggregator.
+            // Aggregator mengulang frame sumber lambat dan membuang frame sumber cepat.
+            if (outputFps != null && outputFps > 0f) {
                 val aggregationFps = outputFps.toInt().coerceAtLeast(1)
                 compositionBuilder.setVideoFrameAggregationParameters(
                     VideoFrameAggregationParameters.Builder()
@@ -9508,7 +9500,7 @@ class MainActivity : AppCompatActivity() {
                 )
                 recordPlaybackDiagnostic(
                     "FRAME_AGGREGATION enabled=true targetFps=$aggregationFps " +
-                        "videoSequences=" + (exportOverlayClips.size + 1)
+                        "videoSequences=${exportOverlayClips.size + 1} mode=composition_global"
                 )
             }
             val composition = compositionBuilder.build()
@@ -9564,8 +9556,9 @@ class MainActivity : AppCompatActivity() {
             val transformerBuilder = Transformer.Builder(this)
                 .setEncoderFactory(encoderFactory)
                 .setVideoMimeType("video/avc")
-            // Aggregation memerlukan GL FrameProcessor aktif.
-            if (exportOverlayClips.isNotEmpty() && outputFps != null && outputFps > 0f) {
+            // Frame aggregation hanya aktif bila FrameProcessor dipasang.
+            // Aktifkan untuk semua ekspor dengan FPS pilihan, termasuk tanpa overlay.
+            if (outputFps != null && outputFps > 0f) {
                 transformerBuilder.setFrameProcessorFactory(
                     DefaultGlFrameProcessor.Factory.Builder(this).build()
                 )
