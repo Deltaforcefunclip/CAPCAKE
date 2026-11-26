@@ -5414,11 +5414,21 @@ class MainActivity : AppCompatActivity() {
 
         val previewImage = fittedImage(previewW, previewH)
         val exportImage = fittedImage(exportW, exportH)
-        val previewImageFraction = previewImage.first / previewW
-        val exportImageFraction = exportImage.first / exportW
-        val ratioCorrection = previewImageFraction /
-            exportImageFraction.coerceAtLeast(0.0001f)
-        val uniformScale = (clip.transformScale * ratioCorrection).coerceIn(0.01f, 20f)
+
+        // Skala compositor memakai koordinat ternormalisasi (-1..1).
+        // Karena itu koreksi X dan Y harus dihitung terpisah. Menggunakan
+        // fraksi lebar saja membuat ukuran overlay meleset pada rasio kanvas
+        // portrait/landscape ketika video utama di-FIT dengan letterbox/pillarbox.
+        val previewFractionX = previewImage.first / previewW
+        val previewFractionY = previewImage.second / previewH
+        val exportFractionX = exportImage.first / exportW
+        val exportFractionY = exportImage.second / exportH
+        val correctionX = previewFractionX /
+            exportFractionX.coerceAtLeast(0.0001f)
+        val correctionY = previewFractionY /
+            exportFractionY.coerceAtLeast(0.0001f)
+        val scaleX = (clip.transformScale * correctionX).coerceIn(0.01f, 20f)
+        val scaleY = (clip.transformScale * correctionY).coerceIn(0.01f, 20f)
 
         recordPlaybackDiagnostic(
             "OVERLAY_SCALE_REFERENCE mainAspect=$mainAspect " +
@@ -5426,9 +5436,9 @@ class MainActivity : AppCompatActivity() {
                 "export=${exportW.toInt()}x${exportH.toInt()} " +
                 "previewFit=${previewImage.first.toInt()}x${previewImage.second.toInt()} " +
                 "exportFit=${exportImage.first.toInt()}x${exportImage.second.toInt()} " +
-                "correction=$ratioCorrection scale=$uniformScale"
+                "correction=$correctionX,$correctionY scale=$scaleX,$scaleY"
         )
-        return uniformScale to uniformScale
+        return scaleX to scaleY
     }
 
     private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
