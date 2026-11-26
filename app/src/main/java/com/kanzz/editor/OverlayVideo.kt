@@ -36,7 +36,11 @@ data class OverlayVideoClip(
     var cropRight: Float = 0f,
     var cropBottom: Float = 0f,
     var videoWidth: Int = 0,
-    var videoHeight: Int = 0
+    var videoHeight: Int = 0,
+    var isImage: Boolean = false,
+    var brightness: Float = 0f,
+    var contrast: Float = 1f,
+    var saturation: Float = 1f
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
@@ -108,6 +112,8 @@ object OverlayVideoCodec {
                 put("cropLeft", clip.cropLeft.toDouble()); put("cropTop", clip.cropTop.toDouble())
                 put("cropRight", clip.cropRight.toDouble()); put("cropBottom", clip.cropBottom.toDouble())
                 put("videoWidth", clip.videoWidth); put("videoHeight", clip.videoHeight)
+                put("isImage", clip.isImage)
+                put("brightness", clip.brightness.toDouble()); put("contrast", clip.contrast.toDouble()); put("saturation", clip.saturation.toDouble())
             })
         }
     }.toString()
@@ -144,7 +150,11 @@ object OverlayVideoCodec {
                     cropRight = o.optDouble("cropRight", 0.0).toFloat().coerceIn(0f, 0.95f),
                     cropBottom = o.optDouble("cropBottom", 0.0).toFloat().coerceIn(0f, 0.95f),
                     videoWidth = o.optInt("videoWidth", 0).coerceAtLeast(0),
-                    videoHeight = o.optInt("videoHeight", 0).coerceAtLeast(0)
+                    videoHeight = o.optInt("videoHeight", 0).coerceAtLeast(0),
+                    isImage = o.optBoolean("isImage", false),
+                    brightness = o.optDouble("brightness", 0.0).toFloat().coerceIn(-1f, 1f),
+                    contrast = o.optDouble("contrast", 1.0).toFloat().coerceIn(0f, 2f),
+                    saturation = o.optDouble("saturation", 1.0).toFloat().coerceIn(0f, 2f)
                 ))
             }
         }
