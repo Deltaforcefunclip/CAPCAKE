@@ -5353,37 +5353,18 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * Konversi skala overlay berdasarkan gambar VIDEO UTAMA, bukan rasio video overlay.
-     * Preview dan export sama-sama menampilkan sumber utama dengan FIT; saat rasio
-     * kanvas berubah, area gambar utama yang terlihat ikut berubah. Overlay harus
-     * mengikuti perubahan area gambar tersebut agar ukuran relatifnya tetap sama.
-     */
-    /**
-     * Samakan ukuran overlay preview dan export berdasarkan sisi terpendek kanvas.
-     * Ukuran overlay di preview dan export sama-sama di-FIT ke kanvas masing-masing.
-     * Karena itu acuan harus memakai rasio sumber OVERLAY, bukan rasio video utama.
+     * Satu sistem koordinat kanonis untuk preview dan export.
+     * Posisi disimpan dalam piksel relatif terhadap previewFrameContainer.
+     * Presentation FIT menyesuaikan ukuran sumber ke setiap kanvas, sehingga
+     * skala pengguna tidak perlu dihitung ulang berdasarkan rasio kanvas.
      *
-     * Normalisasi terhadap sisi terpendek menjaga persentase ukuran overlay tetap
-     * konsisten saat kanvas berubah dari persegi ke portrait atau landscape,
-     * tanpa memberi faktor skala berbeda pada X dan Y.
-     */
-    /**
-     * Delapan titik geometri overlay pada koordinat preview:
-     * 4 sudut + titik tengah setiap sisi. Titik dipetakan dari area gambar
-     * video utama (FIT) ke area gambar utama pada kanvas ekspor (FIT).
-     *
-     * Skala akhir diturunkan dari panjang sisi hasil pemetaan, lalu dirata-rata
-     * secara geometris agar overlay tetap proporsional dan tidak meregang.
-     * Titik tengah tetap dipakai untuk mengukur kedua setengah sisi, sehingga
-     * pemetaan dapat didiagnosis meskipun sudut overlay berada di luar kanvas.
+     * Anchor compositor berada pada rentang [-1, 1]. Sumbu Y Android positif
+     * ke bawah, sedangkan sumbu Y anchor compositor positif ke atas.
      */
     private data class OverlayExportGeometry(
         val scale: Float,
         val anchorX: Float,
-        val anchorY: Float,
-        val mappedPoints: List<PointF>,
-        val mappedWidth: Float,
-        val mappedHeight: Float
+        val anchorY: Float
     )
 
     private fun calculateOverlayExportGeometry(
@@ -5396,114 +5377,18 @@ class MainActivity : AppCompatActivity() {
         val exportW = canvasWidth.coerceAtLeast(2).toFloat()
         val exportH = canvasHeight.coerceAtLeast(2).toFloat()
 
-        val overlayAspect = if (clip.videoWidth > 0 && clip.videoHeight > 0) {
-            clip.videoWidth.toFloat() / clip.videoHeight.toFloat()
-        } else {
-            previewW / previewH
-        }.coerceAtLeast(0.0001f)
-
-        val videoSize = player.videoSize
-        val mainAspect = if (videoSize.width > 0 && videoSize.height > 0) {
-            var width = videoSize.width.toFloat()
-            var height = videoSize.height.toFloat()
-            if (videoSize.unappliedRotationDegrees == 90 ||
-                videoSize.unappliedRotationDegrees == 270
-            ) {
-                val swap = width
-                width = height
-                height = swap
-            }
-            width / height.coerceAtLeast(1f)
-        } else {
-            cachedMainVideoAspectRatio ?: (previewW / previewH)
-        }.coerceAtLeast(0.0001f)
-
-        fun fitRect(width: Float, height: Float, aspect: Float): RectF {
-            val fittedWidth: Float
-            val fittedHeight: Float
-            if (aspect >= width / height) {
-                fittedWidth = width
-                fittedHeight = width / aspect
-            } else {
-                fittedHeight = height
-                fittedWidth = height * aspect
-            }
-            val left = (width - fittedWidth) / 2f
-            val top = (height - fittedHeight) / 2f
-            return RectF(left, top, left + fittedWidth, top + fittedHeight)
-        }
-
-        val previewMainRect = fitRect(previewW, previewH, mainAspect)
-        val exportMainRect = fitRect(exportW, exportH, mainAspect)
-        val previewOverlayRect = fitRect(previewW, previewH, overlayAspect)
-        val exportOverlayRect = fitRect(exportW, exportH, overlayAspect)
-
-        val halfW = previewOverlayRect.width() * clip.transformScale.coerceIn(0.2f, 4f) / 2f
-        val halfH = previewOverlayRect.height() * clip.transformScale.coerceIn(0.2f, 4f) / 2f
-        val centerX = previewW / 2f + clip.transformX
-        val centerY = previewH / 2f + clip.transformY
-        val radians = Math.toRadians(clip.rotationDegrees.toDouble())
-        val cosA = kotlin.math.cos(radians).toFloat()
-        val sinA = kotlin.math.sin(radians).toFloat()
-
-        // TL, top-middle, TR, right-middle, BR, bottom-middle, BL, left-middle.
-        val localPoints = listOf(
-            -halfW to -halfH, 0f to -halfH, halfW to -halfH, halfW to 0f,
-            halfW to halfH, 0f to halfH, -halfW to halfH, -halfW to 0f
-        )
-        val mappedPoints = localPoints.map { (localX, localY) ->
-            val previewX = centerX + localX * cosA - localY * sinA
-            val previewY = centerY + localX * sinA + localY * cosA
-            val u = (previewX - previewMainRect.left) /
-                previewMainRect.width().coerceAtLeast(1f)
-            val v = (previewY - previewMainRect.top) /
-                previewMainRect.height().coerceAtLeast(1f)
-            PointF(
-                exportMainRect.left + u * exportMainRect.width(),
-                exportMainRect.top + v * exportMainRect.height()
-            )
-        }
-
-        fun distance(a: Int, b: Int): Float {
-            val dx = mappedPoints[a].x - mappedPoints[b].x
-            val dy = mappedPoints[a].y - mappedPoints[b].y
-            return kotlin.math.sqrt(dx * dx + dy * dy)
-        }
-
-        // Ukur setiap sisi memakai dua segmen titik sudut-ke-tengah.
-        val mappedWidth = (
-            distance(0, 1) + distance(1, 2) +
-                distance(6, 5) + distance(5, 4)
-            ) / 2f
-        val mappedHeight = (
-            distance(2, 3) + distance(3, 4) +
-                distance(0, 7) + distance(7, 6)
-            ) / 2f
-
-        val scaleX = mappedWidth / exportOverlayRect.width().coerceAtLeast(1f)
-        val scaleY = mappedHeight / exportOverlayRect.height().coerceAtLeast(1f)
-        // Geometric mean mempertahankan skala seragam bila ada selisih pembulatan.
-        val uniformScale = kotlin.math.sqrt(
-            (scaleX.coerceAtLeast(0.0001f) * scaleY.coerceAtLeast(0.0001f)).toDouble()
-        ).toFloat().coerceIn(0.01f, 20f)
-
-        val mappedCenterX = mappedPoints.map { it.x }.average().toFloat()
-        val mappedCenterY = mappedPoints.map { it.y }.average().toFloat()
-        val anchorX = (2f * mappedCenterX / exportW - 1f).coerceIn(-1f, 1f)
-        val anchorY = (1f - 2f * mappedCenterY / exportH).coerceIn(-1f, 1f)
+        // Overlay preview dan export sama-sama menggunakan FIT. Pertahankan
+        // skala pengguna apa adanya; hanya normalisasi posisi ke anchor kanvas.
+        val scale = clip.transformScale.coerceIn(0.2f, 4f)
+        val anchorX = (2f * clip.transformX / previewW).coerceIn(-4f, 4f)
+        val anchorY = (-2f * clip.transformY / previewH).coerceIn(-4f, 4f)
 
         recordPlaybackDiagnostic(
-            "OVERLAY_8_POINT id=${clip.id.take(8)} mainAspect=$mainAspect " +
-                "previewMain=${previewMainRect.width()}x${previewMainRect.height()} " +
-                "exportMain=${exportMainRect.width()}x${exportMainRect.height()} " +
-                "mapped=${mappedWidth}x${mappedHeight} " +
-                "scale=$uniformScale anchor=$anchorX,$anchorY " +
-                "points=${mappedPoints.joinToString(";") { "${it.x.toInt()},${it.y.toInt()}" }}"
+            "OVERLAY_CANONICAL id=${clip.id.take(8)} " +
+                "preview=${previewW.toInt()}x${previewH.toInt()} export=${exportW.toInt()}x${exportH.toInt()} " +
+                "scale=$scale anchor=$anchorX,$anchorY translation=${clip.transformX},${clip.transformY}"
         )
-
-        return OverlayExportGeometry(
-            uniformScale, anchorX, anchorY, mappedPoints, mappedWidth, mappedHeight
-        )
+        return OverlayExportGeometry(scale, anchorX, anchorY)
     }
 
     private fun applyOverlayPreviewTransform(clip: OverlayVideoClip) {
