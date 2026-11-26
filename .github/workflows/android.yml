@@ -25,7 +25,7 @@ jobs:
       - name: Install Android NDK and CMake
         run: |
           yes | ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager --licenses > /dev/null || true
-          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platforms;android-37" "build-tools;36.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
+          ${ANDROID_HOME}/cmdline-tools/latest/bin/sdkmanager "platforms;android-37.0" "build-tools;37.0.0" "cmake;3.22.1" "ndk;26.1.10909125"
 
       - name: Download ncnn Vulkan runtime
         run: |
