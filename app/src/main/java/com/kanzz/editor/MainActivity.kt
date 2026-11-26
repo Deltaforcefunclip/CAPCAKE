@@ -3748,7 +3748,7 @@ class MainActivity : AppCompatActivity() {
                 "P̲T̲" to "Preset Text"
             )
         } else if (selectedOverlayVideoClipId != null) {
-            listOf("♫" to "Volume", "⚙" to "Modifikasi", "🟩" to "Chroma Key", "▱" to if (overlayCropModeEnabled) "Selesai Crop" else "Crop", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus", "GS" to "GS")
+            listOf("♫" to "Volume", "◉" to "Warna", "🟩" to "Chroma Key", "▱" to if (overlayCropModeEnabled) "Selesai Crop" else "Crop", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus", "GS" to "GS")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3900,7 +3900,7 @@ class MainActivity : AppCompatActivity() {
                         else if (selectedAudioClipId != null) audioClipManager.clips.firstOrNull { it.id == selectedAudioClipId }?.let { showAudioClipVolume(it) }
                         else videoClipManager.find(selectedVideoClipId)?.let { showVideoClipVolume(it) }
                     }
-                    "Modifikasi" -> showOverlayVideoModifyDialog()
+                    "Warna" -> showOverlayVideoModifyDialog()
                     "GS" -> showOverlayGsPopup()
                     "Chroma Key" -> showOverlayChromaKeyDialog()
                     "Crop", "Selesai Crop" -> toggleOverlayCropMode()
@@ -4110,7 +4110,7 @@ class MainActivity : AppCompatActivity() {
                             // ketukan pertama hanya membukanya. Ketukan berikutnya
                             // baru membuka pemilih berkas/galeri.
                             if (overlayVideoClips.isEmpty() || wasOverlayVisible) {
-                                pickOverlayVideo.launch(arrayOf("video/*"))
+                                pickOverlayVideo.launch(arrayOf("video/*", "image/jpeg", "image/png"))
                             }
                         } else {
                             activeLayerGroup = "STICKER"
@@ -5486,12 +5486,33 @@ class MainActivity : AppCompatActivity() {
     // Preview crop dilakukan pada TextureView, bukan lewat Media3 Effect.
     // Dengan begitu perubahan koordinat crop tidak membangun ulang GL pipeline/decoder.
     // Efek Crop Media3 tetap digunakan pada jalur export.
+    private fun buildOverlayColorMatrix(clip: OverlayVideoClip): RgbMatrix {
+        val saturation = clip.saturation.coerceIn(0f, 2f)
+        val contrast = clip.contrast.coerceIn(0f, 2f)
+        val brightness = clip.brightness.coerceIn(-1f, 1f)
+        val sr = 0.213f * (1f - saturation)
+        val sg = 0.715f * (1f - saturation)
+        val sb = 0.072f * (1f - saturation)
+        val offset = 0.5f * (1f - contrast) + brightness
+        val matrix = floatArrayOf(
+            (sr + saturation) * contrast, sg * contrast, sb * contrast, 0f,
+            sr * contrast, (sg + saturation) * contrast, sb * contrast, 0f,
+            sr * contrast, sg * contrast, (sb + saturation) * contrast, 0f,
+            offset, offset, offset, 1f
+        )
+        return RgbMatrix { _, _ -> matrix }
+    }
+
     private fun buildOverlayPreviewEffects(
         clip: OverlayVideoClip,
         chromaEffect: ChromaKeyGlEffect? = null,
         includeCrop: Boolean = true
     ): List<androidx.media3.common.Effect> {
         val effects = mutableListOf<androidx.media3.common.Effect>()
+        if (kotlin.math.abs(clip.brightness) > 0.0001f ||
+            kotlin.math.abs(clip.contrast - 1f) > 0.0001f ||
+            kotlin.math.abs(clip.saturation - 1f) > 0.0001f
+        ) effects.add(buildOverlayColorMatrix(clip))
         if (includeCrop && (
                 clip.cropLeft > 0f || clip.cropTop > 0f ||
                 clip.cropRight > 0f || clip.cropBottom > 0f
@@ -5581,17 +5602,21 @@ class MainActivity : AppCompatActivity() {
 
             // Crop tidak lagi menjadi bagian signature efek preview.
             // Perubahan crop cukup memperbarui Matrix TextureView, bukan memasang ulang efek.
-            val effectSignature = "${clip.chromaKeyEnabled}"
+            val effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
             val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
             if (session.preparedClipId != clip.id) {
-                val item = MediaItem.Builder()
-                    .setUri(Uri.parse(clip.sourceUri))
-                    .setClippingConfiguration(
+                val itemBuilder = MediaItem.Builder().setUri(Uri.parse(clip.sourceUri))
+                if (clip.isImage) {
+                    itemBuilder.setImageDurationMs(clip.durationMs.coerceAtLeast(1L))
+                } else {
+                    itemBuilder.setClippingConfiguration(
                         MediaItem.ClippingConfiguration.Builder()
                             .setStartPositionMs(clip.sourceStartMs.coerceAtLeast(0L))
                             .setEndPositionMs((clip.sourceStartMs + clip.durationMs).coerceAtLeast(clip.sourceStartMs + 1L))
                             .build()
-                    ).build()
+                    )
+                }
+                val item = itemBuilder.build()
                 try {
                     overlayPlayer.setMediaItem(item, localPosition)
                     session.chromaKeyEffect = if (clip.chromaKeyEnabled) {
@@ -5885,26 +5910,41 @@ class MainActivity : AppCompatActivity() {
 
     private fun showOverlayVideoModifyDialog() {
         val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return
-        val oldScale = clip.transformScale
-        val oldRotation = clip.rotationDegrees
-        val oldX = clip.transformX
-        val oldY = clip.transformY
+        val oldBrightness = clip.brightness
+        val oldContrast = clip.contrast
+        val oldSaturation = clip.saturation
         pushUndoSnapshot()
 
         val panel = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(20), dp(12), dp(20), dp(8))
         }
-        fun addControl(title: String, max: Int, initial: Int, valueText: (Int) -> String, update: (Int) -> Unit) {
+        fun addColorControl(
+            title: String,
+            initial: Int,
+            suffix: String = "",
+            update: (Int) -> Unit
+        ) {
             val heading = TextView(this).apply {
-                setTextColor(Color.WHITE); textSize = 13f; text = valueText(initial)
+                setTextColor(Color.WHITE)
+                textSize = 13f
             }
-            val seek = SeekBar(this).apply { this.max = max; progress = initial }
+            val seek = SeekBar(this).apply {
+                max = 200
+                progress = initial.coerceIn(0, 200)
+                progressTintList = android.content.res.ColorStateList.valueOf(green)
+                thumbTintList = android.content.res.ColorStateList.valueOf(green)
+            }
+            fun updateLabel(value: Int) {
+                val shown = value - 100
+                heading.text = "$title: $shown$suffix"
+            }
+            updateLabel(seek.progress)
             seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    heading.text = valueText(progress)
+                    updateLabel(progress)
                     update(progress)
-                    applyOverlayPreviewTransform(clip)
+                    updateOverlayColorPreview(clip)
                 }
                 override fun onStartTrackingTouch(bar: SeekBar?) {}
                 override fun onStopTrackingTouch(bar: SeekBar?) {}
@@ -5912,40 +5952,62 @@ class MainActivity : AppCompatActivity() {
             panel.addView(heading)
             panel.addView(seek)
         }
-        addControl("Ukuran", 380, ((oldScale * 100f) - 20f).toInt().coerceIn(0, 380),
-            { "Ukuran: ${it + 20}%" }) { clip.transformScale = (it + 20) / 100f }
-        addControl("Rotasi", 360, (oldRotation + 180f).toInt().coerceIn(0, 360),
-            { "Rotasi: ${it - 180}°" }) { clip.rotationDegrees = (it - 180).toFloat() }
-        val range = dp(250).coerceAtLeast(100)
-        addControl("Posisi horizontal", 200, ((oldX / range.toFloat() + 1f) * 100f).toInt().coerceIn(0, 200),
-            { "Horizontal: ${((it - 100) / 100f * range).toInt()} px" }) { clip.transformX = (it - 100) / 100f * range }
-        addControl("Posisi vertikal", 200, ((oldY / range.toFloat() + 1f) * 100f).toInt().coerceIn(0, 200),
-            { "Vertikal: ${((it - 100) / 100f * range).toInt()} px" }) { clip.transformY = (it - 100) / 100f * range }
+        addColorControl("Kecerahan", (oldBrightness * 100f + 100f).toInt()) {
+            clip.brightness = (it - 100) / 100f
+        }
+        addColorControl("Kontras", (oldContrast * 100f).toInt()) {
+            clip.contrast = it / 100f
+        }
+        addColorControl("Saturasi", (oldSaturation * 100f).toInt()) {
+            clip.saturation = it / 100f
+        }
 
         androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Modifikasi Overlay Video")
+            .setTitle("Warna Overlay")
             .setView(ScrollView(this).apply { addView(panel) })
             .setNegativeButton("Batal") { _, _ ->
-                clip.transformScale = oldScale; clip.rotationDegrees = oldRotation
-                clip.transformX = oldX; clip.transformY = oldY
+                clip.brightness = oldBrightness
+                clip.contrast = oldContrast
+                clip.saturation = oldSaturation
                 undoStack.removeLastOrNull()
-                applyOverlayPreviewTransform(clip)
+                updateOverlayColorPreview(clip)
             }
             .setPositiveButton("Terapkan") { _, _ ->
-                applyOverlayPreviewTransform(clip)
+                updateOverlayColorPreview(clip)
                 saveCurrentProject()
                 refreshOverlayVideoTracks()
             }
             .setOnCancelListener {
-                clip.transformScale = oldScale; clip.rotationDegrees = oldRotation
-                clip.transformX = oldX; clip.transformY = oldY
+                clip.brightness = oldBrightness
+                clip.contrast = oldContrast
+                clip.saturation = oldSaturation
                 undoStack.removeLastOrNull()
-                applyOverlayPreviewTransform(clip)
+                updateOverlayColorPreview(clip)
             }
             .show()
     }
 
-    private fun readOverlayVideoDimensions(uri: Uri): Pair<Int, Int> {
+    private fun updateOverlayColorPreview(clip: OverlayVideoClip) {
+        val session = overlayPreviewSessions[clip.id] ?: return
+        runCatching {
+            session.player.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
+            session.effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
+            if (!player.isPlaying && session.player.playbackState == Player.STATE_READY) {
+                session.player.seekTo(session.player.currentPosition)
+            }
+        }.onFailure {
+            recordPlaybackDiagnostic("OVERLAY_COLOR_PREVIEW_ERROR clip=${clip.id.take(8)} ${it.javaClass.simpleName}: ${it.message}")
+        }
+    }
+
+    private fun readOverlayVideoDimensions(uri: Uri, isImage: Boolean = false): Pair<Int, Int> {
+        if (isImage) {
+            val options = BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            return runCatching {
+                contentResolver.openInputStream(uri)?.use { BitmapFactory.decodeStream(it, null, options) }
+                options.outWidth.coerceAtLeast(0) to options.outHeight.coerceAtLeast(0)
+            }.getOrDefault(0 to 0)
+        }
         val retriever = android.media.MediaMetadataRetriever()
         return try {
             retriever.setDataSource(this, uri)
@@ -5959,11 +6021,15 @@ class MainActivity : AppCompatActivity() {
 
     private fun addOverlayVideoClip(uri: Uri) {
         try { contentResolver.takePersistableUriPermission(uri, android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION) } catch (_: Exception) {}
-        val duration = readVideoDurationMs(uri)
+        val mime = contentResolver.getType(uri).orEmpty().lowercase(Locale.US)
+        val path = uri.lastPathSegment.orEmpty().lowercase(Locale.US)
+        val isImage = mime.startsWith("image/") || path.endsWith(".jpg") || path.endsWith(".jpeg") || path.endsWith(".png")
+        val duration = if (isImage) 5_000L else readVideoDurationMs(uri)
         if (duration <= 0L) { showMessage("Durasi video overlay tidak dapat dibaca."); return }
         pushUndoSnapshot()
-        val name = runCatching { uri.lastPathSegment?.substringAfterLast("/") }.getOrNull()?.takeIf { it.isNotBlank() } ?: "Overlay Video"
-        val dimensions = readOverlayVideoDimensions(uri)
+        val name = runCatching { uri.lastPathSegment?.substringAfterLast("/") }.getOrNull()?.takeIf { it.isNotBlank() }
+            ?: if (isImage) "Overlay Image" else "Overlay Video"
+        val dimensions = readOverlayVideoDimensions(uri, isImage)
         val startTime = timelineController.positionMs.coerceAtLeast(0L)
         val availableTrack = findAvailableOverlayTrack(
             overlayVideoClips, startTime, duration, maxTrackIndex = 31
@@ -5972,15 +6038,25 @@ class MainActivity : AppCompatActivity() {
             showMessage("Semua 32 layer overlay sedang terisi pada waktu ini.")
             return
         }
-        val clip = OverlayVideoClip(sourceUri = uri.toString(), startTimeMs = startTime,
+        val clip = OverlayVideoClip(
+            sourceUri = uri.toString(), startTimeMs = startTime,
             durationMs = duration, sourceDurationMs = duration, name = name,
-            trackIndex = availableTrack, videoWidth = dimensions.first, videoHeight = dimensions.second)
+            trackIndex = availableTrack, videoWidth = dimensions.first,
+            videoHeight = dimensions.second, isImage = isImage
+        )
         overlayVideoClips.add(clip)
         selectedOverlayVideoClipId = clip.id
+        selectedVideoClipId = null
+        videoSelected = false
+        selectedAudioClipId = null
+        selectedTextClipId = null
+        selectedEffectClipId = null
+        timeline.selectClip(null)
+        timeline.updateSelection(false)
         activeLayerGroup = "OVERLAY"
         refreshOverlayVideoTracks(); updateLayerGroupVisibility(); saveCurrentProject(); updateToolMenu()
         syncOverlayVideoPreview()
-        Toast.makeText(this, "Overlay video ditambahkan ke timeline.", Toast.LENGTH_SHORT).show()
+        Toast.makeText(this, if (isImage) "Gambar ditambahkan ke layer overlay (5 detik)." else "Overlay video ditambahkan ke timeline.", Toast.LENGTH_SHORT).show()
     }
 
     private fun viewInvalidateOverlayTracks() {
@@ -9245,15 +9321,19 @@ class MainActivity : AppCompatActivity() {
             // Setiap klip overlay video menjadi sequence video paralel.
             exportOverlayClips.forEach { overlayClip ->
                 val overlayStart = overlayClip.startTimeMs.coerceAtLeast(0L)
-                val overlayItem = MediaItem.Builder()
-                    .setUri(Uri.parse(overlayClip.sourceUri))
-                    .setClippingConfiguration(
+                val overlayItemBuilder = MediaItem.Builder().setUri(Uri.parse(overlayClip.sourceUri))
+                if (overlayClip.isImage) {
+                    overlayItemBuilder.setImageDurationMs(overlayClip.durationMs.coerceAtLeast(1L))
+                } else {
+                    overlayItemBuilder.setClippingConfiguration(
                         MediaItem.ClippingConfiguration.Builder()
                             .setStartPositionMs(overlayClip.sourceStartMs.coerceAtLeast(0L))
                             .setEndPositionMs((overlayClip.sourceStartMs + overlayClip.durationMs)
                                 .coerceAtLeast(overlayClip.sourceStartMs + 1L))
                             .build()
-                    ).build()
+                    )
+                }
+                val overlayItem = overlayItemBuilder.build()
                 val overlayEffects = buildList {
                     // Koordinat translasi berasal dari ukuran area preview, tetapi
                     // geometri kanvas export wajib memakai rasio kanvas project yang
@@ -9297,6 +9377,10 @@ class MainActivity : AppCompatActivity() {
                             add(Crop(cropLeft, cropRight, cropBottom, cropTop))
                         }
                     }
+                    if (kotlin.math.abs(overlayClip.brightness) > 0.0001f ||
+                        kotlin.math.abs(overlayClip.contrast - 1f) > 0.0001f ||
+                        kotlin.math.abs(overlayClip.saturation - 1f) > 0.0001f
+                    ) add(buildOverlayColorMatrix(overlayClip))
                     if (overlayClip.chromaKeyEnabled) add(
                         ChromaKeyGlEffect(
                             overlayClip.chromaKeyColor,
@@ -9324,7 +9408,7 @@ class MainActivity : AppCompatActivity() {
                 sequences.add(overlaySequence.build())
 
                 // Audio overlay dipisah dari input video compositor agar suara ikut timeline.
-                if (overlayClip.volume > 0f) {
+                if (!overlayClip.isImage && overlayClip.volume > 0f) {
                     val overlayAudioSequence = EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_AUDIO))
                     if (overlayStart > 0L) overlayAudioSequence.addGap(overlayStart * 1000L)
                     val overlayAudioItem = EditedMediaItem.Builder(overlayItem)
