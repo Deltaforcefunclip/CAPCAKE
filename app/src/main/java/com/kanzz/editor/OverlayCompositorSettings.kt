@@ -38,7 +38,13 @@ class CapcakeVideoCompositorSettings(
 
     override fun getOverlaySettings(inputId: Int, presentationTimeUs: Long): OverlaySettings {
         val layer = overlayLayers.getOrNull(inputId)
-            ?: return StaticOverlaySettings.Builder().setAlphaScale(0f).build()
+            ?: return StaticOverlaySettings.Builder()
+                .setAlphaScale(1f)
+                .setScale(1f, 1f)
+                .setRotationDegrees(0f)
+                .setBackgroundFrameAnchor(0f, 0f)
+                .setOverlayFrameAnchor(0f, 0f)
+                .build()
 
         // Video gaps are represented by Media3 as black placeholder frames.
         // Hide the overlay input outside its real timeline interval so those
