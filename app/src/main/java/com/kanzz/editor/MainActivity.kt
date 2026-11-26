@@ -15,7 +15,6 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.util.Log
-import android.util.Rational
 import android.provider.MediaStore
 import android.provider.OpenableColumns
 import android.view.Gravity
@@ -57,11 +56,9 @@ import androidx.media3.transformer.EditedMediaItem
 import androidx.media3.transformer.ExportException
 import androidx.media3.transformer.ExportResult
 import androidx.media3.transformer.Transformer
-import androidx.media3.transformer.VideoFrameAggregationParameters
 import androidx.media3.transformer.EditedMediaItemSequence
 import androidx.media3.transformer.ProgressHolder
 import androidx.media3.effect.Presentation
-import androidx.media3.effect.DefaultGlFrameProcessor
 import androidx.media3.effect.StaticOverlaySettings
 import androidx.media3.effect.Crop
 import androidx.media3.effect.FrameDropEffect
@@ -9497,20 +9494,6 @@ class MainActivity : AppCompatActivity() {
                     )
                 )
             }
-            // Agregasikan frame semua sequence pada cadence target sebelum masuk
-            // ke pipeline pemrosesan. Ini mencegah timestamp overlay menjadi acuan FPS.
-            if (exportOverlayClips.isNotEmpty() && outputFps != null && outputFps > 0f) {
-                val aggregationFps = outputFps.toInt().coerceAtLeast(1)
-                compositionBuilder.setVideoFrameAggregationParameters(
-                    VideoFrameAggregationParameters.Builder()
-                        .setFrameRate(Rational(aggregationFps, 1))
-                        .build()
-                )
-                recordPlaybackDiagnostic(
-                    "FRAME_AGGREGATION enabled=true targetFps=$aggregationFps " +
-                        "videoSequences=${exportOverlayClips.size + 1}"
-                )
-            }
             val composition = compositionBuilder.build()
             // Encode portrait frames in portrait dimensions instead of relying
             // only on a 90-degree rotation flag in MP4 metadata.
@@ -9564,12 +9547,6 @@ class MainActivity : AppCompatActivity() {
             val transformerBuilder = Transformer.Builder(this)
                 .setEncoderFactory(encoderFactory)
                 .setVideoMimeType("video/avc")
-            // Agregasi frame memerlukan FrameProcessor aktif.
-            if (exportOverlayClips.isNotEmpty() && outputFps != null && outputFps > 0f) {
-                transformerBuilder.setFrameProcessorFactory(
-                    DefaultGlFrameProcessor.Factory.Builder(this).build()
-                )
-            }
             val transformer = transformerBuilder
                 .setPortraitEncodingEnabled(true)
                 .addListener(listener)
