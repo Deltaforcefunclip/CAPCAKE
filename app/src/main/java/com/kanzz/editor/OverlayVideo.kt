@@ -40,7 +40,8 @@ data class OverlayVideoClip(
     var isImage: Boolean = false,
     var brightness: Float = 0f,
     var contrast: Float = 1f,
-    var saturation: Float = 1f
+    var saturation: Float = 1f,
+    var opacity: Float = 1f
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
@@ -113,7 +114,7 @@ object OverlayVideoCodec {
                 put("cropRight", clip.cropRight.toDouble()); put("cropBottom", clip.cropBottom.toDouble())
                 put("videoWidth", clip.videoWidth); put("videoHeight", clip.videoHeight)
                 put("isImage", clip.isImage)
-                put("brightness", clip.brightness.toDouble()); put("contrast", clip.contrast.toDouble()); put("saturation", clip.saturation.toDouble())
+                put("brightness", clip.brightness.toDouble()); put("contrast", clip.contrast.toDouble()); put("saturation", clip.saturation.toDouble()); put("opacity", clip.opacity.toDouble())
             })
         }
     }.toString()
@@ -154,7 +155,8 @@ object OverlayVideoCodec {
                     isImage = o.optBoolean("isImage", false),
                     brightness = o.optDouble("brightness", 0.0).toFloat().coerceIn(-1f, 1f),
                     contrast = o.optDouble("contrast", 1.0).toFloat().coerceIn(0f, 2f),
-                    saturation = o.optDouble("saturation", 1.0).toFloat().coerceIn(0f, 2f)
+                    saturation = o.optDouble("saturation", 1.0).toFloat().coerceIn(0f, 2f),
+                    opacity = o.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f)
                 ))
             }
         }
