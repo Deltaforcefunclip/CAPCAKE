@@ -5210,11 +5210,8 @@ class MainActivity : AppCompatActivity() {
         val clipRotation = activeClip?.rotationDegrees ?: 0f
         val clipX = activeClip?.transformX ?: 0f
         val clipY = activeClip?.transformY ?: 0f
-        val zoomScale = activeClip?.let {
-            clipZoomScale(currentTimelinePosition() - it.timelineStartMs, it.timelineDurationMs, it.zoomInDurationMs, it.zoomOutDurationMs)
-        } ?: 1f
-        content.scaleX = if (transformEnabled) clipScale * zoomScale else zoomScale
-        content.scaleY = if (transformEnabled) clipScale * zoomScale else zoomScale
+        content.scaleX = if (transformEnabled) clipScale else 1f
+        content.scaleY = if (transformEnabled) clipScale else 1f
         content.rotation = (if (transformEnabled) previewRotation else 0f) + clipRotation
         content.translationX = if (transformEnabled) previewTranslateX + clipX else 0f
         content.translationY = if (transformEnabled) previewTranslateY + clipY else 0f
@@ -7953,7 +7950,7 @@ class MainActivity : AppCompatActivity() {
             val useOut = outCheck.isChecked
             val total = (if (useIn) duration else 0L) + (if (useOut) duration else 0L)
             if (total > clipDuration) {
-                Toast.makeText(this, "Durasi terlalu pendek", Toast.LENGTH_SHORT).show()
+                Toast.makeText(this, "durasi terlalu pendek", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
             pushUndoSnapshot()
@@ -7971,7 +7968,7 @@ class MainActivity : AppCompatActivity() {
                     it.zoomOutDurationMs = if (useOut) duration else 0L
                 }
             }
-            updateTextPreview(); saveCurrentProject(); dialog.dismiss()
+            applyPreviewTransform(); syncOverlayVideoPreview(); updateTextPreview(); saveCurrentProject(); dialog.dismiss()
         }
         dialog.setContentView(root)
         dialog.setCanceledOnTouchOutside(true)
