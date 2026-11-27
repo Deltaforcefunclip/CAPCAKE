@@ -187,6 +187,12 @@ class OverlayVideoTrackView(
     private val lanePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = 0xFF303030.toInt(); strokeWidth = 1f * density
     }
+    private val snapGuidePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = 0xFFFFD54F.toInt()
+        strokeWidth = 1.5f * density
+        pathEffect = android.graphics.DashPathEffect(floatArrayOf(6f * density, 4f * density), 0f)
+    }
+    private var snapGuideTimeMs: Long? = null
     private var selectedId: String? = null
     private var touched: OverlayVideoClip? = null
     private var downX = 0f
@@ -218,6 +224,30 @@ class OverlayVideoTrackView(
     }
 
     fun select(id: String?) { selectedId = id; invalidate() }
+
+    private fun snapTime(clip: OverlayVideoClip, proposedStartMs: Long): SnapResult {
+        val snapState = TimelineState(
+            clips = clips.map { item ->
+                EditorClip(
+                    id = item.id,
+                    mediaUri = item.sourceUri,
+                    trackIndex = item.trackIndex,
+                    startTime = item.startTimeMs,
+                    duration = item.durationMs,
+                    sourceDuration = item.sourceDurationMs
+                )
+            },
+            playheadMs = controller.positionMs
+        )
+        return TimelineSnapEngine.snap(
+            proposedTimeMs = proposedStartMs,
+            movingClipId = clip.id,
+            state = snapState,
+            pixelsPerMs = controller.pixelsPerMs,
+            tolerancePx = 10f * density
+        )
+    }
+
     private fun laneCount() = (clips.maxOfOrNull { it.trackIndex } ?: -1) + 1
 
     override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
@@ -239,6 +269,10 @@ class OverlayVideoTrackView(
             canvas.drawLine(0f, y + rowHeight, width.toFloat(), y + rowHeight, lanePaint)
             label.color = 0xFF888888.toInt()
             canvas.drawText("V${i + 1}", 5f * density, y + 13f * density, label)
+        }
+        snapGuideTimeMs?.let { timeMs ->
+            val x = controller.timeToX(timeMs)
+            if (x in 0f..width.toFloat()) canvas.drawLine(x, 0f, x, height.toFloat(), snapGuidePaint)
         }
         clips.forEach { clip ->
             val left = controller.timeToX(clip.startTimeMs)
@@ -304,12 +338,22 @@ class OverlayVideoTrackView(
                         (originStart + (dx / controller.pixelsPerMs).toLong()).coerceAtLeast(0L)
                     } else clip.startTimeMs
                     val nextTrack = (originTrack + (dy / rowHeight).toInt()).coerceIn(0, 31)
+                    val snap = snapTime(clip, candidateStart)
+                    val snappedStart = snap.timeMs.coerceAtLeast(0L)
+                    val useSnap = snap.snapped && !clips.any { other ->
+                        other.id != clip.id &&
+                            other.trackIndex == nextTrack &&
+                            snappedStart < other.endTimeMs &&
+                            snappedStart + clip.durationMs > other.startTimeMs
+                    }
+                    val finalStart = if (useSnap) snappedStart else candidateStart
+                    snapGuideTimeMs = if (useSnap) snap.targetTimeMs else null
                     val targetLaneAvailable = isOverlayTrackAvailable(
-                        clips, candidateStart, clip.durationMs, nextTrack, excludeId = clip.id
+                        clips, finalStart, clip.durationMs, nextTrack, excludeId = clip.id
                     )
                     // Posisi terakhir yang valid dipertahankan jika tujuan bertabrakan.
                     if (targetLaneAvailable) {
-                        clip.startTimeMs = candidateStart
+                        clip.startTimeMs = finalStart
                         if (clip.trackIndex != nextTrack) {
                             clip.trackIndex = nextTrack
                             if (clip.trackIndex != lastDrawnTrack) {
@@ -325,6 +369,7 @@ class OverlayVideoTrackView(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 gestureHandler.removeCallbacks(longPressDrag)
                 if (dragging) runCatching { onChanged() }
+                snapGuideTimeMs = null
                 val tappedClip = touched
                 val isCleanTap = event.actionMasked == MotionEvent.ACTION_UP &&
                     tappedClip != null && !dragging && !panningTimeline &&
