@@ -102,7 +102,8 @@ class TextTrackView(
     private val onChanged: () -> Unit,
     private val onTimelineScrolled: (Long) -> Unit,
     private val onClipDropped: (TextClip, Float) -> Unit,
-    private val onClipDrag: (TextClip, Float) -> Unit
+    private val onClipDrag: (TextClip, Float) -> Unit,
+    private val onClipTapped: (TextClip) -> Unit = {}
 ) : View(context) {
     private val clips: List<TextClip> get() = allClips().filter { it.trackIndex == laneIndex }
     private val density = resources.displayMetrics.density
@@ -357,6 +358,10 @@ class TextTrackView(
                     // Perubahan trim sudah diterapkan langsung selama jari bergerak.
                     if (mode == 2 || mode == 3) onChanged()
                 }
+                val tappedClip = touched
+                val isCleanTap = tappedClip != null && !isScrollingTimeline &&
+                    !longPressTriggered && abs(event.x - downX) <= 8f * density
+                if (isCleanTap) tappedClip?.let { onClipTapped(it) }
                 isScrollingTimeline = false
                 longPressTriggered = false
                 touched = null
