@@ -3900,7 +3900,11 @@ class MainActivity : AppCompatActivity() {
                         else if (selectedAudioClipId != null) audioClipManager.clips.firstOrNull { it.id == selectedAudioClipId }?.let { showAudioClipVolume(it) }
                         else videoClipManager.find(selectedVideoClipId)?.let { showVideoClipVolume(it) }
                     }
-                    "Warna" -> showOverlayVideoModifyDialog()
+                    "Warna" -> {
+                        // Label tombol sama untuk overlay dan teks, tetapi editor warnanya berbeda.
+                        if (selectedOverlayVideoClipId != null) showOverlayVideoModifyDialog()
+                        else if (selectedTextClipId != null) showTextColorPicker()
+                    }
                     "GS" -> showOverlayGsPopup()
                     "Chroma Key" -> showOverlayChromaKeyDialog()
                     "Crop", "Selesai Crop" -> toggleOverlayCropMode()
@@ -3928,7 +3932,6 @@ class MainActivity : AppCompatActivity() {
                             refreshOverlayVideoTracks(); saveCurrentProject(); updateToolMenu()
                         } else duplicateSelectedText()
                     }
-                    "Warna" -> showTextColorPicker()
                     "Gaya" -> toggleSelectedTextStyle()
                     "Animasi" -> Toast.makeText(this, "Pengaturan animasi teks akan ditambahkan berikutnya.", Toast.LENGTH_SHORT).show()
                     "Opasitas" -> {
@@ -5915,76 +5918,133 @@ class MainActivity : AppCompatActivity() {
         val oldSaturation = clip.saturation
         pushUndoSnapshot()
 
-        val panel = LinearLayout(this).apply {
+        val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(8))
+            setPadding(dp(18), dp(14), dp(18), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(18, 18, 18))
+                cornerRadius = dp(20).toFloat()
+                setStroke(dp(1), Color.rgb(55, 55, 55))
+            }
         }
+        root.addView(TextView(this).apply {
+            text = "WARNA OVERLAY"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setPadding(0, 0, 0, dp(3))
+        })
+        root.addView(TextView(this).apply {
+            text = "Atur tampilan warna clip overlay"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 0, 0, dp(12))
+        })
+
         fun addColorControl(
             title: String,
             initial: Int,
-            suffix: String = "",
+            valueText: (Int) -> String,
             update: (Int) -> Unit
         ) {
-            val heading = TextView(this).apply {
-                setTextColor(Color.WHITE)
-                textSize = 13f
+            val header = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
             }
+            val label = TextView(this).apply {
+                text = title
+                textSize = 13f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+            }
+            val value = TextView(this).apply {
+                text = valueText(initial)
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                gravity = Gravity.END
+                setTextColor(green)
+            }
+            header.addView(label, LinearLayout.LayoutParams(0, dp(24), 1f))
+            header.addView(value, LinearLayout.LayoutParams(-2, dp(24)))
+            root.addView(header)
+
             val seek = SeekBar(this).apply {
                 max = 200
                 progress = initial.coerceIn(0, 200)
                 progressTintList = android.content.res.ColorStateList.valueOf(green)
                 thumbTintList = android.content.res.ColorStateList.valueOf(green)
             }
-            fun updateLabel(value: Int) {
-                val shown = value - 100
-                heading.text = "$title: $shown$suffix"
-            }
-            updateLabel(seek.progress)
             seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(bar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    updateLabel(progress)
+                    value.text = valueText(progress)
                     update(progress)
                     updateOverlayColorPreview(clip)
                 }
                 override fun onStartTrackingTouch(bar: SeekBar?) {}
                 override fun onStopTrackingTouch(bar: SeekBar?) {}
             })
-            panel.addView(heading)
-            panel.addView(seek)
-        }
-        addColorControl("Kecerahan", (oldBrightness * 100f + 100f).toInt()) {
-            clip.brightness = (it - 100) / 100f
-        }
-        addColorControl("Kontras", (oldContrast * 100f).toInt()) {
-            clip.contrast = it / 100f
-        }
-        addColorControl("Saturasi", (oldSaturation * 100f).toInt()) {
-            clip.saturation = it / 100f
+            root.addView(seek, LinearLayout.LayoutParams(-1, dp(34)))
+            root.addView(View(this), LinearLayout.LayoutParams(-1, dp(7)))
         }
 
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Warna Overlay")
-            .setView(ScrollView(this).apply { addView(panel) })
-            .setNegativeButton("Batal") { _, _ ->
-                clip.brightness = oldBrightness
-                clip.contrast = oldContrast
-                clip.saturation = oldSaturation
-                undoStack.removeLastOrNull()
-                updateOverlayColorPreview(clip)
+        // Kecerahan: -100..+100; kontras dan saturasi: 0..200, nilai netral 100.
+        addColorControl("Kecerahan", (oldBrightness * 100f + 100f).toInt(),
+            { "${it - 100}" }) { clip.brightness = (it - 100) / 100f }
+        addColorControl("Kontras", (oldContrast * 100f).toInt(),
+            { "${it}%" }) { clip.contrast = it / 100f }
+        addColorControl("Saturasi", (oldSaturation * 100f).toInt(),
+            { "${it}%" }) { clip.saturation = it / 100f }
+
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        fun action(label: String, primary: Boolean) = TextView(this).apply {
+            text = label
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(if (primary) Color.rgb(15, 15, 15) else Color.LTGRAY)
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(if (primary) green else Color.rgb(38, 38, 38))
+                cornerRadius = dp(10).toFloat()
             }
-            .setPositiveButton("Terapkan") { _, _ ->
-                updateOverlayColorPreview(clip)
-                saveCurrentProject()
-                refreshOverlayVideoTracks()
-            }
-            .setOnCancelListener {
-                clip.brightness = oldBrightness
-                clip.contrast = oldContrast
-                clip.saturation = oldSaturation
-                undoStack.removeLastOrNull()
-                updateOverlayColorPreview(clip)
-            }
-            .show()
+        }
+        val cancel = action("BATAL", false)
+        val apply = action("TERAPKAN", true)
+        actions.addView(cancel, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) })
+        actions.addView(apply)
+        root.addView(actions)
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(root).create()
+        dialog.setCanceledOnTouchOutside(false)
+        fun restoreOriginal() {
+            clip.brightness = oldBrightness
+            clip.contrast = oldContrast
+            clip.saturation = oldSaturation
+            undoStack.removeLastOrNull()
+            updateOverlayColorPreview(clip)
+        }
+        cancel.setOnClickListener { restoreOriginal(); dialog.dismiss() }
+        apply.setOnClickListener {
+            updateOverlayColorPreview(clip)
+            saveCurrentProject()
+            refreshOverlayVideoTracks()
+            dialog.dismiss()
+        }
+        dialog.setOnCancelListener { restoreOriginal() }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            attributes = attributes.apply { y = dp(10); dimAmount = 0.12f }
+        }
     }
 
     private fun updateOverlayColorPreview(clip: OverlayVideoClip) {
