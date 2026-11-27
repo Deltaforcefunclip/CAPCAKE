@@ -41,7 +41,9 @@ data class OverlayVideoClip(
     var brightness: Float = 0f,
     var contrast: Float = 1f,
     var saturation: Float = 1f,
-    var opacity: Float = 1f
+    var opacity: Float = 1f,
+    var zoomInDurationMs: Long = 0L,
+    var zoomOutDurationMs: Long = 0L
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
@@ -115,6 +117,7 @@ object OverlayVideoCodec {
                 put("videoWidth", clip.videoWidth); put("videoHeight", clip.videoHeight)
                 put("isImage", clip.isImage)
                 put("brightness", clip.brightness.toDouble()); put("contrast", clip.contrast.toDouble()); put("saturation", clip.saturation.toDouble()); put("opacity", clip.opacity.toDouble())
+                put("zoomInDurationMs", clip.zoomInDurationMs); put("zoomOutDurationMs", clip.zoomOutDurationMs)
             })
         }
     }.toString()
@@ -156,7 +159,9 @@ object OverlayVideoCodec {
                     brightness = o.optDouble("brightness", 0.0).toFloat().coerceIn(-1f, 1f),
                     contrast = o.optDouble("contrast", 1.0).toFloat().coerceIn(0f, 2f),
                     saturation = o.optDouble("saturation", 1.0).toFloat().coerceIn(0f, 2f),
-                    opacity = o.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f)
+                    opacity = o.optDouble("opacity", 1.0).toFloat().coerceIn(0f, 1f),
+                    zoomInDurationMs = o.optLong("zoomInDurationMs", 0L).coerceAtLeast(0L),
+                    zoomOutDurationMs = o.optLong("zoomOutDurationMs", 0L).coerceAtLeast(0L)
                 ))
             }
         }
