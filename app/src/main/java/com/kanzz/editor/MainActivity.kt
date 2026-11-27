@@ -7902,7 +7902,7 @@ class MainActivity : AppCompatActivity() {
             val group=RadioGroup(this).apply { orientation=RadioGroup.VERTICAL }
             labels.forEachIndexed { index,label ->
                 group.addView(RadioButton(this).apply {
-                    id=View.generateViewId(); tag=index; text=label; textSize=11f; setTextColor(Color.WHITE)
+                    this.id=View.generateViewId(); this.tag=index; text=label; textSize=11f; setTextColor(Color.WHITE)
                     buttonTintList=android.content.res.ColorStateList.valueOf(green); setPadding(0,dp(2),0,dp(2)); isChecked=index==selected
                 })
             }
