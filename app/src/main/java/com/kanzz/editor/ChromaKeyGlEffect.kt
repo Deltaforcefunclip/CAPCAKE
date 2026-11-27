@@ -20,18 +20,30 @@ class ChromaKeyGlEffect(
     keyColor: Int,
     threshold: Float = 0.22f,
     softness: Float = 0.08f,
-    enabled: Boolean = true
+    enabled: Boolean = true,
+    brightness: Float = 0f,
+    contrast: Float = 1f,
+    saturation: Float = 1f
 ) : GlEffect {
     @Volatile private var keyColorValue: Int = keyColor
     @Volatile private var thresholdValue: Float = threshold.coerceIn(0.01f, 1f)
     @Volatile private var softnessValue: Float = softness.coerceIn(0.001f, 0.5f)
     @Volatile private var enabledValue: Boolean = enabled
+    @Volatile private var brightnessValue: Float = brightness.coerceIn(-1f, 1f)
+    @Volatile private var contrastValue: Float = contrast.coerceIn(0f, 2f)
+    @Volatile private var saturationValue: Float = saturation.coerceIn(0f, 2f)
 
-    fun updateParameters(keyColor: Int, threshold: Float, softness: Float, enabled: Boolean = enabledValue) {
+    fun updateParameters(
+        keyColor: Int, threshold: Float, softness: Float, enabled: Boolean = enabledValue,
+        brightness: Float = brightnessValue, contrast: Float = contrastValue, saturation: Float = saturationValue
+    ) {
         keyColorValue = keyColor
         thresholdValue = threshold.coerceIn(0.01f, 1f)
         softnessValue = softness.coerceIn(0.001f, 0.5f)
         enabledValue = enabled
+        brightnessValue = brightness.coerceIn(-1f, 1f)
+        contrastValue = contrast.coerceIn(0f, 2f)
+        saturationValue = saturation.coerceIn(0f, 2f)
     }
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean = false
@@ -43,6 +55,9 @@ class ChromaKeyGlEffect(
     internal fun getThreshold(): Float = thresholdValue
     internal fun getSoftness(): Float = softnessValue
     internal fun isEnabled(): Boolean = enabledValue
+    internal fun getBrightness(): Float = brightnessValue
+    internal fun getContrast(): Float = contrastValue
+    internal fun getSaturation(): Float = saturationValue
 }
 
 @UnstableApi
@@ -88,6 +103,9 @@ private class ChromaKeyShaderProgram(
             program.setFloatUniform("uThreshold", effect.getThreshold())
             program.setFloatUniform("uSoftness", effect.getSoftness())
             program.setFloatUniform("uEnabled", if (effect.isEnabled()) 1f else 0f)
+            program.setFloatUniform("uBrightness", effect.getBrightness())
+            program.setFloatUniform("uContrast", effect.getContrast())
+            program.setFloatUniform("uSaturation", effect.getSaturation())
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         } catch (e: VideoFrameProcessingException) {
