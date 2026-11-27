@@ -23,7 +23,8 @@ class AudioTrackView(
     private val onClipTrimStart: (AudioClip) -> Unit,
     private val onClipTrimFinish: (AudioClip) -> Unit,
     private val onTimelineScrolled: (Long) -> Unit,
-    private val onClipDropped: (AudioClip, Float) -> Unit
+    private val onClipDropped: (AudioClip, Float) -> Unit,
+    private val onClipTapped: (AudioClip) -> Unit = {}
 ) : View(context) {
     private val density = resources.displayMetrics.density
     private val handler = Handler(Looper.getMainLooper())
@@ -385,6 +386,11 @@ class AudioTrackView(
                 if (trimUndoStarted) {
                     touchedClip?.let { onClipTrimFinish(it) }
                 }
+                val tappedClip = touchedClip
+                val isCleanTap = tappedClip != null && !isScrollingTimeline &&
+                    !longPressTriggered && !trimUndoStarted &&
+                    abs(event.x - downX) <= 8f * density
+                if (isCleanTap) tappedClip?.let { onClipTapped(it) }
                 isScrollingTimeline = false
                 longPressTriggered = false
                 touchedClip = null
