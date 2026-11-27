@@ -5774,7 +5774,7 @@ class MainActivity : AppCompatActivity() {
             )
             // The persistent GL effect reads updated uniforms on the next frame.
             // Do not replace effects or seek while restoring the preview.
-            session.effectSignature = "${clip.brightness}:${clip.contrast}:${clip.saturation}"
+            session.effectSignature = "persistent-gl"
         }
 
         // Chroma key harus membaca warna sumber, bukan warna yang sudah diubah.
@@ -5846,7 +5846,7 @@ class MainActivity : AppCompatActivity() {
                 clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
                 clip.chromaKeyEnabled, clip.brightness, clip.contrast, clip.saturation
             )
-            session.effectSignature = "${clip.brightness}:${clip.contrast}:${clip.saturation}"
+            session.effectSignature = "persistent-gl"
             finished = true
             (samplingLayer.parent as? android.view.ViewGroup)?.removeView(samplingLayer)
             onSampled(clip.chromaKeyColor)
@@ -6290,7 +6290,7 @@ class MainActivity : AppCompatActivity() {
         val session = overlayPreviewSessions[clip.id] ?: return
         runCatching {
             session.player.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
-            session.effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
+            session.effectSignature = "persistent-gl"
             if (!player.isPlaying && session.player.playbackState == Player.STATE_READY) {
                 session.player.seekTo(session.player.currentPosition)
             }
