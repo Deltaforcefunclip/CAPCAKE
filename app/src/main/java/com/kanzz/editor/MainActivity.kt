@@ -6110,10 +6110,16 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
         dialog.window?.apply {
             setBackgroundDrawableResource(android.R.color.transparent)
-            setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT,
-                android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+            // Batasi tinggi popup agar tidak menutupi seluruh preview. Konten tetap
+            // bisa digulir, sementara area video di atas popup tetap dapat disentuh.
+            val maxPopupHeight = (resources.displayMetrics.heightPixels * 0.42f)
+                .toInt().coerceAtMost(dp(420))
+            setLayout(
+                android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                maxPopupHeight
+            )
             setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-            // Area preview di luar popup tetap menerima sentuhan saat sampling.
+            // Sentuhan di luar batas popup diteruskan ke Activity dan sampling layer.
             addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
             attributes = attributes.apply { y = dp(10); dimAmount = 0.12f }
         }
