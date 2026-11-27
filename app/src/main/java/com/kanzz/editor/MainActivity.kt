@@ -6481,9 +6481,6 @@ class MainActivity : AppCompatActivity() {
                 if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
                 activeLayerGroup = "OVERLAY"
                 updateLayerGroupVisibility(); updateToolMenu()
-                if (clip != null) {
-                    navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
-                }
                 syncOverlayVideoPreview()
                 overlaySelectionOverlay?.invalidate()
             },
@@ -6561,12 +6558,14 @@ class MainActivity : AppCompatActivity() {
                     }
                     if (clip != null) {
                         activeLayerGroup = "EFFECT"
-                        navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
                     }
                     updateLayerGroupVisibility()
                     updateToolMenu()
                 },
                 onEditStarted = { pushUndoSnapshot() },
+                onClipTapped = { clip ->
+                    navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
+                },
                 onChanged = { saveCurrentProject(); invalidateEffectTrackViews() },
                 onClipDrag = { clip, rawY ->
                     val targetLane = (0 until thisEffectTracksContainer.childCount)
@@ -6601,6 +6600,9 @@ class MainActivity : AppCompatActivity() {
                     refreshEffectTracks()
                     saveCurrentProject()
                     updateToolMenu()
+                },
+                onClipTapped = { clip ->
+                    navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
                 },
                 onTimelineScrolled = { position ->
                     pendingScrubPositionMs = position
@@ -6641,9 +6643,6 @@ class MainActivity : AppCompatActivity() {
                 allClips = { textClipManager.clips },
                 onSelected = { clip ->
                     selectedTextClipId = clip?.id
-                    if (clip != null) {
-                        navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
-                    }
                     if (clip == null && player.isPlaying) {
                         player.pause()
                         updatePlayButton()
@@ -6660,6 +6659,9 @@ class MainActivity : AppCompatActivity() {
                     }
                     updateTextPreview()
                     updateToolMenu()
+                },
+                onClipTapped = { clip ->
+                    navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
                 },
                 onChanged = {
                     saveCurrentProject()
@@ -8003,9 +8005,6 @@ class MainActivity : AppCompatActivity() {
                 lane,
                 onClipSelected = { clip ->
                     selectedAudioClipId = clip?.id
-                    if (clip != null) {
-                        navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
-                    }
                     if (clip == null && player.isPlaying) {
                         player.pause()
                         updatePlayButton()
@@ -8029,6 +8028,9 @@ class MainActivity : AppCompatActivity() {
                 },
                 onClipMoved = {
                     syncAudioPlayback()
+                },
+                onClipTapped = { clip ->
+                    navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
                 },
                 onClipTrimStart = { clip ->
                     pushUndoSnapshot()
