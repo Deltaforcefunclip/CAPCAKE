@@ -107,7 +107,9 @@ private data class ExportTextSnapshot(
     val scale: Float,
     val positionX: Float,
     val positionY: Float,
-    val rotation: Float
+    val rotation: Float,
+    val zoomInDurationMs: Long,
+    val zoomOutDurationMs: Long
 )
 
 data class VideoProject(
@@ -3748,7 +3750,7 @@ class MainActivity : AppCompatActivity() {
                 "P̲T̲" to "Preset Text"
             )
         } else if (selectedOverlayVideoClipId != null) {
-            listOf("♫" to "Volume", "◐" to "Opasitas", "◉" to "Warna", "🟩" to "Chroma Key", "▱" to if (overlayCropModeEnabled) "Selesai Crop" else "Crop", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus", "GS" to "GS")
+            listOf("♫" to "Volume", "◐" to "Opasitas", "◉" to "Warna", "🟩" to "Chroma Key", "▱" to if (overlayCropModeEnabled) "Selesai Crop" else "Crop", "✂" to "Potong", "✧" to "Animasi", "▣" to "Salin", "⌫" to "Hapus", "GS" to "GS")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3933,7 +3935,7 @@ class MainActivity : AppCompatActivity() {
                         } else duplicateSelectedText()
                     }
                     "Gaya" -> toggleSelectedTextStyle()
-                    "Animasi" -> Toast.makeText(this, "Pengaturan animasi teks akan ditambahkan berikutnya.", Toast.LENGTH_SHORT).show()
+                    "Animasi" -> showClipAnimationPopup()
                     "Opasitas" -> {
                         if (selectedOverlayVideoClipId != null) {
                             overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId }?.let { showOverlayVideoOpacity(it) }
@@ -4264,6 +4266,9 @@ class MainActivity : AppCompatActivity() {
         } ?: videoClipManager.clips.lastOrNull()?.takeIf { position >= it.timelineEndMs }
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
+        dreamyPreviewState.animationZoomScale = activeVideo?.let {
+            clipZoomScale(position - it.timelineStartMs, it.timelineDurationMs, it.zoomInDurationMs, it.zoomOutDurationMs)
+        } ?: 1f
 
         // Transisi melewati satu frame hitam: klip kiri zoom + fade-out,
         // klip kanan fade-in dari hitam. Zoom dibuat lebih tegas hingga 2x.
@@ -4325,8 +4330,13 @@ class MainActivity : AppCompatActivity() {
         val transitionActive = dreamyPreviewState.pullInFade > 0.001f ||
             dreamyPreviewState.pullInBlur > 0.001f ||
             dreamyPreviewState.pullInZoom > 1.001f
-        val visualShaderActive = gradeActive || effectActive || transitionActive
-        val signature = "visual=" + visualShaderActive
+        val zoomActive = videoClipManager.clips.any { clip ->
+            val position = currentTimelinePosition()
+            position >= clip.timelineStartMs && position < clip.timelineEndMs &&
+                (clip.zoomInDurationMs > 0L || clip.zoomOutDurationMs > 0L)
+        }
+        val visualShaderActive = gradeActive || effectActive || transitionActive || zoomActive
+        val signature = "visual=" + visualShaderActive + ";zoom=" + zoomActive
         if (signature == previewVisualPipelineSignature) return
         val effects = ArrayList<androidx.media3.common.Effect>(1)
         if (visualShaderActive) effects.add(DreamyGlEffect(intensity = 0f, glowSpread = 0.35f, warmth = 0.5f, previewState = dreamyPreviewState))
@@ -5197,8 +5207,11 @@ class MainActivity : AppCompatActivity() {
         val clipRotation = activeClip?.rotationDegrees ?: 0f
         val clipX = activeClip?.transformX ?: 0f
         val clipY = activeClip?.transformY ?: 0f
-        content.scaleX = if (transformEnabled) clipScale else 1f
-        content.scaleY = if (transformEnabled) clipScale else 1f
+        val zoomScale = activeClip?.let {
+            clipZoomScale(currentTimelinePosition() - it.timelineStartMs, it.timelineDurationMs, it.zoomInDurationMs, it.zoomOutDurationMs)
+        } ?: 1f
+        content.scaleX = if (transformEnabled) clipScale * zoomScale else zoomScale
+        content.scaleY = if (transformEnabled) clipScale * zoomScale else zoomScale
         content.rotation = (if (transformEnabled) previewRotation else 0f) + clipRotation
         content.translationX = if (transformEnabled) previewTranslateX + clipX else 0f
         content.translationY = if (transformEnabled) previewTranslateY + clipY else 0f
@@ -5424,8 +5437,9 @@ class MainActivity : AppCompatActivity() {
         view.alpha = clip.opacity.coerceIn(0f, 1f)
         view.pivotX = view.width / 2f
         view.pivotY = view.height / 2f
-        view.scaleX = clip.transformScale.coerceIn(0.2f, 4f)
-        view.scaleY = clip.transformScale.coerceIn(0.2f, 4f)
+        val zoomScale = clipZoomScale(currentTimelinePosition() - clip.startTimeMs, clip.durationMs, clip.zoomInDurationMs, clip.zoomOutDurationMs)
+        view.scaleX = clip.transformScale.coerceIn(0.2f, 4f) * zoomScale
+        view.scaleY = clip.transformScale.coerceIn(0.2f, 4f) * zoomScale
         view.rotation = clip.rotationDegrees
         view.translationX = clip.transformX
         view.translationY = clip.transformY
@@ -7824,6 +7838,144 @@ class MainActivity : AppCompatActivity() {
         refreshTextTracks(); updateTextPreview(); saveCurrentProject(); updateToolMenu()
     }
 
+
+    private fun clipZoomScale(localTimeMs: Long, durationMs: Long, zoomInMs: Long, zoomOutMs: Long): Float {
+        val duration = durationMs.coerceAtLeast(0L)
+        val local = localTimeMs.coerceIn(0L, duration)
+        val startScale = 0.2f
+        fun ease(value: Float): Float {
+            val p = value.coerceIn(0f, 1f)
+            return p * p * (3f - 2f * p)
+        }
+        val incoming = if (zoomInMs > 0L && local < zoomInMs) {
+            startScale + (1f - startScale) * ease(local.toFloat() / zoomInMs.toFloat())
+        } else 1f
+        val outgoing = if (zoomOutMs > 0L && local >= duration - zoomOutMs) {
+            1f - (1f - startScale) * ease((local - (duration - zoomOutMs)).toFloat() / zoomOutMs.toFloat())
+        } else 1f
+        return minOf(incoming, outgoing).coerceIn(startScale, 1f)
+    }
+
+    private fun showClipAnimationPopup() {
+        val targetType: String
+        val clipId: String
+        val clipDuration: Long
+        val oldIn: Long
+        val oldOut: Long
+        when {
+            selectedTextClipId != null -> {
+                val clip = textClipManager.find(selectedTextClipId) ?: return
+                targetType = "text"; clipId = clip.id; clipDuration = clip.durationMs
+                oldIn = clip.zoomInDurationMs; oldOut = clip.zoomOutDurationMs
+            }
+            selectedOverlayVideoClipId != null -> {
+                val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return
+                targetType = "overlay"; clipId = clip.id; clipDuration = clip.durationMs
+                oldIn = clip.zoomInDurationMs; oldOut = clip.zoomOutDurationMs
+            }
+            else -> {
+                val clip = videoClipManager.find(selectedVideoClipId) ?: return
+                targetType = "video"; clipId = clip.id; clipDuration = clip.timelineDurationMs
+                oldIn = clip.zoomInDurationMs; oldOut = clip.zoomOutDurationMs
+            }
+        }
+        var duration = (listOf(oldIn, oldOut).filter { it > 0L }.maxOrNull() ?: 250L).coerceIn(50L, 2000L)
+        val dialog = android.app.Dialog(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(20), dp(18), dp(20), dp(14))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(27, 27, 27)); cornerRadius = dp(18).toFloat()
+                setStroke(dp(1), Color.rgb(65, 65, 65))
+            }
+        }
+        root.addView(TextView(this).apply {
+            text = "ANIMASI CLIP"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        })
+        root.addView(TextView(this).apply {
+            text = "Pilih animasi zoom untuk awal atau akhir clip."
+            textSize = 12f; setTextColor(Color.LTGRAY); setPadding(0, dp(5), 0, dp(12))
+        })
+        val inCheck = CheckBox(this).apply {
+            text = "Masuk  •  Zoom In"; textSize = 14f; setTextColor(Color.WHITE)
+            buttonTintList = android.content.res.ColorStateList.valueOf(green); isChecked = oldIn > 0L
+        }
+        val outCheck = CheckBox(this).apply {
+            text = "Keluar  •  Zoom Out"; textSize = 14f; setTextColor(Color.WHITE)
+            buttonTintList = android.content.res.ColorStateList.valueOf(green); isChecked = oldOut > 0L
+        }
+        root.addView(inCheck); root.addView(outCheck)
+        val durationLabel = TextView(this).apply {
+            text = "Durasi: %.2f detik".format(duration / 1000f)
+            textSize = 13f; setTextColor(Color.WHITE); setPadding(0, dp(12), 0, dp(4))
+        }
+        root.addView(durationLabel)
+        val slider = SeekBar(this).apply {
+            max = 195; progress = ((duration - 50L) / 10L).toInt().coerceIn(0, 195)
+            progressTintList = android.content.res.ColorStateList.valueOf(green)
+            thumbTintList = android.content.res.ColorStateList.valueOf(green)
+        }
+        root.addView(slider)
+        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                duration = 50L + value * 10L
+                durationLabel.text = "Durasi: %.2f detik".format(duration / 1000f)
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {}
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        val actions = LinearLayout(this).apply { gravity = Gravity.END; setPadding(0, dp(14), 0, 0) }
+        val reset = TextView(this).apply {
+            text = "RESET"; setTextColor(Color.LTGRAY); gravity = Gravity.CENTER
+            setPadding(dp(14), dp(12), dp(14), dp(12))
+        }
+        val confirm = TextView(this).apply {
+            text = "KONFIRMASI"; setTextColor(green); typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER; setPadding(dp(14), dp(12), dp(4), dp(12))
+        }
+        actions.addView(reset); actions.addView(confirm); root.addView(actions)
+        reset.setOnClickListener {
+            inCheck.isChecked = oldIn > 0L; outCheck.isChecked = oldOut > 0L
+            duration = (listOf(oldIn, oldOut).filter { it > 0L }.maxOrNull() ?: 250L).coerceIn(50L, 2000L)
+            slider.progress = ((duration - 50L) / 10L).toInt().coerceIn(0, 195)
+            durationLabel.text = "Durasi: %.2f detik".format(duration / 1000f)
+        }
+        confirm.setOnClickListener {
+            val useIn = inCheck.isChecked
+            val useOut = outCheck.isChecked
+            val total = (if (useIn) duration else 0L) + (if (useOut) duration else 0L)
+            if (total > clipDuration) {
+                Toast.makeText(this, "Durasi terlalu pendek", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+            pushUndoSnapshot()
+            when (targetType) {
+                "text" -> textClipManager.find(clipId)?.let {
+                    it.zoomInDurationMs = if (useIn) duration else 0L
+                    it.zoomOutDurationMs = if (useOut) duration else 0L
+                }
+                "overlay" -> overlayVideoClips.firstOrNull { it.id == clipId }?.let {
+                    it.zoomInDurationMs = if (useIn) duration else 0L
+                    it.zoomOutDurationMs = if (useOut) duration else 0L
+                }
+                else -> videoClipManager.find(clipId)?.let {
+                    it.zoomInDurationMs = if (useIn) duration else 0L
+                    it.zoomOutDurationMs = if (useOut) duration else 0L
+                }
+            }
+            updateTextPreview(); saveCurrentProject(); dialog.dismiss()
+        }
+        dialog.setContentView(root)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout((resources.displayMetrics.widthPixels - dp(48)).coerceAtLeast(dp(280)), -2)
+            setGravity(Gravity.CENTER)
+        }
+    }
+
     private var lastPreviewTextStateKey: Long = Long.MIN_VALUE
 
     private fun updateTextPreview(force: Boolean = true) {
@@ -7836,7 +7988,7 @@ class MainActivity : AppCompatActivity() {
         }
         var stateKey = selected?.id?.hashCode()?.toLong() ?: 0L
         activeClips.forEach { stateKey = stateKey * 31L + it.id.hashCode() }
-        if (!force && stateKey == lastPreviewTextStateKey) return
+        if (!force && activeClips.none { it.zoomInDurationMs > 0L || it.zoomOutDurationMs > 0L } && stateKey == lastPreviewTextStateKey) return
         lastPreviewTextStateKey = stateKey
         // Clip terpilih tetap menjadi target transformasi. Clip aktif lain tetap
         // dirender sebagai TextView terpisah agar dua layer dapat tampil bersamaan.
@@ -7847,8 +7999,11 @@ class MainActivity : AppCompatActivity() {
             view.alpha = clip?.opacity ?: 1f
             view.typeface = clip?.let { getLibraryTypeface(it.fontName, it.bold) } ?: Typeface.DEFAULT
             view.visibility = if (clip == null) View.GONE else View.VISIBLE
-            view.scaleX = clip?.scale ?: 1f
-            view.scaleY = clip?.scale ?: 1f
+            val animatedScale = clip?.let {
+                it.scale * clipZoomScale(position - it.startTimeMs, it.durationMs, it.zoomInDurationMs, it.zoomOutDurationMs)
+            } ?: 1f
+            view.scaleX = animatedScale
+            view.scaleY = animatedScale
             view.rotation = clip?.rotation ?: 0f
             view.translationX = clip?.positionX ?: 0f
             view.translationY = clip?.positionY ?: 0f
@@ -7905,6 +8060,7 @@ class MainActivity : AppCompatActivity() {
                 put("positionX", clip.positionX); put("positionY", clip.positionY)
                 put("scale", clip.scale); put("rotation", clip.rotation)
                 put("color", clip.color); put("opacity", clip.opacity); put("bold", clip.bold)
+                put("zoomInDurationMs", clip.zoomInDurationMs); put("zoomOutDurationMs", clip.zoomOutDurationMs)
             })
         }
         return array.toString()
@@ -7984,7 +8140,9 @@ class MainActivity : AppCompatActivity() {
                     rotation = item.optDouble("rotation", 0.0).toFloat(),
                     color = item.optInt("color", Color.WHITE),
                     opacity = item.optDouble("opacity", 1.0).toFloat(),
-                    bold = item.optBoolean("bold", true)
+                    bold = item.optBoolean("bold", true),
+                    zoomInDurationMs = item.optLong("zoomInDurationMs", 0L).coerceAtLeast(0L),
+                    zoomOutDurationMs = item.optLong("zoomOutDurationMs", 0L).coerceAtLeast(0L)
                 )
                 textClipManager.clips.add(clip)
             }
@@ -9424,7 +9582,9 @@ class MainActivity : AppCompatActivity() {
                                         scale = text.scale,
                                         positionX = text.positionX,
                                         positionY = text.positionY,
-                                        rotation = text.rotation
+                                        rotation = text.rotation,
+                                        zoomInDurationMs = text.zoomInDurationMs,
+                                        zoomOutDurationMs = text.zoomOutDurationMs
                                     )
                                 }
                                 if (exportTextSnapshot.isNotEmpty()) {
