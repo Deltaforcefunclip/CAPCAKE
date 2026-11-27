@@ -3843,10 +3843,13 @@ class MainActivity : AppCompatActivity() {
                             } else {
                                 pushUndoSnapshot()
                                 val firstDuration = position - clip.startTimeMs
+                                val exitZoomDuration = clip.zoomOutDurationMs
                                 val second = clip.copy(id = java.util.UUID.randomUUID().toString(),
                                     startTimeMs = position, sourceStartMs = clip.sourceStartMs + firstDuration,
-                                    durationMs = clip.durationMs - firstDuration)
+                                    durationMs = clip.durationMs - firstDuration,
+                                    zoomInDurationMs = 0L, zoomOutDurationMs = exitZoomDuration)
                                 clip.durationMs = firstDuration
+                                clip.zoomOutDurationMs = 0L
                                 overlayVideoClips.add(second)
                                 selectedOverlayVideoClipId = second.id
                                 refreshOverlayVideoTracks(); saveCurrentProject(); updateToolMenu()
@@ -7827,12 +7830,16 @@ class MainActivity : AppCompatActivity() {
         }
         pushUndoSnapshot()
         val oldEnd = clip.endTimeMs
+        val exitZoomDuration = clip.zoomOutDurationMs
         val second = clip.copy(
             id = java.util.UUID.randomUUID().toString(),
             startTimeMs = position,
-            durationMs = oldEnd - position
+            durationMs = oldEnd - position,
+            zoomInDurationMs = 0L,
+            zoomOutDurationMs = exitZoomDuration
         )
         clip.durationMs = position - clip.startTimeMs
+        clip.zoomOutDurationMs = 0L
         textClipManager.add(second)
         selectedTextClipId = second.id
         refreshTextTracks(); updateTextPreview(); saveCurrentProject(); updateToolMenu()
