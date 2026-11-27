@@ -9464,8 +9464,11 @@ class MainActivity : AppCompatActivity() {
                                 }
 
                                 if (clip.zoomInDurationMs > 0L || clip.zoomOutDurationMs > 0L) {
-                                    val clipStartUs = 0L
-                                    val clipEndUs = clip.timelineDurationMs * 1000L
+                                    // Transformer mengirim presentationTimeUs pada clock timeline gabungan,
+                                    // bukan clock lokal tiap EditedMediaItem. Offset wajib mengikuti posisi klip,
+                                    // agar animasi klip kedua dan seterusnya tidak mewarisi skala klip pertama.
+                                    val clipStartUs = clip.timelineStartMs * 1000L
+                                    val clipEndUs = clip.timelineEndMs * 1000L
                                     val inUs = clip.zoomInDurationMs.coerceAtMost(clip.timelineDurationMs) * 1000L
                                     val outUs = clip.zoomOutDurationMs.coerceAtMost(clip.timelineDurationMs) * 1000L
                                     add(DreamyGlEffect(
