@@ -5761,7 +5761,7 @@ class MainActivity : AppCompatActivity() {
      * Chroma key dan koreksi warna sementara dinonaktifkan agar warna sampel
      * tetap merupakan warna asli yang akan dibaca shader chroma key.
      */
-    private fun startOverlayChromaColorSampling(clip: OverlayVideoClip) {
+    private fun startOverlayChromaColorSampling(clip: OverlayVideoClip, onSampled: (Int) -> Unit) {
         val session = overlayPreviewSessions[clip.id]
         val texture = session?.view?.videoSurfaceView as? android.view.TextureView
         if (session == null || texture == null) {
@@ -5906,10 +5906,10 @@ class MainActivity : AppCompatActivity() {
                     }
                     finished = true
                     (samplingLayer.parent as? android.view.ViewGroup)?.removeView(samplingLayer)
-                    saveCurrentProject()
+                    onSampled(clip.chromaKeyColor)
                     Toast.makeText(
                         this,
-                        "Sampel warna diterapkan: #%06X".format(Locale.US, clip.chromaKeyColor and 0xFFFFFF),
+                        "Sampel diambil: #%06X".format(Locale.US, clip.chromaKeyColor and 0xFFFFFF),
                         Toast.LENGTH_LONG
                     ).show()
                     true
@@ -5977,54 +5977,56 @@ class MainActivity : AppCompatActivity() {
         }
         content.addView(enabled)
 
-        content.addView(TextView(this).apply {
-            text = "WARNA LATAR"
+        var selectedColor = oldColor
+
+        // Baris sampling: swatch selalu menampilkan warna terakhir yang dipilih.
+        val sampleRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(0, dp(10), 0, dp(8))
+        }
+        val sampleSwatch = View(this).apply {
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(selectedColor)
+                cornerRadius = dp(8).toFloat()
+                setStroke(dp(1), Color.WHITE)
+            }
+        }
+        sampleRow.addView(sampleSwatch, LinearLayout.LayoutParams(dp(42), dp(42)).apply {
+            marginEnd = dp(10)
+        })
+        val sampleButton = TextView(this).apply {
+            text = "AMBIL SAMPLE DARI PREVIEW"
             textSize = 11f
             typeface = Typeface.DEFAULT_BOLD
-            setTextColor(green)
-            setPadding(0, dp(10), 0, dp(5))
-        })
-        val colorGroup = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
-        val colors = listOf("Hijau" to Color.GREEN, "Biru" to Color.BLUE, "Magenta" to Color.MAGENTA)
-        var selectedColor = oldColor
-        colors.forEach { entry ->
-            val radio = RadioButton(this).apply {
-                id = View.generateViewId()
-                text = entry.first
-                textSize = 12f
-                setTextColor(Color.WHITE)
-                buttonTintList = android.content.res.ColorStateList.valueOf(green)
-                tag = entry.second
-                isChecked = oldColor == entry.second
-            }
-            colorGroup.addView(radio, RadioGroup.LayoutParams(0, dp(42), 1f))
-            if (radio.isChecked) colorGroup.check(radio.id)
-        }
-        colorGroup.setOnCheckedChangeListener { group, checkedId ->
-            val selected = group.findViewById<RadioButton>(checkedId)
-            selectedColor = (selected?.tag as? Int) ?: selectedColor
-            clip.chromaKeyColor = selectedColor
-            updateOverlayChromaKeyShader(clip)
-        }
-        content.addView(colorGroup)
-
-        val sampleColorButton = TextView(this).apply {
-            text = "◎  AMBIL SAMPEL DARI PREVIEW"
-            textSize = 12f
-            typeface = Typeface.DEFAULT_BOLD
             gravity = Gravity.CENTER
-            setTextColor(green)
+            setTextColor(Color.rgb(15, 15, 15))
             setPadding(dp(12), dp(12), dp(12), dp(12))
             background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(Color.rgb(28, 35, 32))
-                cornerRadius = dp(11).toFloat()
-                setStroke(dp(1), green)
+                setColor(green)
+                cornerRadius = dp(10).toFloat()
             }
         }
-        content.addView(sampleColorButton, LinearLayout.LayoutParams(-1, -2).apply {
-            topMargin = dp(8)
-            bottomMargin = dp(5)
+        sampleRow.addView(sampleButton, LinearLayout.LayoutParams(0, -2, 1f))
+        content.addView(sampleRow)
+        content.addView(TextView(this).apply {
+            text = "Ketuk tombol, lalu ketuk warna latar pada gambar overlay."
+            textSize = 10f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, 0, 0, dp(5))
         })
+        sampleButton.setOnClickListener {
+            startOverlayChromaColorSampling(clip) { sampled ->
+                selectedColor = sampled
+                clip.chromaKeyColor = sampled
+                sampleSwatch.background = android.graphics.drawable.GradientDrawable().apply {
+                    setColor(sampled)
+                    cornerRadius = dp(8).toFloat()
+                    setStroke(dp(1), Color.WHITE)
+                }
+                updateOverlayChromaKeyShader(clip)
+            }
+        }
 
         fun addSlider(title: String, initial: Float, min: Float, max: Float, update: (Float) -> Unit) {
             val header = LinearLayout(this).apply {
@@ -6131,6 +6133,8 @@ class MainActivity : AppCompatActivity() {
             setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT,
                 android.view.WindowManager.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            // Area preview di luar popup tetap menerima sentuhan saat sampling.
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
             attributes = attributes.apply { y = dp(10); dimAmount = 0.12f }
         }
         sampleColorButton.setOnClickListener {
