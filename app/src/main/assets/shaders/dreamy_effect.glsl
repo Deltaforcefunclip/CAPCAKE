@@ -9,6 +9,7 @@ uniform float uWarmth;
 uniform float uEffectMode;
 uniform float uSoftFocus;
 uniform float uPullInZoom;
+uniform float uAnimationZoom;
 uniform float uPullInBlur;
 uniform float uPullInFade;
 uniform float uExposure;
@@ -122,7 +123,8 @@ vec3 applyColorGrading(vec3 color) {
 }
 
 void main() {
-    vec2 sampleCoord = clamp((vTextureCoord - vec2(0.5)) / max(uPullInZoom, 1.0) + vec2(0.5), 0.0, 1.0);
+    float combinedZoom = max(uPullInZoom * uAnimationZoom, 0.01);
+    vec2 sampleCoord = clamp((vTextureCoord - vec2(0.5)) / combinedZoom + vec2(0.5), 0.0, 1.0);
     vec4 sharpSample = texture2D(sTexture, sampleCoord);
 
     // Jalur normal tanpa efek: hentikan sebelum 8 texture sample tambahan.
@@ -130,7 +132,7 @@ void main() {
     // padahal seluruh sampel itu tidak dipakai saat semua parameter efek nol.
     if (uIntensity <= 0.001 && uHasColorGrade < 0.5 &&
         uPullInBlur <= 0.001 && uPullInFade <= 0.001 &&
-        abs(uPullInZoom - 1.0) <= 0.001) {
+        abs(uPullInZoom - 1.0) <= 0.001 && abs(uAnimationZoom - 1.0) <= 0.001) {
         gl_FragColor = sharpSample;
         return;
     }
