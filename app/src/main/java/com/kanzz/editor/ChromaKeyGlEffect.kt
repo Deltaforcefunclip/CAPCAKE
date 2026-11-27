@@ -19,16 +19,19 @@ import androidx.media3.effect.GlShaderProgram
 class ChromaKeyGlEffect(
     keyColor: Int,
     threshold: Float = 0.22f,
-    softness: Float = 0.08f
+    softness: Float = 0.08f,
+    enabled: Boolean = true
 ) : GlEffect {
     @Volatile private var keyColorValue: Int = keyColor
     @Volatile private var thresholdValue: Float = threshold.coerceIn(0.01f, 1f)
     @Volatile private var softnessValue: Float = softness.coerceIn(0.001f, 0.5f)
+    @Volatile private var enabledValue: Boolean = enabled
 
-    fun updateParameters(keyColor: Int, threshold: Float, softness: Float) {
+    fun updateParameters(keyColor: Int, threshold: Float, softness: Float, enabled: Boolean = enabledValue) {
         keyColorValue = keyColor
         thresholdValue = threshold.coerceIn(0.01f, 1f)
         softnessValue = softness.coerceIn(0.001f, 0.5f)
+        enabledValue = enabled
     }
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean = false
@@ -39,6 +42,7 @@ class ChromaKeyGlEffect(
     internal fun getKeyColor(): Int = keyColorValue
     internal fun getThreshold(): Float = thresholdValue
     internal fun getSoftness(): Float = softnessValue
+    internal fun isEnabled(): Boolean = enabledValue
 }
 
 @UnstableApi
@@ -83,6 +87,7 @@ private class ChromaKeyShaderProgram(
             program.setFloatsUniform("uKeyColor", key)
             program.setFloatUniform("uThreshold", effect.getThreshold())
             program.setFloatUniform("uSoftness", effect.getSoftness())
+            program.setFloatUniform("uEnabled", if (effect.isEnabled()) 1f else 0f)
             program.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
         } catch (e: VideoFrameProcessingException) {
