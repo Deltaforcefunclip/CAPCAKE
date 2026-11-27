@@ -53,7 +53,11 @@ class DreamyGlEffect(
 ) : GlEffect {
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
-        if (previewState != null) false else (intensity <= 0.001f && colorGrading.isDefault && pullInEndUs <= pullInStartUs) || (endTimeUs <= startTimeUs && pullInEndUs <= pullInStartUs)
+        if (previewState != null) false else {
+            val hasZoom = zoomInEndUs > zoomInStartUs || zoomOutEndUs > zoomOutStartUs
+            (intensity <= 0.001f && colorGrading.isDefault && pullInEndUs <= pullInStartUs && !hasZoom) ||
+                (endTimeUs <= startTimeUs && pullInEndUs <= pullInStartUs && !hasZoom)
+        }
 
     override fun toGlShaderProgram(context: Context, useHdr: Boolean): GlShaderProgram =
         DreamyShaderProgram(
