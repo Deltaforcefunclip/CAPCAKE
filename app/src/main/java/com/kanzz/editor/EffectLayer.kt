@@ -93,7 +93,8 @@ class EffectTrackView(
     private val onChanged: () -> Unit,
     private val onTimelineScrolled: (Long) -> Unit,
     private val onClipDrag: (EffectClip, Float) -> Unit,
-    private val onClipDropped: (EffectClip, Float) -> Unit
+    private val onClipDropped: (EffectClip, Float) -> Unit,
+    private val onClipTapped: (EffectClip) -> Unit = {}
 ) : View(context) {
     private val density = resources.displayMetrics.density
     private val handler = Handler(Looper.getMainLooper())
@@ -237,6 +238,10 @@ class EffectTrackView(
                 handler.removeCallbacks(longPressRunnable)
                 if (longPressTriggered) touched?.let { onClipDropped(it, event.rawY) }
                 if (moved && editStarted) onChanged()
+                val tappedClip = touched
+                val isCleanTap = tappedClip != null && !longPressTriggered &&
+                    !editStarted && abs(event.x - downX) <= 8f * density
+                if (isCleanTap) tappedClip?.let { onClipTapped(it) }
                 parent?.requestDisallowInterceptTouchEvent(false)
                 touched = null
                 mode = 0
