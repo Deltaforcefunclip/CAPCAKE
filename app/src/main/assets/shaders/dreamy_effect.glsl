@@ -124,8 +124,11 @@ vec3 applyColorGrading(vec3 color) {
 
 void main() {
     float combinedZoom = max(uPullInZoom * uAnimationZoom, 0.01);
-    vec2 sampleCoord = clamp((vTextureCoord - vec2(0.5)) / combinedZoom + vec2(0.5), 0.0, 1.0);
-    vec4 sharpSample = texture2D(sTexture, sampleCoord);
+    vec2 rawSampleCoord = (vTextureCoord - vec2(0.5)) / combinedZoom + vec2(0.5);
+    float zoomInside = step(0.0, rawSampleCoord.x) * step(rawSampleCoord.x, 1.0) *
+        step(0.0, rawSampleCoord.y) * step(rawSampleCoord.y, 1.0);
+    vec2 sampleCoord = clamp(rawSampleCoord, 0.0, 1.0);
+    vec4 sharpSample = texture2D(sTexture, sampleCoord) * zoomInside;
 
     // Jalur normal tanpa efek: hentikan sebelum 8 texture sample tambahan.
     // Sebelumnya shader baru melakukan early-out setelah menghitung pullBlurred,
