@@ -9931,8 +9931,11 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     if (overlayClip.zoomInDurationMs > 0L || overlayClip.zoomOutDurationMs > 0L) {
-                        val startUs = 0L
-                        val endUs = overlayClip.durationMs * 1000L
+                        // Sequence overlay berjalan pada clock komposisi global.
+                        // Gunakan posisi overlay di timeline, bukan nol lokal, agar
+                        // animasi tetap tepat saat overlay mulai setelah awal project.
+                        val startUs = overlayStart * 1000L
+                        val endUs = (overlayStart + overlayClip.durationMs) * 1000L
                         val inUs = overlayClip.zoomInDurationMs.coerceAtMost(overlayClip.durationMs) * 1000L
                         val outUs = overlayClip.zoomOutDurationMs.coerceAtMost(overlayClip.durationMs) * 1000L
                         add(DreamyGlEffect(
