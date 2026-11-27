@@ -29,7 +29,9 @@ data class TextClip(
     var rotation: Float = 0f,
     var color: Int = Color.WHITE,
     var opacity: Float = 1f,
-    var bold: Boolean = true
+    var bold: Boolean = true,
+    var zoomInDurationMs: Long = 0L,
+    var zoomOutDurationMs: Long = 0L
 ) {
     val endTimeMs: Long get() = startTimeMs + durationMs
 }
