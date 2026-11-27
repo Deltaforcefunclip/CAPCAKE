@@ -7866,13 +7866,13 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showClipAnimationPopup() {
-        val type: String
-        val id: String
-        val clipMs: Long
-        val oldIn: Long
-        val oldOut: Long
-        val oldInMode: Int
-        val oldOutMode: Int
+        var type = ""
+        var id = ""
+        var clipMs = 0L
+        var oldIn = 0L
+        var oldOut = 0L
+        var oldInMode = 0
+        var oldOutMode = 0
         when {
             selectedTextClipId != null -> textClipManager.find(selectedTextClipId)?.let { c ->
                 type="text"; id=c.id; clipMs=c.durationMs; oldIn=c.zoomInDurationMs; oldOut=c.zoomOutDurationMs; oldInMode=c.zoomInMode; oldOutMode=c.zoomOutMode
