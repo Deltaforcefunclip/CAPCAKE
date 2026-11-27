@@ -49,7 +49,9 @@ class DreamyGlEffect(
     private val zoomInEndUs: Long = -1L,
     private val zoomOutStartUs: Long = -1L,
     private val zoomOutEndUs: Long = -1L,
-    private val zoomStartScale: Float = 0.2f
+    private val zoomStartScale: Float = 0.2f,
+    private val zoomInMode: Int = 0,
+    private val zoomOutMode: Int = 0
 ) : GlEffect {
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
@@ -64,7 +66,7 @@ class DreamyGlEffect(
             context, useHdr, intensity, glowSpread, warmth,
             startTimeUs, endTimeUs, previewState, effectMode, softFocus, colorGrading,
             pullInStartUs, pullInEndUs, pullInFadeIn,
-            zoomInStartUs, zoomInEndUs, zoomOutStartUs, zoomOutEndUs, zoomStartScale
+            zoomInStartUs, zoomInEndUs, zoomOutStartUs, zoomOutEndUs, zoomStartScale, zoomInMode, zoomOutMode
         )
 }
 
@@ -88,7 +90,9 @@ class DreamyShaderProgram(
     private val zoomInEndUs: Long = -1L,
     private val zoomOutStartUs: Long = -1L,
     private val zoomOutEndUs: Long = -1L,
-    private val zoomStartScale: Float = 0.2f
+    private val zoomStartScale: Float = 0.2f,
+    private val zoomInMode: Int = 0,
+    private val zoomOutMode: Int = 0
 ) : BaseGlShaderProgram(useHdr, 3) {
 
     private val glProgram = GlProgram(
@@ -171,7 +175,7 @@ class DreamyShaderProgram(
                 pullZoom = previewState.pullInZoom.coerceIn(1f, 2f)
                 pullBlur = previewState.pullInBlur.coerceIn(0f, 1f)
                 pullFade = previewState.pullInFade.coerceIn(0f, 1f)
-                animationZoom = previewState.animationZoomScale.coerceIn(zoomStartScale, 1f)
+                animationZoom = previewState.animationZoomScale.coerceIn(zoomStartScale, 2f)
                 active = liveIntensity > 0.001f
             } else {
                 liveIntensity = effectIntensity
@@ -194,14 +198,14 @@ class DreamyShaderProgram(
                 val inScale = if (zoomInEndUs > zoomInStartUs && presentationTimeUs < zoomInEndUs) {
                     val p = ((presentationTimeUs - zoomInStartUs).toFloat() / (zoomInEndUs - zoomInStartUs).toFloat()).coerceIn(0f, 1f)
                     val eased = p * p * (3f - 2f * p)
-                    zoomStartScale + (1f - zoomStartScale) * eased
+                    if (zoomInMode == 1) 1f + (1f - zoomStartScale) * eased else zoomStartScale + (1f - zoomStartScale) * eased
                 } else 1f
                 val outScale = if (zoomOutEndUs > zoomOutStartUs && presentationTimeUs >= zoomOutStartUs) {
                     val p = ((presentationTimeUs - zoomOutStartUs).toFloat() / (zoomOutEndUs - zoomOutStartUs).toFloat()).coerceIn(0f, 1f)
                     val eased = p * p * (3f - 2f * p)
-                    1f - (1f - zoomStartScale) * eased
+                    if (zoomOutMode == 1) 1f + (1f - zoomStartScale) * eased else 1f - (1f - zoomStartScale) * eased
                 } else 1f
-                animationZoom = minOf(inScale, outScale)
+                animationZoom = if (inScale > 1f || outScale > 1f) maxOf(inScale, outScale) else minOf(inScale, outScale)
                 active = presentationTimeUs >= startTimeUs && presentationTimeUs < endTimeUs
             }
 
