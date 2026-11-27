@@ -5519,12 +5519,8 @@ class MainActivity : AppCompatActivity() {
         // and sampled-color changes are uniform updates, not decoder rebuilds.
         effects.add(chromaEffect ?: ChromaKeyGlEffect(
             clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
-            clip.chromaKeyEnabled
+            clip.chromaKeyEnabled, clip.brightness, clip.contrast, clip.saturation
         ))
-        if (kotlin.math.abs(clip.brightness) > 0.0001f ||
-            kotlin.math.abs(clip.contrast - 1f) > 0.0001f ||
-            kotlin.math.abs(clip.saturation - 1f) > 0.0001f
-        ) effects.add(buildOverlayColorMatrix(clip))
         if (includeCrop && (
                 clip.cropLeft > 0f || clip.cropTop > 0f ||
                 clip.cropRight > 0f || clip.cropBottom > 0f
@@ -5609,7 +5605,8 @@ class MainActivity : AppCompatActivity() {
 
             // Crop tidak lagi menjadi bagian signature efek preview.
             // Perubahan crop cukup memperbarui Matrix TextureView, bukan memasang ulang efek.
-            val effectSignature = "${clip.brightness}:${clip.contrast}:${clip.saturation}"
+            // Color values are live shader uniforms; they do not belong in a pipeline signature.
+            val effectSignature = "persistent-gl"
             val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
             if (session.preparedClipId != clip.id) {
                 val itemBuilder = MediaItem.Builder().setUri(Uri.parse(clip.sourceUri))
@@ -5628,7 +5625,7 @@ class MainActivity : AppCompatActivity() {
                     overlayPlayer.setMediaItem(item, localPosition)
                     session.chromaKeyEffect = ChromaKeyGlEffect(
                         clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
-                        clip.chromaKeyEnabled
+                        clip.chromaKeyEnabled, clip.brightness, clip.contrast, clip.saturation
                     )
                     overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
                     session.effectSignature = effectSignature
@@ -5649,17 +5646,11 @@ class MainActivity : AppCompatActivity() {
             } else if (!session.failed) {
                 session.chromaKeyEffect?.updateParameters(
                     clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
-                    clip.chromaKeyEnabled
+                    clip.chromaKeyEnabled, clip.brightness, clip.contrast, clip.saturation
                 )
-                if (session.effectSignature != effectSignature) {
-                    runCatching {
-                        overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
-                        session.effectSignature = effectSignature
-                        recordPlaybackDiagnostic("OVERLAY_COLOR_EFFECT_UPDATED clip=${clip.id.take(8)}")
-                    }.onFailure {
-                        recordPlaybackDiagnostic("OVERLAY_EFFECT_ERROR clip=${clip.id.take(8)} ${it.javaClass.simpleName}: ${it.message}")
-                    }
-                }
+                // Keep the GL processor installed. Saturation/brightness/contrast
+                // are uniforms read by the next frame, avoiding decoder stalls.
+                session.effectSignature = effectSignature
                 overlayPlayer.volume = clip.volume.coerceIn(0f, 2f)
                 if (kotlin.math.abs(masterSpeed - session.lastMasterSpeed) > 0.01f) {
                     overlayPlayer.setPlaybackSpeed(masterSpeed)
@@ -5747,17 +5738,10 @@ class MainActivity : AppCompatActivity() {
         val session = overlayPreviewSessions[clip.id] ?: return
         session.chromaKeyEffect?.updateParameters(
             clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
-            clip.chromaKeyEnabled
+            clip.chromaKeyEnabled, clip.brightness, clip.contrast, clip.saturation
         )
-        // Saat pause tidak ada frame baru untuk menggambar uniform yang berubah.
-        // Refresh frame terakhir secara terbatas, tanpa memasang ulang efek/pipeline.
-        if (!player.isPlaying) {
-            val now = android.os.SystemClock.elapsedRealtime()
-            if (now - session.lastChromaRefreshAtMs >= 110L) {
-                session.lastChromaRefreshAtMs = now
-                session.player.seekTo(session.player.currentPosition)
-            }
-        }
+        // All color/chroma changes are consumed by the persistent shader on
+        // the next decoded frame; never seek or replace effects here.
     }
 
     /**
@@ -5786,7 +5770,7 @@ class MainActivity : AppCompatActivity() {
             clip.saturation = oldSaturation
             session.chromaKeyEffect?.updateParameters(
                 clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
-                clip.chromaKeyEnabled
+                clip.chromaKeyEnabled, clip.brightness, clip.contrast, clip.saturation
             )
             // The persistent GL effect reads updated uniforms on the next frame.
             // Do not replace effects or seek while restoring the preview.
@@ -5799,7 +5783,8 @@ class MainActivity : AppCompatActivity() {
         clip.contrast = 1f
         clip.saturation = 1f
         session.chromaKeyEffect?.updateParameters(
-            clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness, false
+            clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness, false,
+            0f, 1f, 1f
         )
 
         val samplingLayer = FrameLayout(this).apply {
@@ -5859,7 +5844,7 @@ class MainActivity : AppCompatActivity() {
             clip.saturation = oldSaturation
             session.chromaKeyEffect?.updateParameters(
                 clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
-                clip.chromaKeyEnabled
+                clip.chromaKeyEnabled, clip.brightness, clip.contrast, clip.saturation
             )
             session.effectSignature = "${clip.brightness}:${clip.contrast}:${clip.saturation}"
             finished = true
