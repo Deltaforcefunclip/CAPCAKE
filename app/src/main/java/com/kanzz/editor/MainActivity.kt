@@ -5813,6 +5813,10 @@ class MainActivity : AppCompatActivity() {
             setBackgroundColor(Color.TRANSPARENT)
         }
         samplingLayer.alpha = 0f
+        // TextureView/PlayerView overlay memiliki elevation sendiri. Sampling layer
+        // harus berada di atas seluruh preview agar ketukan selalu diterima.
+        samplingLayer.elevation = dp(100).toFloat()
+        samplingLayer.translationZ = dp(100).toFloat()
         previewFrameContainer.addView(
             samplingLayer,
             FrameLayout.LayoutParams(-1, -1)
@@ -5826,6 +5830,60 @@ class MainActivity : AppCompatActivity() {
             if (restore) restorePreview()
         }
 
+        fun captureSample(sampleX: Int, sampleY: Int, attempt: Int = 0) {
+            if (finished) return
+            if (sampleX !in 0 until texture.width || sampleY !in 0 until texture.height) {
+                Toast.makeText(this, "Ketuk tepat pada gambar overlay.", Toast.LENGTH_SHORT).show()
+                return
+            }
+            val bitmap = runCatching { texture.getBitmap() }.getOrNull()
+            if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) {
+                bitmap?.recycle()
+                // Setelah efek dinonaktifkan, TextureView kadang memerlukan beberapa
+                // frame untuk memperbarui buffer. Ulangi capture tanpa meminta ketukan baru.
+                if (attempt < 10) {
+                    samplingLayer.postDelayed({ captureSample(sampleX, sampleY, attempt + 1) }, 100L)
+                } else {
+                    Toast.makeText(this, "Frame preview belum tersedia. Coba tekan Ambil Sample lagi.", Toast.LENGTH_LONG).show()
+                }
+                return
+            }
+            val px = (sampleX.toFloat() * bitmap.width / texture.width).toInt()
+                .coerceIn(0, bitmap.width - 1)
+            val py = (sampleY.toFloat() * bitmap.height / texture.height).toInt()
+                .coerceIn(0, bitmap.height - 1)
+            val sampledColor = bitmap.getPixel(px, py)
+            bitmap.recycle()
+
+            clip.chromaKeyColor = Color.rgb(
+                Color.red(sampledColor), Color.green(sampledColor), Color.blue(sampledColor)
+            )
+            clip.chromaKeyEnabled = wasEnabled
+            clip.brightness = oldBrightness
+            clip.contrast = oldContrast
+            clip.saturation = oldSaturation
+            session.chromaKeyEffect?.updateParameters(
+                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
+            )
+            runCatching {
+                session.player.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
+                session.effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
+                if (!player.isPlaying && session.player.playbackState == Player.STATE_READY) {
+                    session.player.seekTo(session.player.currentPosition)
+                }
+            }.onFailure {
+                recordPlaybackDiagnostic("CHROMA_SAMPLE_PREVIEW_ERROR ${it.javaClass.simpleName}: ${it.message}")
+            }
+            finished = true
+            (samplingLayer.parent as? android.view.ViewGroup)?.removeView(samplingLayer)
+            onSampled(clip.chromaKeyColor)
+            Toast.makeText(
+                this,
+                "Sampel diambil: #%06X".format(Locale.US, clip.chromaKeyColor and 0xFFFFFF),
+                Toast.LENGTH_LONG
+            ).show()
+        }
+
         samplingLayer.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_UP -> {
@@ -5833,50 +5891,7 @@ class MainActivity : AppCompatActivity() {
                     texture.getLocationOnScreen(location)
                     val sampleX = (event.rawX - location[0]).toInt()
                     val sampleY = (event.rawY - location[1]).toInt()
-                    if (sampleX !in 0 until texture.width || sampleY !in 0 until texture.height) {
-                        Toast.makeText(this, "Ketuk tepat pada gambar overlay.", Toast.LENGTH_SHORT).show()
-                        return@setOnTouchListener true
-                    }
-                    val bitmap = runCatching { texture.getBitmap() }.getOrNull()
-                    if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) {
-                        bitmap?.recycle()
-                        Toast.makeText(this, "Frame preview belum siap. Coba ketuk sekali lagi.", Toast.LENGTH_SHORT).show()
-                        return@setOnTouchListener true
-                    }
-                    val px = (sampleX.toFloat() * bitmap.width / texture.width).toInt()
-                        .coerceIn(0, bitmap.width - 1)
-                    val py = (sampleY.toFloat() * bitmap.height / texture.height).toInt()
-                        .coerceIn(0, bitmap.height - 1)
-                    val sampledColor = bitmap.getPixel(px, py)
-                    bitmap.recycle()
-
-                    clip.chromaKeyColor = Color.rgb(
-                        Color.red(sampledColor), Color.green(sampledColor), Color.blue(sampledColor)
-                    )
-                    clip.chromaKeyEnabled = wasEnabled
-                    clip.brightness = oldBrightness
-                    clip.contrast = oldContrast
-                    clip.saturation = oldSaturation
-                    session.chromaKeyEffect?.updateParameters(
-                        clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
-                    )
-                    runCatching {
-                        session.player.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
-                        session.effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
-                        if (!player.isPlaying && session.player.playbackState == Player.STATE_READY) {
-                            session.player.seekTo(session.player.currentPosition)
-                        }
-                    }.onFailure {
-                        recordPlaybackDiagnostic("CHROMA_SAMPLE_PREVIEW_ERROR ${it.javaClass.simpleName}: ${it.message}")
-                    }
-                    finished = true
-                    (samplingLayer.parent as? android.view.ViewGroup)?.removeView(samplingLayer)
-                    onSampled(clip.chromaKeyColor)
-                    Toast.makeText(
-                        this,
-                        "Sampel diambil: #%06X".format(Locale.US, clip.chromaKeyColor and 0xFFFFFF),
-                        Toast.LENGTH_LONG
-                    ).show()
+                    captureSample(sampleX, sampleY)
                     true
                 }
                 MotionEvent.ACTION_CANCEL -> {
