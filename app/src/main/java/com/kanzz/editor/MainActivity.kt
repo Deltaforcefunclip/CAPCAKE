@@ -5987,26 +5987,18 @@ class MainActivity : AppCompatActivity() {
                 cornerRadius = dp(10).toFloat()
             }
         }
+        sampleButton.text = "PILIH WARNA DI PREVIEW"
+        sampleButton.isClickable = false
+        sampleButton.isFocusable = false
         sampleRow.addView(sampleButton, LinearLayout.LayoutParams(0, -2, 1f))
         content.addView(sampleRow)
-        content.addView(TextView(this).apply {
-            text = "Ketuk tombol, lalu ketuk warna latar pada gambar overlay."
+        val sampleHint = TextView(this).apply {
+            text = "Ketuk langsung warna latar pada jendela preview."
             textSize = 10f
             setTextColor(Color.LTGRAY)
             setPadding(0, 0, 0, dp(5))
-        })
-        sampleButton.setOnClickListener {
-            startOverlayChromaColorSampling(clip) { sampled ->
-                selectedColor = sampled
-                clip.chromaKeyColor = sampled
-                sampleSwatch.background = android.graphics.drawable.GradientDrawable().apply {
-                    setColor(sampled)
-                    cornerRadius = dp(8).toFloat()
-                    setStroke(dp(1), Color.WHITE)
-                }
-                updateOverlayChromaKeyShader(clip)
-            }
         }
+        content.addView(sampleHint)
 
         fun addSlider(title: String, initial: Float, min: Float, max: Float, update: (Float) -> Unit) {
             val header = LinearLayout(this).apply {
@@ -6110,8 +6102,8 @@ class MainActivity : AppCompatActivity() {
         dialog.show()
         dialog.window?.apply {
             setBackgroundDrawableResource(android.R.color.transparent)
-            // Batasi tinggi popup agar tidak menutupi seluruh preview. Konten tetap
-            // bisa digulir, sementara area video di atas popup tetap dapat disentuh.
+            // Popup hanya menempati bagian bawah; preview di atas tetap aktif
+            // dan tidak diredupkan saat pengguna memilih warna.
             val maxPopupHeight = (resources.displayMetrics.heightPixels * 0.42f)
                 .toInt().coerceAtMost(dp(420))
             setLayout(
@@ -6119,9 +6111,26 @@ class MainActivity : AppCompatActivity() {
                 maxPopupHeight
             )
             setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
-            // Sentuhan di luar batas popup diteruskan ke Activity dan sampling layer.
             addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
-            attributes = attributes.apply { y = dp(10); dimAmount = 0.12f }
+            clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            attributes = attributes.apply { y = dp(10); dimAmount = 0f }
+        }
+
+        // Sampling langsung aktif begitu popup muncul. Tidak perlu menekan tombol.
+        sampleButton.text = "PILIH WARNA DI PREVIEW"
+        startOverlayChromaColorSampling(clip) { sampled ->
+            selectedColor = sampled
+            clip.chromaKeyColor = sampled
+            enabled.isChecked = true
+            clip.chromaKeyEnabled = true
+            sampleSwatch.background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(sampled)
+                cornerRadius = dp(8).toFloat()
+                setStroke(dp(1), Color.WHITE)
+            }
+            sampleButton.text = "WARNA SUDAH TERPILIH"
+            sampleHint.text = "Warna berhasil dipilih. Tekan TERAPKAN untuk mengaktifkan Chroma Key."
+            updateOverlayChromaKeyShader(clip)
         }
     }
 
