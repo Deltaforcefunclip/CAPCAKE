@@ -9944,7 +9944,7 @@ class MainActivity : AppCompatActivity() {
                         val endUs = (overlayStart + overlayClip.durationMs) * 1000L
                         val inUs = overlayClip.zoomInDurationMs.coerceAtMost(overlayClip.durationMs) * 1000L
                         val outUs = overlayClip.zoomOutDurationMs.coerceAtMost(overlayClip.durationMs) * 1000L
-                        overlayEffects.add(DreamyGlEffect(
+                        add(DreamyGlEffect(
                             intensity = 0f, glowSpread = 0.35f, warmth = 0.5f,
                             zoomInStartUs = startUs,
                             zoomInEndUs = if (inUs > 0L) startUs + inUs else -1L,
