@@ -30,6 +30,7 @@ object TimelineStateCodec {
                 put("transformY", clip.transformY.toDouble())
                 put("zoomInDurationMs", clip.zoomInDurationMs)
                 put("zoomOutDurationMs", clip.zoomOutDurationMs)
+                put("zoomInMode", clip.zoomInMode); put("zoomOutMode", clip.zoomOutMode)
                 put("colorGrading", JSONObject().apply {
                     val grade = clip.colorGrading
                     put("exposure", grade.exposure.toDouble()); put("contrast", grade.contrast.toDouble())
@@ -111,6 +112,8 @@ object TimelineStateCodec {
                     transformY = item.optDouble("transformY", 0.0).toFloat(),
                     zoomInDurationMs = item.optLong("zoomInDurationMs", 0L).coerceAtLeast(0L),
                     zoomOutDurationMs = item.optLong("zoomOutDurationMs", 0L).coerceAtLeast(0L),
+                    zoomInMode = item.optInt("zoomInMode", 0).coerceIn(0, 1),
+                    zoomOutMode = item.optInt("zoomOutMode", 0).coerceIn(0, 1),
                     colorGrading = item.optJSONObject("colorGrading")?.let { grade ->
                         ColorGrading(
                             exposure = grade.optDouble("exposure", 0.0).toFloat(),
