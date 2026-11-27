@@ -6504,6 +6504,9 @@ class MainActivity : AppCompatActivity() {
                 invalidateTextTrackViews()
                 invalidateEffectTrackViews()
                 viewInvalidateOverlayTracks()
+            },
+            onClipTapped = { clip ->
+                navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
             }
         )
         view.select(selectedOverlayVideoClipId)
