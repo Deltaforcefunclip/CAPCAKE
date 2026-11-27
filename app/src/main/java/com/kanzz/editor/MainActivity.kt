@@ -7866,123 +7866,90 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun showClipAnimationPopup() {
-        val targetType: String
-        val clipId: String
-        val clipDuration: Long
+        val type: String
+        val id: String
+        val clipMs: Long
         val oldIn: Long
         val oldOut: Long
+        val oldInMode: Int
+        val oldOutMode: Int
         when {
-            selectedTextClipId != null -> {
-                val clip = textClipManager.find(selectedTextClipId) ?: return
-                targetType = "text"; clipId = clip.id; clipDuration = clip.durationMs
-                oldIn = clip.zoomInDurationMs; oldOut = clip.zoomOutDurationMs
+            selectedTextClipId != null -> textClipManager.find(selectedTextClipId)?.let { c ->
+                type="text"; id=c.id; clipMs=c.durationMs; oldIn=c.zoomInDurationMs; oldOut=c.zoomOutDurationMs; oldInMode=c.zoomInMode; oldOutMode=c.zoomOutMode
+            } ?: return
+            selectedOverlayVideoClipId != null -> overlayVideoClips.firstOrNull { it.id==selectedOverlayVideoClipId }?.let { c ->
+                type="overlay"; id=c.id; clipMs=c.durationMs; oldIn=c.zoomInDurationMs; oldOut=c.zoomOutDurationMs; oldInMode=c.zoomInMode; oldOutMode=c.zoomOutMode
+            } ?: return
+            else -> videoClipManager.find(selectedVideoClipId)?.let { c ->
+                type="video"; id=c.id; clipMs=c.timelineDurationMs; oldIn=c.zoomInDurationMs; oldOut=c.zoomOutDurationMs; oldInMode=c.zoomInMode; oldOutMode=c.zoomOutMode
+            } ?: return
+        }
+        var duration=(listOf(oldIn,oldOut).filter{it>0L}.maxOrNull()?:250L).coerceIn(50L,2000L)
+        val dialog=android.app.Dialog(this)
+        val root=LinearLayout(this).apply {
+            orientation=LinearLayout.VERTICAL; setPadding(dp(16),dp(16),dp(16),dp(14))
+            background=android.graphics.drawable.GradientDrawable().apply { setColor(Color.rgb(27,27,27)); cornerRadius=dp(18).toFloat(); setStroke(dp(1),Color.rgb(65,65,65)) }
+        }
+        root.addView(TextView(this).apply { text="ANIMASI CLIP"; textSize=17f; typeface=Typeface.DEFAULT_BOLD; setTextColor(Color.WHITE) })
+        root.addView(TextView(this).apply { text="Pilih animasi untuk awal dan akhir clip."; textSize=12f; setTextColor(Color.LTGRAY); setPadding(0,dp(4),0,dp(10)) })
+        val tables=LinearLayout(this).apply { orientation=LinearLayout.HORIZONTAL }
+        fun table(title:String, labels:List<String>, selected:Int):RadioGroup {
+            val col=LinearLayout(this).apply {
+                orientation=LinearLayout.VERTICAL; setPadding(dp(7),dp(7),dp(7),dp(7))
+                background=android.graphics.drawable.GradientDrawable().apply { setColor(Color.rgb(36,36,36)); cornerRadius=dp(10).toFloat(); setStroke(dp(1),Color.rgb(62,62,62)) }
             }
-            selectedOverlayVideoClipId != null -> {
-                val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return
-                targetType = "overlay"; clipId = clip.id; clipDuration = clip.durationMs
-                oldIn = clip.zoomInDurationMs; oldOut = clip.zoomOutDurationMs
+            col.addView(TextView(this).apply { text=title; textSize=13f; typeface=Typeface.DEFAULT_BOLD; setTextColor(green); gravity=Gravity.CENTER; setPadding(0,0,0,dp(5)) })
+            val group=RadioGroup(this).apply { orientation=RadioGroup.VERTICAL }
+            labels.forEachIndexed { index,label ->
+                group.addView(RadioButton(this).apply {
+                    id=View.generateViewId(); tag=index; text=label; textSize=11f; setTextColor(Color.WHITE)
+                    buttonTintList=android.content.res.ColorStateList.valueOf(green); setPadding(0,dp(2),0,dp(2)); isChecked=index==selected
+                })
             }
-            else -> {
-                val clip = videoClipManager.find(selectedVideoClipId) ?: return
-                targetType = "video"; clipId = clip.id; clipDuration = clip.timelineDurationMs
-                oldIn = clip.zoomInDurationMs; oldOut = clip.zoomOutDurationMs
-            }
+            val scroll=ScrollView(this).apply { isVerticalScrollBarEnabled=true; addView(group) }
+            col.addView(scroll,LinearLayout.LayoutParams(-1,dp(138)))
+            tables.addView(col,LinearLayout.LayoutParams(0,-2,1f).apply { if(title=="MASUK") marginEnd=dp(5) else marginStart=dp(5) })
+            return group
         }
-        var duration = (listOf(oldIn, oldOut).filter { it > 0L }.maxOrNull() ?: 250L).coerceIn(50L, 2000L)
-        val dialog = android.app.Dialog(this)
-        val root = LinearLayout(this).apply {
-            orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(18), dp(20), dp(14))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(Color.rgb(27, 27, 27)); cornerRadius = dp(18).toFloat()
-                setStroke(dp(1), Color.rgb(65, 65, 65))
-            }
-        }
-        root.addView(TextView(this).apply {
-            text = "ANIMASI CLIP"; textSize = 17f; typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-        })
-        root.addView(TextView(this).apply {
-            text = "Pilih animasi zoom untuk awal atau akhir clip."
-            textSize = 12f; setTextColor(Color.LTGRAY); setPadding(0, dp(5), 0, dp(12))
-        })
-        val inCheck = CheckBox(this).apply {
-            text = "Masuk  •  Zoom In"; textSize = 14f; setTextColor(Color.WHITE)
-            buttonTintList = android.content.res.ColorStateList.valueOf(green); isChecked = oldIn > 0L
-        }
-        val outCheck = CheckBox(this).apply {
-            text = "Keluar  •  Zoom Out"; textSize = 14f; setTextColor(Color.WHITE)
-            buttonTintList = android.content.res.ColorStateList.valueOf(green); isChecked = oldOut > 0L
-        }
-        root.addView(inCheck); root.addView(outCheck)
-        val durationLabel = TextView(this).apply {
-            text = "Durasi: %.2f detik".format(duration / 1000f)
-            textSize = 13f; setTextColor(Color.WHITE); setPadding(0, dp(12), 0, dp(4))
-        }
-        root.addView(durationLabel)
-        val slider = SeekBar(this).apply {
-            max = 195; progress = ((duration - 50L) / 10L).toInt().coerceIn(0, 195)
-            progressTintList = android.content.res.ColorStateList.valueOf(green)
-            thumbTintList = android.content.res.ColorStateList.valueOf(green)
-        }
+        val inGroup=table("MASUK",listOf("Zoom In\nKecil → normal","Zoom Out\nBesar → normal","Tidak ada"),if(oldIn>0L)oldInMode.coerceIn(0,1) else 2)
+        val outGroup=table("KELUAR",listOf("Zoom Out\nNormal → kecil","Zoom In\nNormal → besar","Tidak ada"),if(oldOut>0L)oldOutMode.coerceIn(0,1) else 2)
+        root.addView(tables)
+        val label=TextView(this).apply { text="Durasi: %.2f detik".format(duration/1000f); textSize=13f; setTextColor(Color.WHITE); setPadding(0,dp(12),0,dp(4)) }
+        root.addView(label)
+        val slider=SeekBar(this).apply { max=195; progress=((duration-50L)/10L).toInt().coerceIn(0,195); progressTintList=android.content.res.ColorStateList.valueOf(green); thumbTintList=android.content.res.ColorStateList.valueOf(green) }
         root.addView(slider)
-        slider.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
-            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
-                duration = 50L + value * 10L
-                durationLabel.text = "Durasi: %.2f detik".format(duration / 1000f)
-            }
-            override fun onStartTrackingTouch(bar: SeekBar?) {}
-            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        slider.setOnSeekBarChangeListener(object:SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar:SeekBar?,value:Int,fromUser:Boolean){ duration=50L+value*10L; label.text="Durasi: %.2f detik".format(duration/1000f) }
+            override fun onStartTrackingTouch(bar:SeekBar?){}
+            override fun onStopTrackingTouch(bar:SeekBar?){}
         })
-        val actions = LinearLayout(this).apply { gravity = Gravity.END; setPadding(0, dp(14), 0, 0) }
-        val reset = TextView(this).apply {
-            text = "RESET"; setTextColor(Color.LTGRAY); gravity = Gravity.CENTER
-            setPadding(dp(14), dp(12), dp(14), dp(12))
-        }
-        val confirm = TextView(this).apply {
-            text = "KONFIRMASI"; setTextColor(green); typeface = Typeface.DEFAULT_BOLD
-            gravity = Gravity.CENTER; setPadding(dp(14), dp(12), dp(4), dp(12))
-        }
+        val actions=LinearLayout(this).apply { gravity=Gravity.END; setPadding(0,dp(12),0,0) }
+        val reset=TextView(this).apply { text="RESET"; setTextColor(Color.LTGRAY); gravity=Gravity.CENTER; setPadding(dp(14),dp(12),dp(14),dp(12)) }
+        val confirm=TextView(this).apply { text="KONFIRMASI"; setTextColor(green); typeface=Typeface.DEFAULT_BOLD; gravity=Gravity.CENTER; setPadding(dp(14),dp(12),dp(4),dp(12)) }
         actions.addView(reset); actions.addView(confirm); root.addView(actions)
+        fun choice(group:RadioGroup)=(group.findViewById<RadioButton>(group.checkedRadioButtonId)?.tag as? Int ?: 2)
         reset.setOnClickListener {
-            inCheck.isChecked = oldIn > 0L; outCheck.isChecked = oldOut > 0L
-            duration = (listOf(oldIn, oldOut).filter { it > 0L }.maxOrNull() ?: 250L).coerceIn(50L, 2000L)
-            slider.progress = ((duration - 50L) / 10L).toInt().coerceIn(0, 195)
-            durationLabel.text = "Durasi: %.2f detik".format(duration / 1000f)
+            inGroup.check(inGroup.getChildAt(if(oldIn>0L)oldInMode.coerceIn(0,1) else 2).id)
+            outGroup.check(outGroup.getChildAt(if(oldOut>0L)oldOutMode.coerceIn(0,1) else 2).id)
+            duration=(listOf(oldIn,oldOut).filter{it>0L}.maxOrNull()?:250L).coerceIn(50L,2000L)
+            slider.progress=((duration-50L)/10L).toInt().coerceIn(0,195); label.text="Durasi: %.2f detik".format(duration/1000f)
         }
         confirm.setOnClickListener {
-            val useIn = inCheck.isChecked
-            val useOut = outCheck.isChecked
-            val total = (if (useIn) duration else 0L) + (if (useOut) duration else 0L)
-            if (total > clipDuration) {
-                Toast.makeText(this, "durasi terlalu pendek", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
+            val im=choice(inGroup); val om=choice(outGroup); val useIn=im!=2; val useOut=om!=2
+            if((if(useIn)duration else 0L)+(if(useOut)duration else 0L)>clipMs){ Toast.makeText(this,"durasi terlalu pendek",Toast.LENGTH_SHORT).show(); return@setOnClickListener }
             pushUndoSnapshot()
-            when (targetType) {
-                "text" -> textClipManager.find(clipId)?.let {
-                    it.zoomInDurationMs = if (useIn) duration else 0L
-                    it.zoomOutDurationMs = if (useOut) duration else 0L
-                }
-                "overlay" -> overlayVideoClips.firstOrNull { it.id == clipId }?.let {
-                    it.zoomInDurationMs = if (useIn) duration else 0L
-                    it.zoomOutDurationMs = if (useOut) duration else 0L
-                }
-                else -> videoClipManager.find(clipId)?.let {
-                    it.zoomInDurationMs = if (useIn) duration else 0L
-                    it.zoomOutDurationMs = if (useOut) duration else 0L
-                }
+            fun apply(inMs:(Long)->Unit,outMs:(Long)->Unit,inMode:(Int)->Unit,outMode:(Int)->Unit) {
+                inMs(if(useIn)duration else 0L); outMs(if(useOut)duration else 0L); inMode(if(useIn)im else 0); outMode(if(useOut)om else 0)
+            }
+            when(type) {
+                "text" -> textClipManager.find(id)?.let { c -> apply({c.zoomInDurationMs=it},{c.zoomOutDurationMs=it},{c.zoomInMode=it},{c.zoomOutMode=it}) }
+                "overlay" -> overlayVideoClips.firstOrNull{it.id==id}?.let { c -> apply({c.zoomInDurationMs=it},{c.zoomOutDurationMs=it},{c.zoomInMode=it},{c.zoomOutMode=it}) }
+                else -> videoClipManager.find(id)?.let { c -> apply({c.zoomInDurationMs=it},{c.zoomOutDurationMs=it},{c.zoomInMode=it},{c.zoomOutMode=it}) }
             }
             applyPreviewTransform(); syncOverlayVideoPreview(); updateTextPreview(); saveCurrentProject(); dialog.dismiss()
         }
-        dialog.setContentView(root)
-        dialog.setCanceledOnTouchOutside(true)
-        dialog.show()
-        dialog.window?.apply {
-            setBackgroundDrawableResource(android.R.color.transparent)
-            setLayout((resources.displayMetrics.widthPixels - dp(48)).coerceAtLeast(dp(280)), -2)
-            setGravity(Gravity.CENTER)
-        }
+        dialog.setContentView(root); dialog.setCanceledOnTouchOutside(true); dialog.show()
+        dialog.window?.apply { setBackgroundDrawableResource(android.R.color.transparent); setLayout((resources.displayMetrics.widthPixels-dp(36)).coerceAtLeast(dp(280)),-2); setGravity(Gravity.CENTER) }
     }
 
     private var lastPreviewTextStateKey: Long = Long.MIN_VALUE
