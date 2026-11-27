@@ -521,7 +521,7 @@ class MainActivity : AppCompatActivity() {
                     textClipManager.clips.clear()
                     effectClipManager.clips.clear()
                     overlayVideoClips.clear()
-                    selectedOverlayVideoClipId = null
+                    clearOverlayVideoSelection()
                     clearOverlayPreviewSessions()
                     undoStack.clear()
                     redoStack.clear()
@@ -992,7 +992,7 @@ class MainActivity : AppCompatActivity() {
         textClipManager.clips.clear()
         effectClipManager.clips.clear()
         overlayVideoClips.clear()
-        selectedOverlayVideoClipId = null
+        clearOverlayVideoSelection()
         overlayCropModeEnabled = false
         overlaySelectionOverlay?.setCropMode(false)
         clearOverlayPreviewSessions()
@@ -2229,7 +2229,7 @@ class MainActivity : AppCompatActivity() {
                 updateTime()
             },
             onTap = { tappedClip ->
-                selectedOverlayVideoClipId = null
+                clearOverlayVideoSelection()
                 overlaySelectionOverlay?.invalidate()
                 selectedAudioClipId = null
                 clearAudioTrackSelection()
@@ -2283,7 +2283,7 @@ class MainActivity : AppCompatActivity() {
                 previewClipMoveAt(clipId, targetStartMs)
             },
             onMoveClip = { clipId, targetStartMs ->
-                selectedOverlayVideoClipId = null
+                clearOverlayVideoSelection()
                 overlaySelectionOverlay?.invalidate()
                 val current = videoClipManager.find(clipId)
                 if (current != null) {
@@ -2545,7 +2545,7 @@ class MainActivity : AppCompatActivity() {
                                 selectedAudioClipId = null
                                 selectedTextClipId = null
                                 selectedEffectClipId = null
-                                selectedOverlayVideoClipId = null
+                                clearOverlayVideoSelection()
                                 overlayCropModeEnabled = false
                                 overlaySelectionOverlay?.setCropMode(false)
                                 overlaySelectionOverlay?.invalidate()
@@ -2690,7 +2690,7 @@ class MainActivity : AppCompatActivity() {
         // PREVIEW SELECTION
 
         playerView.setOnClickListener {
-            selectedOverlayVideoClipId = null
+            clearOverlayVideoSelection()
             overlaySelectionOverlay?.invalidate()
             selectedAudioClipId = null
             clearAudioTrackSelection()
@@ -3748,7 +3748,7 @@ class MainActivity : AppCompatActivity() {
                 "P̲T̲" to "Preset Text"
             )
         } else if (selectedOverlayVideoClipId != null) {
-            listOf("♫" to "Volume", "◉" to "Warna", "🟩" to "Chroma Key", "▱" to if (overlayCropModeEnabled) "Selesai Crop" else "Crop", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus", "GS" to "GS")
+            listOf("♫" to "Volume", "◐" to "Opasitas", "◉" to "Warna", "🟩" to "Chroma Key", "▱" to if (overlayCropModeEnabled) "Selesai Crop" else "Crop", "✂" to "Potong", "▣" to "Salin", "⌫" to "Hapus", "GS" to "GS")
         } else if (selectedAudioClipId != null) {
 
             listOf(
@@ -3935,14 +3935,16 @@ class MainActivity : AppCompatActivity() {
                     "Gaya" -> toggleSelectedTextStyle()
                     "Animasi" -> Toast.makeText(this, "Pengaturan animasi teks akan ditambahkan berikutnya.", Toast.LENGTH_SHORT).show()
                     "Opasitas" -> {
-                        if (selectedEffectClipId != null) effectClipManager.find(selectedEffectClipId)?.let { showEffectOpacityDialog(it) }
+                        if (selectedOverlayVideoClipId != null) {
+                            overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId }?.let { showOverlayVideoOpacity(it) }
+                        } else if (selectedEffectClipId != null) effectClipManager.find(selectedEffectClipId)?.let { showEffectOpacityDialog(it) }
                         else showTextOpacityDialog()
                     }
                     "Hapus" -> {
                         if (selectedOverlayVideoClipId != null) {
                             pushUndoSnapshot()
                             overlayVideoClips.removeAll { it.id == selectedOverlayVideoClipId }
-                            selectedOverlayVideoClipId = null
+                            clearOverlayVideoSelection()
                             refreshOverlayVideoTracks(); saveCurrentProject(); updateToolMenu()
                         } else if (selectedEffectClipId != null) {
                             pushUndoSnapshot()
@@ -4105,7 +4107,7 @@ class MainActivity : AppCompatActivity() {
                             selectedAudioClipId = null
                             selectedTextClipId = null
                             selectedEffectClipId = null
-                            selectedOverlayVideoClipId = null
+                            clearOverlayVideoSelection()
                             clearAudioTrackSelection()
                             updateLayerGroupVisibility()
                             updateToolMenu()
@@ -4120,7 +4122,7 @@ class MainActivity : AppCompatActivity() {
                             selectedAudioClipId = null
                             selectedTextClipId = null
                             selectedEffectClipId = null
-                            selectedOverlayVideoClipId = null
+                            clearOverlayVideoSelection()
                             updateLayerGroupVisibility()
                             updateToolMenu()
                         }
@@ -4214,7 +4216,7 @@ class MainActivity : AppCompatActivity() {
 
         toggle.setOnClickListener {
             if (selectedOverlayVideoClipId != null) {
-                selectedOverlayVideoClipId = null
+                clearOverlayVideoSelection()
                 refreshOverlayVideoTracks()
             } else if (selectedEffectClipId != null) {
                 selectedEffectClipId = null
@@ -5419,6 +5421,7 @@ class MainActivity : AppCompatActivity() {
                 view.layoutParams = FrameLayout.LayoutParams(fittedWidth, fittedHeight, Gravity.CENTER)
             }
         }
+        view.alpha = clip.opacity.coerceIn(0f, 1f)
         view.pivotX = view.width / 2f
         view.pivotY = view.height / 2f
         view.scaleX = clip.transformScale.coerceIn(0.2f, 4f)
@@ -5440,6 +5443,7 @@ class MainActivity : AppCompatActivity() {
             resizeMode = androidx.media3.ui.AspectRatioFrameLayout.RESIZE_MODE_FIT
             setKeepContentOnPlayerReset(true)
             visibility = View.VISIBLE
+            alpha = clip.opacity.coerceIn(0f, 1f)
         }
         val overlay = ExoPlayer.Builder(this).build().apply { volume = 0f }
         view.player = overlay
@@ -6107,6 +6111,52 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private fun showOverlayVideoOpacity(clip: OverlayVideoClip) {
+        val dialog = android.app.Dialog(this)
+        val valueLabel = TextView(this).apply {
+            text = "Opasitas  ${(clip.opacity * 100f).toInt()}%"
+            setTextColor(Color.WHITE); textSize = 14f; gravity = Gravity.CENTER
+        }
+        val seek = SeekBar(this).apply {
+            max = 100
+            progress = (clip.opacity.coerceIn(0f, 1f) * 100f).toInt()
+            progressTintList = android.content.res.ColorStateList.valueOf(green)
+            thumbTintList = android.content.res.ColorStateList.valueOf(green)
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(16), dp(10), dp(16), dp(8))
+            setBackgroundColor(Color.rgb(25, 27, 29))
+            addView(valueLabel, LinearLayout.LayoutParams(-1, dp(24)))
+            addView(seek, LinearLayout.LayoutParams(-1, dp(42)))
+        }
+        var undoSaved = false
+        seek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
+            override fun onProgressChanged(bar: SeekBar?, value: Int, fromUser: Boolean) {
+                if (!fromUser) return
+                clip.opacity = (value / 100f).coerceIn(0f, 1f)
+                valueLabel.text = "Opasitas  $value%"
+                overlayPreviewSessions[clip.id]?.view?.alpha = clip.opacity
+            }
+            override fun onStartTrackingTouch(bar: SeekBar?) {
+                if (!undoSaved) { pushUndoSnapshot(); undoSaved = true }
+            }
+            override fun onStopTrackingTouch(bar: SeekBar?) {}
+        })
+        dialog.setContentView(content)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnDismissListener { saveCurrentProject() }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(-1, -2)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            attributes = attributes.apply { y = dp(94) }
+            addFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            setDimAmount(0.12f)
+        }
+    }
+
     private fun showOverlayVideoVolume(clip: OverlayVideoClip) {
         val dialog = android.app.Dialog(this)
         val valueLabel = TextView(this).apply {
@@ -6356,6 +6406,16 @@ class MainActivity : AppCompatActivity() {
         refreshOverlayVideoTracks(); updateLayerGroupVisibility(); saveCurrentProject(); updateToolMenu()
         syncOverlayVideoPreview()
         Toast.makeText(this, if (isImage) "Gambar ditambahkan ke layer overlay (5 detik)." else "Overlay video ditambahkan ke timeline.", Toast.LENGTH_SHORT).show()
+    }
+
+    private fun clearOverlayVideoSelection() {
+        selectedOverlayVideoClipId = null
+        if (::overlayVideoTracksContainer.isInitialized) {
+            for (index in 0 until overlayVideoTracksContainer.childCount) {
+                (overlayVideoTracksContainer.getChildAt(index) as? OverlayVideoTrackView)?.select(null)
+            }
+        }
+        overlaySelectionOverlay?.invalidate()
     }
 
     private fun viewInvalidateOverlayTracks() {
@@ -9830,7 +9890,8 @@ class MainActivity : AppCompatActivity() {
                         backgroundAnchorY = geometry.anchorY,
                         activeStartTimeUs = overlayClip.startTimeMs.coerceAtLeast(0L) * 1_000L,
                         activeEndTimeUs = (overlayClip.startTimeMs.coerceAtLeast(0L) +
-                            overlayClip.durationMs.coerceAtLeast(0L)) * 1_000L
+                            overlayClip.durationMs.coerceAtLeast(0L)) * 1_000L,
+                        opacity = overlayClip.opacity.coerceIn(0f, 1f)
                     )
                 }
                 compositionBuilder.setVideoCompositorSettings(
