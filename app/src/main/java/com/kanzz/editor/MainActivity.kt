@@ -9665,6 +9665,23 @@ class MainActivity : AppCompatActivity() {
                     )
                     // Transformasi dipindahkan ke compositor. Ini menghindari satu
                     // tahap MatrixTransformation/GL texture tambahan per overlay.
+                    // Gunakan satu shader yang sama dengan preview untuk seluruh
+                    // proses warna: chroma key terlebih dahulu, lalu saturasi,
+                    // kontras, dan kecerahan pada foreground. Jangan pisahkan
+                    // ColorMatrix setelah shader karena RGB hasil chroma sudah
+                    // premultiplied-alpha; offset matrix dapat mengubah transparansi
+                    // menjadi warna hitam/hijau pada hasil ekspor.
+                    add(
+                        ChromaKeyGlEffect(
+                            overlayClip.chromaKeyColor,
+                            overlayClip.chromaKeyThreshold,
+                            overlayClip.chromaKeySoftness,
+                            overlayClip.chromaKeyEnabled,
+                            overlayClip.brightness,
+                            overlayClip.contrast,
+                            overlayClip.saturation
+                        )
+                    )
                     if (overlayClip.cropLeft > 0f || overlayClip.cropTop > 0f ||
                         overlayClip.cropRight > 0f || overlayClip.cropBottom > 0f
                     ) {
@@ -9676,19 +9693,6 @@ class MainActivity : AppCompatActivity() {
                             add(Crop(cropLeft, cropRight, cropBottom, cropTop))
                         }
                     }
-                    // Urutan harus sama dengan preview: key warna sumber dulu,
-                    // baru brightness/contrast/saturation pada foreground tersisa.
-                    if (overlayClip.chromaKeyEnabled) add(
-                        ChromaKeyGlEffect(
-                            overlayClip.chromaKeyColor,
-                            overlayClip.chromaKeyThreshold,
-                            overlayClip.chromaKeySoftness
-                        )
-                    )
-                    if (kotlin.math.abs(overlayClip.brightness) > 0.0001f ||
-                        kotlin.math.abs(overlayClip.contrast - 1f) > 0.0001f ||
-                        kotlin.math.abs(overlayClip.saturation - 1f) > 0.0001f
-                    ) add(buildOverlayColorMatrix(overlayClip))
                     // Jangan paksa layer overlay melewati Presentation output kedua.
                     // Ukuran kanvas akhir sudah ditentukan oleh video utama pada compositor.
                     // Resize kedua dengan SCALE_TO_FIT membuat isi overlay mengecil lagi.
