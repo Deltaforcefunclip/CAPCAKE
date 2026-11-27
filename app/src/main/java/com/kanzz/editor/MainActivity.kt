@@ -9457,8 +9457,8 @@ class MainActivity : AppCompatActivity() {
                                 }
 
                                 if (clip.zoomInDurationMs > 0L || clip.zoomOutDurationMs > 0L) {
-                                    val clipStartUs = clip.timelineStartMs * 1000L
-                                    val clipEndUs = clip.timelineEndMs * 1000L
+                                    val clipStartUs = 0L
+                                    val clipEndUs = clip.timelineDurationMs * 1000L
                                     val inUs = clip.zoomInDurationMs.coerceAtMost(clip.timelineDurationMs) * 1000L
                                     val outUs = clip.zoomOutDurationMs.coerceAtMost(clip.timelineDurationMs) * 1000L
                                     add(DreamyGlEffect(
@@ -9921,8 +9921,8 @@ class MainActivity : AppCompatActivity() {
                         }
                     }
                     if (overlayClip.zoomInDurationMs > 0L || overlayClip.zoomOutDurationMs > 0L) {
-                        val startUs = overlayStart * 1000L
-                        val endUs = (overlayStart + overlayClip.durationMs) * 1000L
+                        val startUs = 0L
+                        val endUs = overlayClip.durationMs * 1000L
                         val inUs = overlayClip.zoomInDurationMs.coerceAtMost(overlayClip.durationMs) * 1000L
                         val outUs = overlayClip.zoomOutDurationMs.coerceAtMost(overlayClip.durationMs) * 1000L
                         add(DreamyGlEffect(
