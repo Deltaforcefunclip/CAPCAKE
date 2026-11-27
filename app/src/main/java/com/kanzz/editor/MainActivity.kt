@@ -5792,7 +5792,7 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // La color key deve leggere il colore sorgente, non quello già desaturato/alterato.
+        // Chroma key harus membaca warna sumber, bukan warna yang sudah diubah.
         clip.chromaKeyEnabled = false
         clip.brightness = 0f
         clip.contrast = 1f
@@ -5836,7 +5836,6 @@ class MainActivity : AppCompatActivity() {
         fun finishSampling(restore: Boolean) {
             if (finished) return
             finished = true
-            handler.removeCallbacksAndMessages(samplingLayer.tag)
             (samplingLayer.parent as? android.view.ViewGroup)?.removeView(samplingLayer)
             if (restore) restorePreview()
         }
