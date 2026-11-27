@@ -5756,6 +5756,166 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    /**
+     * Mengambil warna langsung dari frame sumber overlay yang tampil di preview.
+     * Chroma key dan koreksi warna sementara dinonaktifkan agar warna sampel
+     * tetap merupakan warna asli yang akan dibaca shader chroma key.
+     */
+    private fun startOverlayChromaColorSampling(clip: OverlayVideoClip) {
+        val session = overlayPreviewSessions[clip.id]
+        val texture = session?.view?.videoSurfaceView as? android.view.TextureView
+        if (session == null || texture == null) {
+            Toast.makeText(this, "Preview overlay belum siap untuk mengambil sampel.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val wasEnabled = clip.chromaKeyEnabled
+        val oldBrightness = clip.brightness
+        val oldContrast = clip.contrast
+        val oldSaturation = clip.saturation
+        var finished = false
+
+        fun restorePreview() {
+            clip.chromaKeyEnabled = wasEnabled
+            clip.brightness = oldBrightness
+            clip.contrast = oldContrast
+            clip.saturation = oldSaturation
+            session.chromaKeyEffect?.updateParameters(
+                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
+            )
+            runCatching {
+                session.player.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
+                session.effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
+                if (!player.isPlaying && session.player.playbackState == Player.STATE_READY) {
+                    session.player.seekTo(session.player.currentPosition)
+                }
+            }
+        }
+
+        // La color key deve leggere il colore sorgente, non quello già desaturato/alterato.
+        clip.chromaKeyEnabled = false
+        clip.brightness = 0f
+        clip.contrast = 1f
+        clip.saturation = 1f
+        runCatching {
+            session.player.setVideoEffects(buildOverlayPreviewEffects(clip, null))
+            session.effectSignature = "false:0.0:1.0:1.0"
+            session.player.seekTo(session.player.currentPosition)
+        }.onFailure {
+            restorePreview()
+            Toast.makeText(this, "Gagal menyiapkan preview untuk sampling.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
+        val samplingLayer = FrameLayout(this).apply {
+            isClickable = true
+            isFocusable = true
+            setBackgroundColor(Color.TRANSPARENT)
+        }
+        val hint = TextView(this).apply {
+            text = "KETUK WARNA LATAR DI PREVIEW  •  BATAL: KEMBALI"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setPadding(dp(14), dp(10), dp(14), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xD91A1A1A.toInt())
+                cornerRadius = dp(12).toFloat()
+                setStroke(dp(1), green)
+            }
+        }
+        samplingLayer.addView(hint, FrameLayout.LayoutParams(-1, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        samplingLayer.alpha = 0f
+        previewFrameContainer.addView(
+            samplingLayer,
+            FrameLayout.LayoutParams(-1, -1)
+        )
+        samplingLayer.bringToFront()
+
+        fun finishSampling(restore: Boolean) {
+            if (finished) return
+            finished = true
+            handler.removeCallbacksAndMessages(samplingLayer.tag)
+            (samplingLayer.parent as? android.view.ViewGroup)?.removeView(samplingLayer)
+            if (restore) restorePreview()
+        }
+
+        samplingLayer.setOnTouchListener { _, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_UP -> {
+                    val location = IntArray(2)
+                    texture.getLocationOnScreen(location)
+                    val sampleX = (event.rawX - location[0]).toInt()
+                    val sampleY = (event.rawY - location[1]).toInt()
+                    if (sampleX !in 0 until texture.width || sampleY !in 0 until texture.height) {
+                        Toast.makeText(this, "Ketuk tepat pada gambar overlay.", Toast.LENGTH_SHORT).show()
+                        return@setOnTouchListener true
+                    }
+                    val bitmap = runCatching { texture.getBitmap() }.getOrNull()
+                    if (bitmap == null || bitmap.width <= 0 || bitmap.height <= 0) {
+                        bitmap?.recycle()
+                        Toast.makeText(this, "Frame preview belum siap. Coba ketuk sekali lagi.", Toast.LENGTH_SHORT).show()
+                        return@setOnTouchListener true
+                    }
+                    val px = (sampleX.toFloat() * bitmap.width / texture.width).toInt()
+                        .coerceIn(0, bitmap.width - 1)
+                    val py = (sampleY.toFloat() * bitmap.height / texture.height).toInt()
+                        .coerceIn(0, bitmap.height - 1)
+                    val sampledColor = bitmap.getPixel(px, py)
+                    bitmap.recycle()
+
+                    clip.chromaKeyColor = Color.rgb(
+                        Color.red(sampledColor), Color.green(sampledColor), Color.blue(sampledColor)
+                    )
+                    clip.chromaKeyEnabled = wasEnabled
+                    clip.brightness = oldBrightness
+                    clip.contrast = oldContrast
+                    clip.saturation = oldSaturation
+                    session.chromaKeyEffect?.updateParameters(
+                        clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
+                    )
+                    runCatching {
+                        session.player.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
+                        session.effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
+                        if (!player.isPlaying && session.player.playbackState == Player.STATE_READY) {
+                            session.player.seekTo(session.player.currentPosition)
+                        }
+                    }.onFailure {
+                        recordPlaybackDiagnostic("CHROMA_SAMPLE_PREVIEW_ERROR ${it.javaClass.simpleName}: ${it.message}")
+                    }
+                    finished = true
+                    (samplingLayer.parent as? android.view.ViewGroup)?.removeView(samplingLayer)
+                    saveCurrentProject()
+                    Toast.makeText(
+                        this,
+                        "Sampel warna diterapkan: #%06X".format(Locale.US, clip.chromaKeyColor and 0xFFFFFF),
+                        Toast.LENGTH_LONG
+                    ).show()
+                    true
+                }
+                MotionEvent.ACTION_CANCEL -> {
+                    finishSampling(restore = true)
+                    true
+                }
+                else -> true
+            }
+        }
+
+        // Beri waktu GL pipeline menggambar satu frame tanpa chroma key sebelum sampling aktif.
+        samplingLayer.postDelayed({
+            if (!finished) {
+                samplingLayer.animate().alpha(1f).setDuration(100L).start()
+                Toast.makeText(this, "Ketuk warna latar pada gambar overlay.", Toast.LENGTH_LONG).show()
+            }
+        }, 220L)
+        samplingLayer.setOnLongClickListener {
+            finishSampling(restore = true)
+            Toast.makeText(this, "Pengambilan sampel dibatalkan.", Toast.LENGTH_SHORT).show()
+            true
+        }
+    }
+
     private fun showOverlayChromaKeyDialog() {
         val clip = overlayVideoClips.firstOrNull { it.id == selectedOverlayVideoClipId } ?: return
         val oldEnabled = clip.chromaKeyEnabled
@@ -5827,6 +5987,24 @@ class MainActivity : AppCompatActivity() {
             updateOverlayChromaKeyShader(clip)
         }
         content.addView(colorGroup)
+
+        val sampleColorButton = TextView(this).apply {
+            text = "◎  AMBIL SAMPEL DARI PREVIEW"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(green)
+            setPadding(dp(12), dp(12), dp(12), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(28, 35, 32))
+                cornerRadius = dp(11).toFloat()
+                setStroke(dp(1), green)
+            }
+        }
+        content.addView(sampleColorButton, LinearLayout.LayoutParams(-1, -2).apply {
+            topMargin = dp(8)
+            bottomMargin = dp(5)
+        })
 
         fun addSlider(title: String, initial: Float, min: Float, max: Float, update: (Float) -> Unit) {
             val header = LinearLayout(this).apply {
@@ -5934,6 +6112,10 @@ class MainActivity : AppCompatActivity() {
                 android.view.WindowManager.LayoutParams.WRAP_CONTENT)
             setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
             attributes = attributes.apply { y = dp(10); dimAmount = 0.12f }
+        }
+        sampleColorButton.setOnClickListener {
+            dialog.dismiss()
+            startOverlayChromaColorSampling(clip)
         }
     }
 
