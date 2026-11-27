@@ -109,7 +109,9 @@ private data class ExportTextSnapshot(
     val positionY: Float,
     val rotation: Float,
     val zoomInDurationMs: Long,
-    val zoomOutDurationMs: Long
+    val zoomOutDurationMs: Long,
+    val zoomInMode: Int,
+    val zoomOutMode: Int
 )
 
 data class VideoProject(
@@ -4270,7 +4272,7 @@ class MainActivity : AppCompatActivity() {
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
         dreamyPreviewState.animationZoomScale = activeVideo?.let {
-            clipZoomScale(position - it.timelineStartMs, it.timelineDurationMs, it.zoomInDurationMs, it.zoomOutDurationMs)
+            clipZoomScale(position - it.timelineStartMs, it.timelineDurationMs, it.zoomInDurationMs, it.zoomOutDurationMs, it.zoomInMode, it.zoomOutMode)
         } ?: 1f
 
         // Transisi melewati satu frame hitam: klip kiri zoom + fade-out,
@@ -5437,7 +5439,7 @@ class MainActivity : AppCompatActivity() {
         view.alpha = clip.opacity.coerceIn(0f, 1f)
         view.pivotX = view.width / 2f
         view.pivotY = view.height / 2f
-        val zoomScale = clipZoomScale(currentTimelinePosition() - clip.startTimeMs, clip.durationMs, clip.zoomInDurationMs, clip.zoomOutDurationMs)
+        val zoomScale = clipZoomScale(currentTimelinePosition() - clip.startTimeMs, clip.durationMs, clip.zoomInDurationMs, clip.zoomOutDurationMs, clip.zoomInMode, clip.zoomOutMode)
         view.scaleX = clip.transformScale.coerceIn(0.2f, 4f) * zoomScale
         view.scaleY = clip.transformScale.coerceIn(0.2f, 4f) * zoomScale
         view.rotation = clip.rotationDegrees
@@ -7843,7 +7845,7 @@ class MainActivity : AppCompatActivity() {
     }
 
 
-    private fun clipZoomScale(localTimeMs: Long, durationMs: Long, zoomInMs: Long, zoomOutMs: Long): Float {
+    private fun clipZoomScale(localTimeMs: Long, durationMs: Long, zoomInMs: Long, zoomOutMs: Long, zoomInMode: Int = 0, zoomOutMode: Int = 0): Float {
         val duration = durationMs.coerceAtLeast(0L)
         val local = localTimeMs.coerceIn(0L, duration)
         val startScale = 0.2f
@@ -7852,12 +7854,15 @@ class MainActivity : AppCompatActivity() {
             return p * p * (3f - 2f * p)
         }
         val incoming = if (zoomInMs > 0L && local < zoomInMs) {
-            startScale + (1f - startScale) * ease(local.toFloat() / zoomInMs.toFloat())
+            val p = ease(local.toFloat() / zoomInMs.toFloat())
+            if (zoomInMode == 1) 2f - p else startScale + (1f - startScale) * p
         } else 1f
         val outgoing = if (zoomOutMs > 0L && local >= duration - zoomOutMs) {
-            1f - (1f - startScale) * ease((local - (duration - zoomOutMs)).toFloat() / zoomOutMs.toFloat())
+            val p = ease((local - (duration - zoomOutMs)).toFloat() / zoomOutMs.toFloat())
+            if (zoomOutMode == 1) 1f + p else 1f - (1f - startScale) * p
         } else 1f
-        return minOf(incoming, outgoing).coerceIn(startScale, 1f)
+        val combined = if (incoming > 1f || outgoing > 1f) maxOf(incoming, outgoing) else minOf(incoming, outgoing)
+        return combined.coerceIn(startScale, 2f)
     }
 
     private fun showClipAnimationPopup() {
@@ -8004,7 +8009,7 @@ class MainActivity : AppCompatActivity() {
             view.typeface = clip?.let { getLibraryTypeface(it.fontName, it.bold) } ?: Typeface.DEFAULT
             view.visibility = if (clip == null) View.GONE else View.VISIBLE
             val animatedScale = clip?.let {
-                it.scale * clipZoomScale(position - it.startTimeMs, it.durationMs, it.zoomInDurationMs, it.zoomOutDurationMs)
+                it.scale * clipZoomScale(position - it.startTimeMs, it.durationMs, it.zoomInDurationMs, it.zoomOutDurationMs, it.zoomInMode, it.zoomOutMode)
             } ?: 1f
             view.scaleX = animatedScale
             view.scaleY = animatedScale
@@ -8065,6 +8070,7 @@ class MainActivity : AppCompatActivity() {
                 put("scale", clip.scale); put("rotation", clip.rotation)
                 put("color", clip.color); put("opacity", clip.opacity); put("bold", clip.bold)
                 put("zoomInDurationMs", clip.zoomInDurationMs); put("zoomOutDurationMs", clip.zoomOutDurationMs)
+                put("zoomInMode", clip.zoomInMode); put("zoomOutMode", clip.zoomOutMode)
             })
         }
         return array.toString()
@@ -8146,7 +8152,9 @@ class MainActivity : AppCompatActivity() {
                     opacity = item.optDouble("opacity", 1.0).toFloat(),
                     bold = item.optBoolean("bold", true),
                     zoomInDurationMs = item.optLong("zoomInDurationMs", 0L).coerceAtLeast(0L),
-                    zoomOutDurationMs = item.optLong("zoomOutDurationMs", 0L).coerceAtLeast(0L)
+                    zoomOutDurationMs = item.optLong("zoomOutDurationMs", 0L).coerceAtLeast(0L),
+                    zoomInMode = item.optInt("zoomInMode", 0).coerceIn(0, 1),
+                    zoomOutMode = item.optInt("zoomOutMode", 0).coerceIn(0, 1)
                 )
                 textClipManager.clips.add(clip)
             }
@@ -9656,7 +9664,9 @@ class MainActivity : AppCompatActivity() {
                                                         globalMs - textClip.startTimeMs,
                                                         textClip.endTimeMs - textClip.startTimeMs,
                                                         textClip.zoomInDurationMs,
-                                                        textClip.zoomOutDurationMs
+                                                        textClip.zoomOutDurationMs,
+                                                        textClip.zoomInMode,
+                                                        textClip.zoomOutMode
                                                     )
                                                     textPaint.textSize = previewTextSize *
                                                         fontScale * textClip.scale.coerceIn(0.2f, 6f) * textZoom
