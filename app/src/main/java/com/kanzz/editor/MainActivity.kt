@@ -6137,10 +6137,6 @@ class MainActivity : AppCompatActivity() {
             addFlags(android.view.WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL)
             attributes = attributes.apply { y = dp(10); dimAmount = 0.12f }
         }
-        sampleColorButton.setOnClickListener {
-            dialog.dismiss()
-            startOverlayChromaColorSampling(clip)
-        }
     }
 
     private fun showOverlayVideoVolume(clip: OverlayVideoClip) {
