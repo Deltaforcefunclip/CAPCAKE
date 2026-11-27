@@ -4311,7 +4311,7 @@ class MainActivity : AppCompatActivity() {
         } else if (activeVideo != null && outgoingTransition != null) {
             val durationMs = outgoingTransition.durationMs.coerceIn(100L, 3000L)
                 .coerceAtMost(activeVideo.timelineDurationMs.coerceAtLeast(1L))
-            val localMs = (position - activeVideo.timelineStartMs).coerceAtLeast(0L)
+            val localMs = activeVideoLocalMs.coerceAtLeast(0L)
             val transitionStartMs = (activeVideo.timelineDurationMs - durationMs).coerceAtLeast(0L)
             if (localMs >= transitionStartMs && localMs < activeVideo.timelineDurationMs) {
                 val progress = ((localMs - transitionStartMs).toFloat() /
