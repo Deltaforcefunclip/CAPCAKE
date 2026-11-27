@@ -24,6 +24,7 @@ class DreamyPreviewState {
     @Volatile var pullInZoom: Float = 1f
     @Volatile var pullInBlur: Float = 0f
     @Volatile var pullInFade: Float = 0f
+    @Volatile var animationZoomScale: Float = 1f
 }
 
 /**
@@ -43,7 +44,12 @@ class DreamyGlEffect(
     private val colorGrading: ColorGrading = ColorGrading(),
     private val pullInStartUs: Long = -1L,
     private val pullInEndUs: Long = -1L,
-    private val pullInFadeIn: Boolean = false
+    private val pullInFadeIn: Boolean = false,
+    private val zoomInStartUs: Long = -1L,
+    private val zoomInEndUs: Long = -1L,
+    private val zoomOutStartUs: Long = -1L,
+    private val zoomOutEndUs: Long = -1L,
+    private val zoomStartScale: Float = 0.2f
 ) : GlEffect {
 
     override fun isNoOp(inputWidth: Int, inputHeight: Int): Boolean =
@@ -53,7 +59,8 @@ class DreamyGlEffect(
         DreamyShaderProgram(
             context, useHdr, intensity, glowSpread, warmth,
             startTimeUs, endTimeUs, previewState, effectMode, softFocus, colorGrading,
-            pullInStartUs, pullInEndUs, pullInFadeIn
+            pullInStartUs, pullInEndUs, pullInFadeIn,
+            zoomInStartUs, zoomInEndUs, zoomOutStartUs, zoomOutEndUs, zoomStartScale
         )
 }
 
@@ -72,7 +79,12 @@ class DreamyShaderProgram(
     private val colorGrading: ColorGrading = ColorGrading(),
     private val pullInStartUs: Long = -1L,
     private val pullInEndUs: Long = -1L,
-    private val pullInFadeIn: Boolean = false
+    private val pullInFadeIn: Boolean = false,
+    private val zoomInStartUs: Long = -1L,
+    private val zoomInEndUs: Long = -1L,
+    private val zoomOutStartUs: Long = -1L,
+    private val zoomOutEndUs: Long = -1L,
+    private val zoomStartScale: Float = 0.2f
 ) : BaseGlShaderProgram(useHdr, 3) {
 
     private val glProgram = GlProgram(
@@ -144,6 +156,7 @@ class DreamyShaderProgram(
             val pullZoom: Float
             val pullBlur: Float
             val pullFade: Float
+            val animationZoom: Float
             if (previewState != null) {
                 liveIntensity = previewState.intensity.coerceIn(0f, 1f)
                 liveSpread = previewState.glowSpread.coerceIn(0f, 1f)
@@ -154,6 +167,7 @@ class DreamyShaderProgram(
                 pullZoom = previewState.pullInZoom.coerceIn(1f, 2f)
                 pullBlur = previewState.pullInBlur.coerceIn(0f, 1f)
                 pullFade = previewState.pullInFade.coerceIn(0f, 1f)
+                animationZoom = previewState.animationZoomScale.coerceIn(zoomStartScale, 1f)
                 active = liveIntensity > 0.001f
             } else {
                 liveIntensity = effectIntensity
@@ -173,6 +187,17 @@ class DreamyShaderProgram(
                     pullBlur = 0f
                     pullFade = 0f
                 }
+                val inScale = if (zoomInEndUs > zoomInStartUs && presentationTimeUs < zoomInEndUs) {
+                    val p = ((presentationTimeUs - zoomInStartUs).toFloat() / (zoomInEndUs - zoomInStartUs).toFloat()).coerceIn(0f, 1f)
+                    val eased = p * p * (3f - 2f * p)
+                    zoomStartScale + (1f - zoomStartScale) * eased
+                } else 1f
+                val outScale = if (zoomOutEndUs > zoomOutStartUs && presentationTimeUs >= zoomOutStartUs) {
+                    val p = ((presentationTimeUs - zoomOutStartUs).toFloat() / (zoomOutEndUs - zoomOutStartUs).toFloat()).coerceIn(0f, 1f)
+                    val eased = p * p * (3f - 2f * p)
+                    1f - (1f - zoomStartScale) * eased
+                } else 1f
+                animationZoom = minOf(inScale, outScale)
                 active = presentationTimeUs >= startTimeUs && presentationTimeUs < endTimeUs
             }
 
@@ -180,6 +205,7 @@ class DreamyShaderProgram(
             glProgram.setSamplerTexIdUniform("sTexture", inputTexId, 0)
             glProgram.setFloatUniform("uIntensity", if (active) liveIntensity else 0f)
             glProgram.setFloatUniform("uPullInZoom", pullZoom)
+            glProgram.setFloatUniform("uAnimationZoom", animationZoom)
             glProgram.setFloatUniform("uPullInBlur", pullBlur)
             glProgram.setFloatUniform("uPullInFade", pullFade)
             glProgram.setFloatUniform("uHasColorGrade", if (grade.isDefault) 0f else 1f)
@@ -230,7 +256,7 @@ class DreamyShaderProgram(
             glProgram.setFloatUniform("uMagentaLuminance", grade.magentaLuminance)
             glProgram.bindAttributesAndUniforms()
             GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
-            val effectActiveForDiagnostic = (active && liveIntensity > 0.001f) || !grade.isDefault || pullBlur > 0.001f || pullFade > 0.001f || kotlin.math.abs(pullZoom - 1f) > 0.001f
+            val effectActiveForDiagnostic = (active && liveIntensity > 0.001f) || !grade.isDefault || pullBlur > 0.001f || pullFade > 0.001f || kotlin.math.abs(pullZoom - 1f) > 0.001f || kotlin.math.abs(animationZoom - 1f) > 0.001f
             recordFrameTiming(System.nanoTime() - frameStartNs, effectActiveForDiagnostic)
             CapcakeGlDiagnostics.record("DREAMY", System.nanoTime() - frameStartNs, effectActiveForDiagnostic)
             // Hindari glGetError pada setiap frame: pemeriksaan ini dapat memaksa sinkronisasi CPU-GPU.
