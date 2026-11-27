@@ -5512,6 +5512,14 @@ class MainActivity : AppCompatActivity() {
         includeCrop: Boolean = true
     ): List<androidx.media3.common.Effect> {
         val effects = mutableListOf<androidx.media3.common.Effect>()
+        // Chroma key harus membaca warna sumber asli sebelum penyesuaian warna.
+        // Jika saturasi diterapkan lebih dulu, hijau berubah abu-abu sehingga
+        // deteksi key gagal dan sisa objek tampak hitam kehijauan.
+        if (clip.chromaKeyEnabled) {
+            effects.add(chromaEffect ?: ChromaKeyGlEffect(
+                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
+            ))
+        }
         if (kotlin.math.abs(clip.brightness) > 0.0001f ||
             kotlin.math.abs(clip.contrast - 1f) > 0.0001f ||
             kotlin.math.abs(clip.saturation - 1f) > 0.0001f
@@ -5528,11 +5536,6 @@ class MainActivity : AppCompatActivity() {
             if (cropLeft < cropRight && cropBottom < cropTop) {
                 effects.add(Crop(cropLeft, cropRight, cropBottom, cropTop))
             }
-        }
-        if (clip.chromaKeyEnabled) {
-            effects.add(chromaEffect ?: ChromaKeyGlEffect(
-                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
-            ))
         }
         return effects
     }
@@ -5763,35 +5766,59 @@ class MainActivity : AppCompatActivity() {
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            setPadding(dp(20), dp(12), dp(20), dp(8))
+            setPadding(dp(18), dp(14), dp(18), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(18, 18, 18))
+                cornerRadius = dp(20).toFloat()
+                setStroke(dp(1), Color.rgb(55, 55, 55))
+            }
         }
+        content.addView(TextView(this).apply {
+            text = "CHROMA KEY"
+            textSize = 15f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+        })
+        content.addView(TextView(this).apply {
+            text = "Hilangkan warna latar dari clip overlay"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(Color.LTGRAY)
+            setPadding(0, dp(3), 0, dp(12))
+        })
+
         val enabled = CheckBox(this).apply {
             text = "Aktifkan Chroma Key"
+            textSize = 13f
             setTextColor(Color.WHITE)
+            buttonTintList = android.content.res.ColorStateList.valueOf(green)
             isChecked = oldEnabled
         }
         content.addView(enabled)
 
-        val colorGroup = RadioGroup(this).apply { orientation = RadioGroup.VERTICAL }
-        val colors = listOf(
-            "Hijau" to Color.GREEN,
-            "Biru" to Color.BLUE,
-            "Magenta" to Color.MAGENTA
-        )
+        content.addView(TextView(this).apply {
+            text = "WARNA LATAR"
+            textSize = 11f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(green)
+            setPadding(0, dp(10), 0, dp(5))
+        })
+        val colorGroup = RadioGroup(this).apply { orientation = RadioGroup.HORIZONTAL }
+        val colors = listOf("Hijau" to Color.GREEN, "Biru" to Color.BLUE, "Magenta" to Color.MAGENTA)
         var selectedColor = oldColor
-        colors.forEachIndexed { index, entry ->
+        colors.forEach { entry ->
             val radio = RadioButton(this).apply {
                 id = View.generateViewId()
                 text = entry.first
+                textSize = 12f
                 setTextColor(Color.WHITE)
+                buttonTintList = android.content.res.ColorStateList.valueOf(green)
                 tag = entry.second
                 isChecked = oldColor == entry.second
             }
-            colorGroup.addView(radio)
+            colorGroup.addView(radio, RadioGroup.LayoutParams(0, dp(42), 1f))
             if (radio.isChecked) colorGroup.check(radio.id)
-            if (index == 0 && colors.none { it.second == oldColor }) {
-                // Warna kustom yang belum dikenali tetap tersimpan sampai pilihan diganti.
-            }
         }
         colorGroup.setOnCheckedChangeListener { group, checkedId ->
             val selected = group.findViewById<RadioButton>(checkedId)
@@ -5799,26 +5826,43 @@ class MainActivity : AppCompatActivity() {
             clip.chromaKeyColor = selectedColor
             updateOverlayChromaKeyShader(clip)
         }
-        content.addView(TextView(this).apply {
-            text = "Warna layar"; setTextColor(Color.LTGRAY); textSize = 12f
-        })
         content.addView(colorGroup)
 
-        fun addSlider(title: String, initial: Float, update: (Float) -> Unit) {
-            val label = TextView(this).apply {
-                setTextColor(Color.WHITE); textSize = 13f
+        fun addSlider(title: String, initial: Float, min: Float, max: Float, update: (Float) -> Unit) {
+            val header = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
             }
+            val label = TextView(this).apply {
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(Color.WHITE)
+            }
+            val value = TextView(this).apply {
+                textSize = 12f
+                typeface = Typeface.DEFAULT_BOLD
+                setTextColor(green)
+                gravity = Gravity.END
+            }
+            header.addView(label, LinearLayout.LayoutParams(0, dp(25), 1f))
+            header.addView(value, LinearLayout.LayoutParams(-2, dp(25)))
+            content.addView(header)
             val bar = SeekBar(this).apply {
                 max = 100
-                progress = (initial * 100f).toInt().coerceIn(0, 100)
+                progressTintList = android.content.res.ColorStateList.valueOf(green)
+                thumbTintList = android.content.res.ColorStateList.valueOf(green)
+                progress = (((initial - min) / (max - min)) * 100f).toInt().coerceIn(0, 100)
             }
-            fun updateLabel(value: Int) {
-                label.text = "$title: ${String.format(java.util.Locale.US, "%.2f", value / 100f)}"
+            fun updateLabel(progress: Int) {
+                val v = min + (max - min) * progress / 100f
+                label.text = title
+                value.text = String.format(java.util.Locale.US, "%.2f", v)
             }
             updateLabel(bar.progress)
             bar.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
                 override fun onProgressChanged(seekBar: SeekBar?, progress: Int, fromUser: Boolean) {
-                    updateLabel(progress); update(progress / 100f)
+                    updateLabel(progress)
+                    update(min + (max - min) * progress / 100f)
                     clip.chromaKeyEnabled = enabled.isChecked
                     clip.chromaKeyColor = selectedColor
                     updateOverlayChromaKeyShader(clip)
@@ -5826,46 +5870,71 @@ class MainActivity : AppCompatActivity() {
                 override fun onStartTrackingTouch(seekBar: SeekBar?) {}
                 override fun onStopTrackingTouch(seekBar: SeekBar?) {}
             })
-            content.addView(label); content.addView(bar)
+            content.addView(bar)
+            content.addView(View(this), LinearLayout.LayoutParams(-1, dp(6)))
         }
-        addSlider("Ambang warna", oldThreshold) { clip.chromaKeyThreshold = it.coerceIn(0.01f, 1f) }
-        addSlider("Kelembutan tepi", oldSoftness) { clip.chromaKeySoftness = it.coerceIn(0.001f, 0.5f) }
+        addSlider("Ambang warna", oldThreshold, 0.01f, 1f) { clip.chromaKeyThreshold = it }
+        addSlider("Kelembutan tepi", oldSoftness, 0.001f, 0.5f) { clip.chromaKeySoftness = it }
 
         enabled.setOnCheckedChangeListener { _, checked ->
             clip.chromaKeyEnabled = checked
             clip.chromaKeyColor = selectedColor
-            // Toggle on/off memang mengubah pipeline, tetapi tidak melakukan seek video.
             syncOverlayVideoPreview()
         }
 
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Chroma Key")
-            .setView(ScrollView(this).apply { addView(content) })
-            .setNegativeButton("Batal") { _, _ ->
-                clip.chromaKeyEnabled = oldEnabled
-                clip.chromaKeyColor = oldColor
-                clip.chromaKeyThreshold = oldThreshold
-                clip.chromaKeySoftness = oldSoftness
-                undoStack.removeLastOrNull()
-                updateOverlayChromaKeyShader(clip)
-                syncOverlayVideoPreview()
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            setPadding(0, dp(8), 0, 0)
+        }
+        fun action(label: String, primary: Boolean) = TextView(this).apply {
+            text = label
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(if (primary) Color.rgb(15, 15, 15) else Color.LTGRAY)
+            setPadding(dp(18), dp(10), dp(18), dp(10))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(if (primary) green else Color.rgb(38, 38, 38))
+                cornerRadius = dp(10).toFloat()
             }
-            .setPositiveButton("Terapkan") { _, _ ->
-                clip.chromaKeyEnabled = enabled.isChecked
-                clip.chromaKeyColor = selectedColor
-                syncOverlayVideoPreview()
-                saveCurrentProject()
-            }
-            .setOnCancelListener {
-                clip.chromaKeyEnabled = oldEnabled
-                clip.chromaKeyColor = oldColor
-                clip.chromaKeyThreshold = oldThreshold
-                clip.chromaKeySoftness = oldSoftness
-                undoStack.removeLastOrNull()
-                updateOverlayChromaKeyShader(clip)
-                syncOverlayVideoPreview()
-            }
-            .show()
+        }
+        val cancel = action("BATAL", false)
+        val apply = action("TERAPKAN", true)
+        actions.addView(cancel, LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(8) })
+        actions.addView(apply)
+        content.addView(actions)
+
+        val dialog = androidx.appcompat.app.AlertDialog.Builder(this).setView(
+            ScrollView(this).apply { setPadding(dp(2), 0, dp(2), 0); addView(content) }
+        ).create()
+        dialog.setCanceledOnTouchOutside(false)
+        fun restoreOriginal() {
+            clip.chromaKeyEnabled = oldEnabled
+            clip.chromaKeyColor = oldColor
+            clip.chromaKeyThreshold = oldThreshold
+            clip.chromaKeySoftness = oldSoftness
+            undoStack.removeLastOrNull()
+            updateOverlayChromaKeyShader(clip)
+            syncOverlayVideoPreview()
+        }
+        cancel.setOnClickListener { restoreOriginal(); dialog.dismiss() }
+        apply.setOnClickListener {
+            clip.chromaKeyEnabled = enabled.isChecked
+            clip.chromaKeyColor = selectedColor
+            syncOverlayVideoPreview()
+            saveCurrentProject()
+            dialog.dismiss()
+        }
+        dialog.setOnCancelListener { restoreOriginal() }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout(android.view.WindowManager.LayoutParams.MATCH_PARENT,
+                android.view.WindowManager.LayoutParams.WRAP_CONTENT)
+            setGravity(Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL)
+            attributes = attributes.apply { y = dp(10); dimAmount = 0.12f }
+        }
     }
 
     private fun showOverlayVideoVolume(clip: OverlayVideoClip) {
@@ -9437,10 +9506,8 @@ class MainActivity : AppCompatActivity() {
                             add(Crop(cropLeft, cropRight, cropBottom, cropTop))
                         }
                     }
-                    if (kotlin.math.abs(overlayClip.brightness) > 0.0001f ||
-                        kotlin.math.abs(overlayClip.contrast - 1f) > 0.0001f ||
-                        kotlin.math.abs(overlayClip.saturation - 1f) > 0.0001f
-                    ) add(buildOverlayColorMatrix(overlayClip))
+                    // Urutan harus sama dengan preview: key warna sumber dulu,
+                    // baru brightness/contrast/saturation pada foreground tersisa.
                     if (overlayClip.chromaKeyEnabled) add(
                         ChromaKeyGlEffect(
                             overlayClip.chromaKeyColor,
@@ -9448,6 +9515,10 @@ class MainActivity : AppCompatActivity() {
                             overlayClip.chromaKeySoftness
                         )
                     )
+                    if (kotlin.math.abs(overlayClip.brightness) > 0.0001f ||
+                        kotlin.math.abs(overlayClip.contrast - 1f) > 0.0001f ||
+                        kotlin.math.abs(overlayClip.saturation - 1f) > 0.0001f
+                    ) add(buildOverlayColorMatrix(overlayClip))
                     // Jangan paksa layer overlay melewati Presentation output kedua.
                     // Ukuran kanvas akhir sudah ditentukan oleh video utama pada compositor.
                     // Resize kedua dengan SCALE_TO_FIT membuat isi overlay mengecil lagi.
