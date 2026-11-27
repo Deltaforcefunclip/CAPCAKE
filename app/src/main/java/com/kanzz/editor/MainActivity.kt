@@ -9477,6 +9477,20 @@ class MainActivity : AppCompatActivity() {
                                     }
                                 }
 
+                                if (clip.zoomInDurationMs > 0L || clip.zoomOutDurationMs > 0L) {
+                                    val clipStartUs = clip.timelineStartMs * 1000L
+                                    val clipEndUs = clip.timelineEndMs * 1000L
+                                    val inUs = clip.zoomInDurationMs.coerceAtMost(clip.timelineDurationMs) * 1000L
+                                    val outUs = clip.zoomOutDurationMs.coerceAtMost(clip.timelineDurationMs) * 1000L
+                                    add(DreamyGlEffect(
+                                        intensity = 0f, glowSpread = 0.35f, warmth = 0.5f,
+                                        zoomInStartUs = clipStartUs,
+                                        zoomInEndUs = if (inUs > 0L) clipStartUs + inUs else -1L,
+                                        zoomOutStartUs = if (outUs > 0L) clipEndUs - outUs else -1L,
+                                        zoomOutEndUs = if (outUs > 0L) clipEndUs else -1L
+                                    ))
+                                }
+
                                 if (dreamyIntensity > 0.001f) add(buildDreamyColorMatrix(dreamyIntensity))
 
                                 // Color grading per-klip diproses pada GPU, sama seperti preview.
@@ -9634,8 +9648,14 @@ class MainActivity : AppCompatActivity() {
                                                     textPaint.alpha = (Color.alpha(textClip.color) *
                                                         textClip.opacity.coerceIn(0f, 1f)).toInt()
                                                     textPaint.typeface = textClip.typeface
+                                                    val textZoom = clipZoomScale(
+                                                        globalMs - textClip.startTimeMs,
+                                                        textClip.endTimeMs - textClip.startTimeMs,
+                                                        textClip.zoomInDurationMs,
+                                                        textClip.zoomOutDurationMs
+                                                    )
                                                     textPaint.textSize = previewTextSize *
-                                                        fontScale * textClip.scale.coerceIn(0.2f, 6f)
+                                                        fontScale * textClip.scale.coerceIn(0.2f, 6f) * textZoom
                                                     textPaint.setShadowLayer(
                                                         3f * fontScale, 1f * fontScale,
                                                         2f * fontScale, Color.BLACK
@@ -9914,6 +9934,19 @@ class MainActivity : AppCompatActivity() {
                         if (cropLeft < cropRight && cropBottom < cropTop) {
                             add(Crop(cropLeft, cropRight, cropBottom, cropTop))
                         }
+                    }
+                    if (overlayClip.zoomInDurationMs > 0L || overlayClip.zoomOutDurationMs > 0L) {
+                        val startUs = overlayStart * 1000L
+                        val endUs = (overlayStart + overlayClip.durationMs) * 1000L
+                        val inUs = overlayClip.zoomInDurationMs.coerceAtMost(overlayClip.durationMs) * 1000L
+                        val outUs = overlayClip.zoomOutDurationMs.coerceAtMost(overlayClip.durationMs) * 1000L
+                        overlayEffects.add(DreamyGlEffect(
+                            intensity = 0f, glowSpread = 0.35f, warmth = 0.5f,
+                            zoomInStartUs = startUs,
+                            zoomInEndUs = if (inUs > 0L) startUs + inUs else -1L,
+                            zoomOutStartUs = if (outUs > 0L) endUs - outUs else -1L,
+                            zoomOutEndUs = if (outUs > 0L) endUs else -1L
+                        ))
                     }
                     // Jangan paksa layer overlay melewati Presentation output kedua.
                     // Ukuran kanvas akhir sudah ditentukan oleh video utama pada compositor.
