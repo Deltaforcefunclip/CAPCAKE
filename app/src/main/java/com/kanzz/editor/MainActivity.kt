@@ -5826,6 +5826,22 @@ class MainActivity : AppCompatActivity() {
             }
         }
         samplingLayer.addView(hint, FrameLayout.LayoutParams(-1, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL))
+        val cancelSampling = TextView(this).apply {
+            text = "BATAL"
+            textSize = 12f
+            typeface = Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setPadding(dp(22), dp(12), dp(22), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(0xD91A1A1A.toInt())
+                cornerRadius = dp(12).toFloat()
+                setStroke(dp(1), Color.LTGRAY)
+            }
+        }
+        samplingLayer.addView(cancelSampling, FrameLayout.LayoutParams(-2, -2, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+            bottomMargin = dp(12)
+        })
         samplingLayer.alpha = 0f
         previewFrameContainer.addView(
             samplingLayer,
@@ -5838,6 +5854,11 @@ class MainActivity : AppCompatActivity() {
             finished = true
             (samplingLayer.parent as? android.view.ViewGroup)?.removeView(samplingLayer)
             if (restore) restorePreview()
+        }
+
+        cancelSampling.setOnClickListener {
+            finishSampling(restore = true)
+            Toast.makeText(this, "Pengambilan sampel dibatalkan.", Toast.LENGTH_SHORT).show()
         }
 
         samplingLayer.setOnTouchListener { _, event ->
