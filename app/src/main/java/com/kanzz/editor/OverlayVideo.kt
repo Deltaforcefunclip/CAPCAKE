@@ -172,7 +172,8 @@ class OverlayVideoTrackView(
     private val onSelect: (OverlayVideoClip?) -> Unit,
     private val onEditStart: () -> Unit,
     private val onChanged: () -> Unit,
-    private val onTimelineScrolled: (Long) -> Unit
+    private val onTimelineScrolled: (Long) -> Unit,
+    private val onClipTapped: (OverlayVideoClip) -> Unit = {}
 ) : View(context) {
     private val density = resources.displayMetrics.density
     private val rowHeight = 42f * density
@@ -324,6 +325,13 @@ class OverlayVideoTrackView(
             MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
                 gestureHandler.removeCallbacks(longPressDrag)
                 if (dragging) runCatching { onChanged() }
+                val tappedClip = touched
+                val isCleanTap = event.actionMasked == MotionEvent.ACTION_UP &&
+                    tappedClip != null && !dragging && !panningTimeline &&
+                    !movedBeforeLongPress &&
+                    kotlin.math.abs(event.x - downX) <= touchSlop &&
+                    kotlin.math.abs(event.y - downY) <= touchSlop
+                if (isCleanTap) tappedClip?.let { onClipTapped(it) }
                 parent?.requestDisallowInterceptTouchEvent(false)
                 touched = null
                 dragging = false
