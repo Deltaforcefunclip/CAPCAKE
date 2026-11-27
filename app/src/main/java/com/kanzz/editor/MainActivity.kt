@@ -7907,7 +7907,7 @@ class MainActivity : AppCompatActivity() {
                 })
             }
             val scroll=ScrollView(this).apply { isVerticalScrollBarEnabled=true; addView(group) }
-            col.addView(scroll,LinearLayout.LayoutParams(-1,dp(138)))
+            col.addView(scroll,LinearLayout.LayoutParams(-1,dp(100)))
             tables.addView(col,LinearLayout.LayoutParams(0,-2,1f).apply { if(title=="MASUK") marginEnd=dp(5) else marginStart=dp(5) })
             return group
         }
