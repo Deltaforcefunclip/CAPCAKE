@@ -198,7 +198,7 @@ class DreamyShaderProgram(
                 val inScale = if (zoomInEndUs > zoomInStartUs && presentationTimeUs < zoomInEndUs) {
                     val p = ((presentationTimeUs - zoomInStartUs).toFloat() / (zoomInEndUs - zoomInStartUs).toFloat()).coerceIn(0f, 1f)
                     val eased = p * p * (3f - 2f * p)
-                    if (zoomInMode == 1) 1f + (1f - zoomStartScale) * eased else zoomStartScale + (1f - zoomStartScale) * eased
+                    if (zoomInMode == 1) 2f - eased else zoomStartScale + (1f - zoomStartScale) * eased
                 } else 1f
                 val outScale = if (zoomOutEndUs > zoomOutStartUs && presentationTimeUs >= zoomOutStartUs) {
                     val p = ((presentationTimeUs - zoomOutStartUs).toFloat() / (zoomOutEndUs - zoomOutStartUs).toFloat()).coerceIn(0f, 1f)
