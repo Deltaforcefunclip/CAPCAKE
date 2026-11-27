@@ -175,12 +175,16 @@ class VideoClipManager {
         val firstDuration = (timelineOffset * original.speed).toLong()
             .coerceIn(1L, original.durationMs - 1L)
         val secondDuration = original.durationMs - firstDuration
+        val exitZoomDuration = original.zoomOutDurationMs
         original.durationMs = firstDuration
+        original.zoomOutDurationMs = 0L
 
         val second = original.copy(
             id = UUID.randomUUID().toString(),
             sourceStartMs = original.sourceStartMs + firstDuration,
-            durationMs = secondDuration
+            durationMs = secondDuration,
+            zoomInDurationMs = 0L,
+            zoomOutDurationMs = exitZoomDuration
         )
         clips.add(index + 1, second)
         transitions.add(
