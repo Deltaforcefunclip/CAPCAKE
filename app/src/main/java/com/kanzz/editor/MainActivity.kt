@@ -4266,13 +4266,21 @@ class MainActivity : AppCompatActivity() {
             "Cahaya Lembut" -> 2f
             else -> 0f
         }
-        val activeVideo = videoClipManager.clips.firstOrNull {
-            position >= it.timelineStartMs && position < it.timelineEndMs
-        } ?: videoClipManager.clips.lastOrNull()?.takeIf { position >= it.timelineEndMs }
+        // Ambil clip langsung dari PlaybackGroup/clock sumber aktif.
+        // currentTimelinePosition() dapat tertahan pada batas clip saat playlist
+        // memakai proxy atau beberapa clip digabung; itu membuat zoom clip pertama
+        // terbawa ke clip berikutnya. Clock sumber memastikan state zoom dihitung
+        // ulang dari nol untuk setiap clip yang benar-benar sedang diputar.
+        val activeVideo = activeVideoClip()
+        val activeVideoLocalMs = activeVideo?.let { clip ->
+            val sourcePosition = activeClipSourcePosition(clip)
+            ((sourcePosition - clip.sourceStartMs).coerceAtLeast(0L) /
+                clip.speed.coerceIn(0.25f, 4f)).toLong().coerceIn(0L, clip.timelineDurationMs)
+        } ?: 0L
         dreamyPreviewState.colorGrading = liveColorGradingPreview
             ?: activeVideo?.colorGrading ?: ColorGrading()
         dreamyPreviewState.animationZoomScale = activeVideo?.let {
-            clipZoomScale(position - it.timelineStartMs, it.timelineDurationMs, it.zoomInDurationMs, it.zoomOutDurationMs, it.zoomInMode, it.zoomOutMode)
+            clipZoomScale(activeVideoLocalMs, it.timelineDurationMs, it.zoomInDurationMs, it.zoomOutDurationMs, it.zoomInMode, it.zoomOutMode)
         } ?: 1f
 
         // Transisi melewati satu frame hitam: klip kiri zoom + fade-out,
@@ -4294,7 +4302,7 @@ class MainActivity : AppCompatActivity() {
         if (activeVideo != null && incomingTransition != null) {
             val durationMs = incomingTransition.durationMs.coerceIn(100L, 3000L)
                 .coerceAtMost(activeVideo.timelineDurationMs.coerceAtLeast(1L))
-            val localMs = (position - activeVideo.timelineStartMs).coerceAtLeast(0L)
+            val localMs = activeVideoLocalMs.coerceAtLeast(0L)
             if (localMs < durationMs) {
                 val progress = (localMs.toFloat() / durationMs.toFloat()).coerceIn(0f, 1f)
                 val eased = progress * progress * (3f - 2f * progress)
@@ -4335,11 +4343,10 @@ class MainActivity : AppCompatActivity() {
         val transitionActive = dreamyPreviewState.pullInFade > 0.001f ||
             dreamyPreviewState.pullInBlur > 0.001f ||
             dreamyPreviewState.pullInZoom > 1.001f
-        val zoomActive = videoClipManager.clips.any { clip ->
-            val position = currentTimelinePosition()
-            position >= clip.timelineStartMs && position < clip.timelineEndMs &&
-                (clip.zoomInDurationMs > 0L || clip.zoomOutDurationMs > 0L)
-        }
+        val previewClip = activeVideoClip()
+        val zoomActive = previewClip?.let {
+            it.zoomInDurationMs > 0L || it.zoomOutDurationMs > 0L
+        } == true
         val visualShaderActive = gradeActive || effectActive || transitionActive || zoomActive
         val signature = "visual=" + visualShaderActive + ";zoom=" + zoomActive
         if (signature == previewVisualPipelineSignature) return
