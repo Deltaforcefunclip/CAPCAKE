@@ -6563,9 +6563,6 @@ class MainActivity : AppCompatActivity() {
                     updateToolMenu()
                 },
                 onEditStarted = { pushUndoSnapshot() },
-                onClipTapped = { clip ->
-                    navigateToLayerClipBoundary(clip.startTimeMs, clip.endTimeMs)
-                },
                 onChanged = { saveCurrentProject(); invalidateEffectTrackViews() },
                 onClipDrag = { clip, rawY ->
                     val targetLane = (0 until thisEffectTracksContainer.childCount)
