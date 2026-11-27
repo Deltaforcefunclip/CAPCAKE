@@ -9466,7 +9466,9 @@ class MainActivity : AppCompatActivity() {
                                         zoomInStartUs = clipStartUs,
                                         zoomInEndUs = if (inUs > 0L) clipStartUs + inUs else -1L,
                                         zoomOutStartUs = if (outUs > 0L) clipEndUs - outUs else -1L,
-                                        zoomOutEndUs = if (outUs > 0L) clipEndUs else -1L
+                                        zoomOutEndUs = if (outUs > 0L) clipEndUs else -1L,
+                                        zoomInMode = clip.zoomInMode,
+                                        zoomOutMode = clip.zoomOutMode
                                     ))
                                 }
 
@@ -9577,7 +9579,9 @@ class MainActivity : AppCompatActivity() {
                                         positionY = text.positionY,
                                         rotation = text.rotation,
                                         zoomInDurationMs = text.zoomInDurationMs,
-                                        zoomOutDurationMs = text.zoomOutDurationMs
+                                        zoomOutDurationMs = text.zoomOutDurationMs,
+                                        zoomInMode = text.zoomInMode,
+                                        zoomOutMode = text.zoomOutMode
                                     )
                                 }
                                 if (exportTextSnapshot.isNotEmpty()) {
@@ -9926,7 +9930,9 @@ class MainActivity : AppCompatActivity() {
                             zoomInStartUs = startUs,
                             zoomInEndUs = if (inUs > 0L) startUs + inUs else -1L,
                             zoomOutStartUs = if (outUs > 0L) endUs - outUs else -1L,
-                            zoomOutEndUs = if (outUs > 0L) endUs else -1L
+                            zoomOutEndUs = if (outUs > 0L) endUs else -1L,
+                            zoomInMode = overlayClip.zoomInMode,
+                            zoomOutMode = overlayClip.zoomOutMode
                         ))
                     }
                     // Jangan paksa layer overlay melewati Presentation output kedua.
