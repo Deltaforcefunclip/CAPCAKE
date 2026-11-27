@@ -5848,7 +5848,7 @@ class MainActivity : AppCompatActivity() {
             header.addView(value, LinearLayout.LayoutParams(-2, dp(25)))
             content.addView(header)
             val bar = SeekBar(this).apply {
-                max = 100
+                this.max = 100
                 progressTintList = android.content.res.ColorStateList.valueOf(green)
                 thumbTintList = android.content.res.ColorStateList.valueOf(green)
                 progress = (((initial - min) / (max - min)) * 100f).toInt().coerceIn(0, 100)
