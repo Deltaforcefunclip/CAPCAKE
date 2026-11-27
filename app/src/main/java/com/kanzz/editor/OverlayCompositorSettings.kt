@@ -20,7 +20,8 @@ data class OverlayCompositorLayer(
     val backgroundAnchorX: Float,
     val backgroundAnchorY: Float,
     val activeStartTimeUs: Long,
-    val activeEndTimeUs: Long
+    val activeEndTimeUs: Long,
+    val opacity: Float = 1f
 )
 
 @UnstableApi
@@ -56,7 +57,7 @@ class CapcakeVideoCompositorSettings(
         }
 
         return StaticOverlaySettings.Builder()
-            .setAlphaScale(1f)
+            .setAlphaScale(layer.opacity.coerceIn(0f, 1f))
             .setScale(layer.scaleX, layer.scaleY)
             .setRotationDegrees(layer.rotationDegrees)
             .setBackgroundFrameAnchor(layer.backgroundAnchorX, layer.backgroundAnchorY)
