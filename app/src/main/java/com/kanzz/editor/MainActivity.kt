@@ -5515,11 +5515,12 @@ class MainActivity : AppCompatActivity() {
         // Chroma key harus membaca warna sumber asli sebelum penyesuaian warna.
         // Jika saturasi diterapkan lebih dulu, hijau berubah abu-abu sehingga
         // deteksi key gagal dan sisa objek tampak hitam kehijauan.
-        if (clip.chromaKeyEnabled) {
-            effects.add(chromaEffect ?: ChromaKeyGlEffect(
-                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
-            ))
-        }
+        // Keep one persistent shader in the preview pipeline. Enable/disable
+        // and sampled-color changes are uniform updates, not decoder rebuilds.
+        effects.add(chromaEffect ?: ChromaKeyGlEffect(
+            clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
+            clip.chromaKeyEnabled
+        ))
         if (kotlin.math.abs(clip.brightness) > 0.0001f ||
             kotlin.math.abs(clip.contrast - 1f) > 0.0001f ||
             kotlin.math.abs(clip.saturation - 1f) > 0.0001f
@@ -5608,7 +5609,7 @@ class MainActivity : AppCompatActivity() {
 
             // Crop tidak lagi menjadi bagian signature efek preview.
             // Perubahan crop cukup memperbarui Matrix TextureView, bukan memasang ulang efek.
-            val effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
+            val effectSignature = "${clip.brightness}:${clip.contrast}:${clip.saturation}"
             val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
             if (session.preparedClipId != clip.id) {
                 val itemBuilder = MediaItem.Builder().setUri(Uri.parse(clip.sourceUri))
@@ -5625,9 +5626,10 @@ class MainActivity : AppCompatActivity() {
                 val item = itemBuilder.build()
                 try {
                     overlayPlayer.setMediaItem(item, localPosition)
-                    session.chromaKeyEffect = if (clip.chromaKeyEnabled) {
-                        ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
-                    } else null
+                    session.chromaKeyEffect = ChromaKeyGlEffect(
+                        clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
+                        clip.chromaKeyEnabled
+                    )
                     overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
                     session.effectSignature = effectSignature
                     overlayPlayer.volume = clip.volume.coerceIn(0f, 2f)
@@ -5645,14 +5647,15 @@ class MainActivity : AppCompatActivity() {
                     return@forEach
                 }
             } else if (!session.failed) {
+                session.chromaKeyEffect?.updateParameters(
+                    clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
+                    clip.chromaKeyEnabled
+                )
                 if (session.effectSignature != effectSignature) {
                     runCatching {
-                        session.chromaKeyEffect = if (clip.chromaKeyEnabled) {
-                            ChromaKeyGlEffect(clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness)
-                        } else null
                         overlayPlayer.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
                         session.effectSignature = effectSignature
-                        recordPlaybackDiagnostic("OVERLAY_EFFECT_UPDATED clip=${clip.id.take(8)} enabled=${clip.chromaKeyEnabled}")
+                        recordPlaybackDiagnostic("OVERLAY_COLOR_EFFECT_UPDATED clip=${clip.id.take(8)}")
                     }.onFailure {
                         recordPlaybackDiagnostic("OVERLAY_EFFECT_ERROR clip=${clip.id.take(8)} ${it.javaClass.simpleName}: ${it.message}")
                     }
@@ -5743,7 +5746,8 @@ class MainActivity : AppCompatActivity() {
     private fun updateOverlayChromaKeyShader(clip: OverlayVideoClip) {
         val session = overlayPreviewSessions[clip.id] ?: return
         session.chromaKeyEffect?.updateParameters(
-            clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
+            clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
+            clip.chromaKeyEnabled
         )
         // Saat pause tidak ada frame baru untuk menggambar uniform yang berubah.
         // Refresh frame terakhir secara terbatas, tanpa memasang ulang efek/pipeline.
@@ -5781,15 +5785,12 @@ class MainActivity : AppCompatActivity() {
             clip.contrast = oldContrast
             clip.saturation = oldSaturation
             session.chromaKeyEffect?.updateParameters(
-                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
+                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
+                clip.chromaKeyEnabled
             )
-            runCatching {
-                session.player.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
-                session.effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
-                if (!player.isPlaying && session.player.playbackState == Player.STATE_READY) {
-                    session.player.seekTo(session.player.currentPosition)
-                }
-            }
+            // The persistent GL effect reads updated uniforms on the next frame.
+            // Do not replace effects or seek while restoring the preview.
+            session.effectSignature = "${clip.brightness}:${clip.contrast}:${clip.saturation}"
         }
 
         // Chroma key harus membaca warna sumber, bukan warna yang sudah diubah.
@@ -5797,15 +5798,9 @@ class MainActivity : AppCompatActivity() {
         clip.brightness = 0f
         clip.contrast = 1f
         clip.saturation = 1f
-        runCatching {
-            session.player.setVideoEffects(buildOverlayPreviewEffects(clip, null))
-            session.effectSignature = "false:0.0:1.0:1.0"
-            session.player.seekTo(session.player.currentPosition)
-        }.onFailure {
-            restorePreview()
-            Toast.makeText(this, "Gagal menyiapkan preview untuk sampling.", Toast.LENGTH_SHORT).show()
-            return
-        }
+        session.chromaKeyEffect?.updateParameters(
+            clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness, false
+        )
 
         val samplingLayer = FrameLayout(this).apply {
             isClickable = true
@@ -5863,17 +5858,10 @@ class MainActivity : AppCompatActivity() {
             clip.contrast = oldContrast
             clip.saturation = oldSaturation
             session.chromaKeyEffect?.updateParameters(
-                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness
+                clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
+                clip.chromaKeyEnabled
             )
-            runCatching {
-                session.player.setVideoEffects(buildOverlayPreviewEffects(clip, session.chromaKeyEffect))
-                session.effectSignature = "${clip.chromaKeyEnabled}:${clip.brightness}:${clip.contrast}:${clip.saturation}"
-                if (!player.isPlaying && session.player.playbackState == Player.STATE_READY) {
-                    session.player.seekTo(session.player.currentPosition)
-                }
-            }.onFailure {
-                recordPlaybackDiagnostic("CHROMA_SAMPLE_PREVIEW_ERROR ${it.javaClass.simpleName}: ${it.message}")
-            }
+            session.effectSignature = "${clip.brightness}:${clip.contrast}:${clip.saturation}"
             finished = true
             (samplingLayer.parent as? android.view.ViewGroup)?.removeView(samplingLayer)
             onSampled(clip.chromaKeyColor)
