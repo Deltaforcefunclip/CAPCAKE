@@ -4410,22 +4410,41 @@ class MainActivity : AppCompatActivity() {
             updateToolMenu()
         }
 
-        toolsContainer.addView(
+        // Aksi tingkat utama dibuat satu baris agar tombol LAPISAN tidak
+        // terdorong keluar area layar pada perangkat dengan ruang menu terbatas.
+        val mainActionsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        mainActionsRow.addView(
             toggle,
-            LinearLayout.LayoutParams(-1, dp(22))
+            LinearLayout.LayoutParams(0, dp(38), 1f)
         )
 
-        // LAPISAN berada di menu utama, terpisah dari daftar aksi clip.
         val layersButton = TextView(this).apply {
             text = "LAPISAN"
             textSize = 11f
             gravity = Gravity.CENTER
+            typeface = Typeface.DEFAULT_BOLD
             setTextColor(Color.WHITE)
-            setBackgroundColor(Color.rgb(28, 28, 28))
-            setPadding(0, dp(8), 0, dp(8))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                setColor(Color.rgb(28, 28, 28))
+                cornerRadius = dp(6).toFloat()
+                setStroke(dp(1), green)
+            }
+            setPadding(dp(14), 0, dp(14), 0)
             setOnClickListener { showVisualLayerOrderDialog() }
         }
-        toolsContainer.addView(layersButton, LinearLayout.LayoutParams(-1, dp(34)))
+        mainActionsRow.addView(
+            layersButton,
+            LinearLayout.LayoutParams(dp(104), dp(38)).apply {
+                leftMargin = dp(6)
+            }
+        )
+        toolsContainer.addView(
+            mainActionsRow,
+            LinearLayout.LayoutParams(-1, dp(42))
+        )
     }
 
     private fun showVisualLayerOrderDialog() {
