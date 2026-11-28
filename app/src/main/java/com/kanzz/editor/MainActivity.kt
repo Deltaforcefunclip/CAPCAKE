@@ -4430,6 +4430,8 @@ class MainActivity : AppCompatActivity() {
 
     private fun showVisualLayerOrderDialog() {
         val dialog = android.app.Dialog(this)
+        // Edit a draft: BATAL/outside-tap must never modify the active project order.
+        val draftOrder = visualLayerOrder.toMutableList()
         val root = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(dp(18), dp(16), dp(18), dp(12))
@@ -4442,7 +4444,7 @@ class MainActivity : AppCompatActivity() {
             setTextColor(Color.WHITE)
         })
         root.addView(TextView(this).apply {
-            text = "Kelompok paling atas tampil paling depan."
+            text = "Urutan dari atas ke bawah. Perubahan diterapkan setelah SIMPAN."
             textSize = 11f
             setTextColor(Color.LTGRAY)
             setPadding(0, dp(5), 0, dp(12))
@@ -4450,18 +4452,14 @@ class MainActivity : AppCompatActivity() {
         val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         fun renderRows() {
             list.removeAllViews()
-            visualLayerOrder.forEachIndexed { index, group ->
+            draftOrder.forEachIndexed { index, group ->
                 val rowView = LinearLayout(this).apply {
                     orientation = LinearLayout.HORIZONTAL
                     gravity = Gravity.CENTER_VERTICAL
                     setPadding(dp(8), dp(4), dp(4), dp(4))
                 }
                 rowView.addView(TextView(this).apply {
-                    text = when (group) {
-                        "TEXT" -> "TEXT"
-                        "OVERLAY" -> "OVERLAY"
-                        else -> "EFFECT"
-                    }
+                    text = group
                     textSize = 13f
                     typeface = Typeface.DEFAULT_BOLD
                     setTextColor(Color.WHITE)
@@ -4474,7 +4472,7 @@ class MainActivity : AppCompatActivity() {
                     isEnabled = index > 0
                     setOnClickListener {
                         if (index > 0) {
-                            java.util.Collections.swap(visualLayerOrder, index, index - 1)
+                            java.util.Collections.swap(draftOrder, index, index - 1)
                             renderRows()
                         }
                     }
@@ -4482,12 +4480,12 @@ class MainActivity : AppCompatActivity() {
                 val down = TextView(this).apply {
                     text = "▼"
                     gravity = Gravity.CENTER
-                    setTextColor(if (index < visualLayerOrder.lastIndex) green else Color.DKGRAY)
+                    setTextColor(if (index < draftOrder.lastIndex) green else Color.DKGRAY)
                     setPadding(dp(12), dp(10), dp(12), dp(10))
-                    isEnabled = index < visualLayerOrder.lastIndex
+                    isEnabled = index < draftOrder.lastIndex
                     setOnClickListener {
-                        if (index < visualLayerOrder.lastIndex) {
-                            java.util.Collections.swap(visualLayerOrder, index, index + 1)
+                        if (index < draftOrder.lastIndex) {
+                            java.util.Collections.swap(draftOrder, index, index + 1)
                             renderRows()
                         }
                     }
@@ -4501,21 +4499,28 @@ class MainActivity : AppCompatActivity() {
         root.addView(list)
         val actions = LinearLayout(this).apply { gravity = Gravity.END }
         val cancel = TextView(this).apply {
-            text = "BATAL"; setTextColor(Color.LTGRAY); setPadding(dp(14), dp(12), dp(14), dp(8))
+            text = "BATAL"
+            setTextColor(Color.LTGRAY)
+            setPadding(dp(14), dp(12), dp(14), dp(8))
             setOnClickListener { dialog.dismiss() }
         }
         val save = TextView(this).apply {
-            text = "SIMPAN"; setTextColor(green); typeface = Typeface.DEFAULT_BOLD
+            text = "SIMPAN"
+            setTextColor(green)
+            typeface = Typeface.DEFAULT_BOLD
             setPadding(dp(14), dp(12), dp(8), dp(8))
             setOnClickListener {
+                visualLayerOrder.clear()
+                visualLayerOrder.addAll(draftOrder)
                 saveCurrentProject()
                 dialog.dismiss()
                 showMessage("Urutan kelompok lapisan disimpan.")
             }
         }
-        actions.addView(cancel); actions.addView(save); root.addView(actions)
+        actions.addView(cancel)
+        actions.addView(save)
+        root.addView(actions)
         dialog.setContentView(root)
-        dialog.setOnDismissListener { }
         dialog.show()
         dialog.window?.apply {
             setBackgroundDrawableResource(android.R.color.transparent)
