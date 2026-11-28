@@ -239,6 +239,54 @@ class MainActivity : AppCompatActivity() {
     )
     private var playbackGroups: List<PlaybackGroup> = emptyList()
 
+    // Jam playback virtual untuk bagian timeline setelah video utama berakhir.
+    private var isLayerTailPlaying = false
+    private var layerTailPositionMs = 0L
+    private var layerTailStartedAtElapsedMs = 0L
+
+    private fun startLayerTailPlayback() {
+        val mainEnd = videoClipManager.durationMs
+        val projectEnd = projectDurationMs()
+        if (projectEnd <= mainEnd) return
+        isLayerTailPlaying = true
+        layerTailPositionMs = layerTailPositionMs.coerceIn(mainEnd, projectEnd)
+        layerTailStartedAtElapsedMs = SystemClock.elapsedRealtime()
+        handler.removeCallbacks(layerTailPlaybackRunnable)
+        handler.post(layerTailPlaybackRunnable)
+        updatePlayButton()
+    }
+
+    private fun pauseLayerTailPlayback() {
+        if (!isLayerTailPlaying) return
+        updateLayerTailPosition()
+        isLayerTailPlaying = false
+        handler.removeCallbacks(layerTailPlaybackRunnable)
+        updatePlayButton()
+    }
+
+    private fun updateLayerTailPosition() {
+        if (!isLayerTailPlaying) return
+        val elapsed = (SystemClock.elapsedRealtime() - layerTailStartedAtElapsedMs).coerceAtLeast(0L)
+        layerTailPositionMs = (layerTailPositionMs + elapsed).coerceAtMost(projectDurationMs())
+        layerTailStartedAtElapsedMs = SystemClock.elapsedRealtime()
+        if (layerTailPositionMs >= projectDurationMs()) {
+            isLayerTailPlaying = false
+            handler.removeCallbacks(layerTailPlaybackRunnable)
+            updatePlayButton()
+        }
+    }
+
+    private val layerTailPlaybackRunnable = object : Runnable {
+        override fun run() {
+            if (!isLayerTailPlaying) return
+            updateLayerTailPosition()
+            timelineController.setPosition(layerTailPositionMs)
+            updateTime()
+            syncAudioPlayback()
+            if (isLayerTailPlaying) handler.postDelayed(this, 33L)
+        }
+    }
+
     private var selectedVideoClipId: String? = null
 
     private var currentProject: VideoProject? = null
@@ -471,7 +519,7 @@ class MainActivity : AppCompatActivity() {
     // Dipisah dari sinkronisasi audio/properti agar pekerjaan berat tetap 10 kali/detik.
     private val timelineFrameUpdater = object : Runnable {
         override fun run() {
-            if (::timeLabel.isInitialized && player.isPlaying) updateTime()
+            if (::timeLabel.isInitialized && (player.isPlaying || isLayerTailPlaying)) updateTime()
             viewInvalidateOverlayTracks()
             overlaySelectionOverlay?.postInvalidateOnAnimation()
             if (isTimelineScrubbing) syncOverlayVideoPreview()
@@ -650,6 +698,10 @@ class MainActivity : AppCompatActivity() {
                         "PLAYER_STATE state=$state playWhenReady=$playWhenReady isPlaying=$isPlaying " +
                             "item=$currentMediaItemIndex position=${currentPosition}ms"
                     )
+                    if (state == Player.STATE_ENDED && projectDurationMs() > videoClipManager.durationMs) {
+                        layerTailPositionMs = videoClipManager.durationMs
+                        startLayerTailPlayback()
+                    }
                 }
 
                 override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -2114,6 +2166,11 @@ class MainActivity : AppCompatActivity() {
 
             if (player.isPlaying) {
                 player.pause()
+            } else if (isLayerTailPlaying) {
+                pauseLayerTailPlayback()
+            } else if (currentTimelinePosition() >= videoClipManager.durationMs &&
+                currentTimelinePosition() < projectDurationMs()) {
+                startLayerTailPlayback()
             } else {
                 player.play()
             }
@@ -3167,6 +3224,10 @@ class MainActivity : AppCompatActivity() {
 
     /** Posisi player dalam timeline hasil edit, bukan posisi file sumber. */
     private fun currentTimelinePosition(): Long {
+        if (isLayerTailPlaying) {
+            updateLayerTailPosition()
+            return layerTailPositionMs.coerceIn(0L, projectDurationMs())
+        }
         if (videoClipManager.clips.isEmpty()) return player.currentPosition.coerceAtLeast(0L)
         val group = playbackGroups.getOrNull(player.currentMediaItemIndex)
             ?: return timelineController.positionMs
@@ -3267,6 +3328,18 @@ class MainActivity : AppCompatActivity() {
         }
 
         val target = positionMs.coerceIn(0L, projectDurationMs())
+        if (target >= videoClipManager.durationMs && target < projectDurationMs()) {
+            player.pause()
+            isLayerTailPlaying = false
+            handler.removeCallbacks(layerTailPlaybackRunnable)
+            layerTailPositionMs = target
+            timelineController.setPosition(target)
+            updateTime()
+            updatePlayButton()
+            return
+        }
+        isLayerTailPlaying = false
+        handler.removeCallbacks(layerTailPlaybackRunnable)
         val clip = videoClipManager.clips.firstOrNull { target < it.timelineEndMs }
             ?: videoClipManager.clips.last()
         val localTimelineMs = (target - clip.timelineStartMs).coerceIn(0L, clip.timelineDurationMs)
@@ -3363,7 +3436,7 @@ class MainActivity : AppCompatActivity() {
 
         if (!::playButton.isInitialized) return
 
-        playButton.text = if (player.isPlaying) {
+        playButton.text = if (player.isPlaying || isLayerTailPlaying) {
             "Ⅱ"
         } else {
             "▶"
