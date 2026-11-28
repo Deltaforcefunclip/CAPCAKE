@@ -8345,6 +8345,16 @@ class MainActivity : AppCompatActivity() {
         }
         var stateKey = selected?.id?.hashCode()?.toLong() ?: 0L
         activeClips.forEach { stateKey = stateKey * 31L + it.id.hashCode() }
+        // Text color may depend on the active EFFECT group; include effect state
+        // so a timeline edit refreshes text even when the text clips did not change.
+        stateKey = stateKey * 31L + visualLayerOrder.joinToString(",").hashCode()
+        effectClipManager.clips.filter { position >= it.startTimeMs && position < it.endTimeMs }
+            .forEach { effect ->
+                stateKey = stateKey * 31L + effect.id.hashCode()
+                stateKey = stateKey * 31L + effect.effectName.hashCode()
+                stateKey = stateKey * 31L + (effect.intensity * 1000f).toInt()
+                stateKey = stateKey * 31L + (effect.opacity * 1000f).toInt()
+            }
         if (!force && activeClips.none { it.zoomInDurationMs > 0L || it.zoomOutDurationMs > 0L } && stateKey == lastPreviewTextStateKey) return
         lastPreviewTextStateKey = stateKey
         // Clip terpilih tetap menjadi target transformasi. Clip aktif lain tetap
