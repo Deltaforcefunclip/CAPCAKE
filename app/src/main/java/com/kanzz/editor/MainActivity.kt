@@ -4512,6 +4512,8 @@ class MainActivity : AppCompatActivity() {
             setOnClickListener {
                 visualLayerOrder.clear()
                 visualLayerOrder.addAll(draftOrder)
+                syncOverlayVideoPreview()
+                updateTextPreview()
                 saveCurrentProject()
                 dialog.dismiss()
                 showMessage("Urutan kelompok lapisan disimpan.")
@@ -4527,6 +4529,13 @@ class MainActivity : AppCompatActivity() {
             setLayout((resources.displayMetrics.widthPixels - dp(48)).coerceAtLeast(dp(260)), -2)
             setGravity(Gravity.CENTER)
         }
+    }
+
+    // Elevation preview mengikuti urutan kelompok yang dipilih.
+    // Nilai kecil menjaga kontrol seleksi tetap berada di atas konten.
+    private fun visualGroupElevation(group: String): Float {
+        val index = visualLayerOrder.indexOf(group).let { if (it >= 0) it else visualLayerOrder.size - 1 }
+        return dp(((visualLayerOrder.size - index) * 4)).toFloat()
     }
 
     private fun updateDreamyPreviewOverlay() {
@@ -5909,7 +5918,7 @@ class MainActivity : AppCompatActivity() {
             val overlayPlayer = session.player
             val overlayView = session.view
             overlayView.visibility = View.VISIBLE
-            overlayView.elevation = dp(4).toFloat() + clip.trackIndex
+            overlayView.elevation = visualGroupElevation("OVERLAY") + clip.trackIndex * 0.01f
             applyOverlayPreviewTransform(clip)
 
             // Crop tidak lagi menjadi bagian signature efek preview.
@@ -8274,6 +8283,7 @@ class MainActivity : AppCompatActivity() {
             view.translationY = clip?.positionY ?: 0f
         }
 
+        previewTextOverlay.elevation = visualGroupElevation("TEXT")
         applyText(previewTextOverlay, primary)
 
         val additional = activeClips.filter { it.id != primary?.id }
@@ -8294,6 +8304,7 @@ class MainActivity : AppCompatActivity() {
                     isClickable = false
                     isFocusable = false
                 }.also { created ->
+                    created.elevation = visualGroupElevation("TEXT")
                     val selectionIndex = if (::textSelectionOverlay.isInitialized) {
                         previewFrameContainer.indexOfChild(textSelectionOverlay).coerceAtLeast(0)
                     } else {
