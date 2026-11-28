@@ -148,21 +148,30 @@ class AudioTrackView(
 
             val waveform = waveforms[clip.id]
             if (waveform != null && waveform.isNotEmpty()) {
-                val centerY = rect.centerY()
-                val halfHeight = (rect.height() * 0.40f).coerceAtLeast(2f * density)
-                val step = (rect.width() / waveform.size).coerceAtLeast(1f)
+                // Render one continuous filled envelope (CapCut-style), not
+                // individual rounded bars whose thickness changes with clip width.
+                // The fixed sample array is mapped proportionally across the clip,
+                // so short and long clips keep the same waveform visual language.
+                val baselineY = rect.bottom - 3f * density
+                val maxWaveHeight = (rect.height() * 0.52f).coerceAtLeast(2f * density)
+                val waveformPath = android.graphics.Path().apply {
+                    moveTo(rect.left, baselineY)
+                    waveform.forEachIndexed { index, amplitude ->
+                        val fraction = if (waveform.size <= 1) 0f
+                            else index.toFloat() / (waveform.size - 1).toFloat()
+                        val x = rect.left + rect.width() * fraction
+                        val normalized = amplitude.coerceIn(0f, 1f)
+                        val y = baselineY - normalized * maxWaveHeight
+                        lineTo(x, y)
+                    }
+                    lineTo(rect.right, baselineY)
+                    close()
+                }
                 val wavePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
                     color = 0xFFFFFFFF.toInt()
-                    strokeWidth = maxOf(1f * density, step * 0.55f)
-                    strokeCap = Paint.Cap.ROUND
+                    style = Paint.Style.FILL
                 }
-                waveform.forEachIndexed { index, amplitude ->
-                    val x = rect.left + index * step + step / 2f
-                    if (x in rect.left..rect.right) {
-                        val h = amplitude.coerceIn(0.04f, 1f) * halfHeight
-                        canvas.drawLine(x, centerY, x, centerY - h, wavePaint)
-                    }
-                }
+                canvas.drawPath(waveformPath, wavePaint)
             }
 
             if (clip.id == selectedClipId) {
