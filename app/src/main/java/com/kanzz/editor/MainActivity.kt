@@ -5861,6 +5861,25 @@ class MainActivity : AppCompatActivity() {
         return RgbMatrix { _, _ -> matrix }
     }
 
+    private fun overlayEffectPipelineSignature(clip: OverlayVideoClip): String {
+        val relevantEffects = if (isVisualGroupAbove("EFFECT", "OVERLAY")) {
+            effectClipManager.clips
+                .filter {
+                    (it.effectName == "Black & White" || it.effectName == "Cahaya Lembut") &&
+                        it.intensity * it.opacity > 0.001f &&
+                        it.startTimeMs < clip.endTimeMs && it.endTimeMs > clip.startTimeMs
+                }
+                .sortedWith(compareBy<EffectClip> { it.trackIndex }.thenBy { it.startTimeMs })
+                .joinToString("|") {
+                    listOf(it.id, it.effectName, it.startTimeMs, it.durationMs, it.trackIndex,
+                        it.intensity, it.opacity, it.glowSpread, it.warmth, it.softFocus).joinToString(":")
+                }
+        } else {
+            "effect-below-overlay"
+        }
+        return "${visualLayerOrder.joinToString(",")}#${relevantEffects}"
+    }
+
     private fun buildOverlayPreviewEffects(
         clip: OverlayVideoClip,
         chromaEffect: ChromaKeyGlEffect? = null,
@@ -5962,8 +5981,9 @@ class MainActivity : AppCompatActivity() {
 
             // Crop tidak lagi menjadi bagian signature efek preview.
             // Perubahan crop cukup memperbarui Matrix TextureView, bukan memasang ulang efek.
-            // Color values are live shader uniforms; they do not belong in a pipeline signature.
-            val effectSignature = "persistent-gl"
+            // Shader color values remain live uniforms. Track only timeline effects/order
+            // so edits refresh the overlay effect pipeline without rebuilding on every frame.
+            val effectSignature = overlayEffectPipelineSignature(clip)
             val localPosition = (position - clip.startTimeMs).coerceAtLeast(0L)
             if (session.preparedClipId != clip.id) {
                 val itemBuilder = MediaItem.Builder().setUri(Uri.parse(clip.sourceUri))
@@ -6005,9 +6025,17 @@ class MainActivity : AppCompatActivity() {
                     clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
                     clip.chromaKeyEnabled, clip.brightness, clip.contrast, clip.saturation
                 )
-                // Keep the GL processor installed. Saturation/brightness/contrast
-                // are uniforms read by the next frame, avoiding decoder stalls.
-                session.effectSignature = effectSignature
+                // Keep chroma/color controls as live uniforms. Rebuild the effect
+                // list only when effect clips or visual group ordering actually change.
+                if (session.effectSignature != effectSignature) {
+                    overlayPlayer.setVideoEffects(
+                        buildOverlayPreviewEffects(clip, session.chromaKeyEffect)
+                    )
+                    session.effectSignature = effectSignature
+                    recordPlaybackDiagnostic(
+                        "OVERLAY_EFFECT_PIPELINE_REFRESH clip=${clip.id.take(8)} signature=${effectSignature.hashCode()}"
+                    )
+                }
                 overlayPlayer.volume = clip.volume.coerceIn(0f, 2f)
                 if (kotlin.math.abs(masterSpeed - session.lastMasterSpeed) > 0.01f) {
                     overlayPlayer.setPlaybackSpeed(masterSpeed)
