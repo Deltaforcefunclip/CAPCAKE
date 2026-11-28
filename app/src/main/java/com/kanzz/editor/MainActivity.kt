@@ -437,7 +437,7 @@ class MainActivity : AppCompatActivity() {
         scrubSeekScheduled = false
         if (isTimelineScrubbing) {
             seekTimelinePosition(
-                pendingScrubPositionMs.coerceIn(0L, videoClipManager.durationMs)
+                pendingScrubPositionMs.coerceIn(0L, projectDurationMs())
             )
         }
     }
@@ -448,7 +448,7 @@ class MainActivity : AppCompatActivity() {
             // Akhiri mode scrubbing, lalu pastikan frame terakhir diposisikan secara presisi.
             player.setScrubbingModeEnabled(false)
             player.setSeekParameters(SeekParameters.EXACT)
-            val finalTarget = pendingScrubPositionMs.coerceIn(0L, videoClipManager.durationMs)
+            val finalTarget = pendingScrubPositionMs.coerceIn(0L, projectDurationMs())
             seekTimelinePosition(finalTarget)
 
             // Tahan indikator waktu pada target jari sampai seek akhir diproses.
@@ -1429,7 +1429,7 @@ class MainActivity : AppCompatActivity() {
         } ?: "Audio"
 
         val clip = AudioClip(
-            startTimeMs = currentTimelinePosition().coerceIn(0L, videoClipManager.durationMs),
+            startTimeMs = currentTimelinePosition().coerceIn(0L, projectDurationMs()),
             durationMs = durationMs,
             filePath = uri.toString(),
             sourceStartMs = 0L,
@@ -1541,7 +1541,7 @@ class MainActivity : AppCompatActivity() {
 
             try {
                 timeline.selectClip(clip.id)
-                timeline.setDuration(videoClipManager.durationMs, oldPosition)
+                timeline.setDuration(projectDurationMs(), oldPosition)
                 timeline.updateSelection(true)
             } catch (error: Exception) {
                 android.util.Log.e("CAPCAKE_IMPORT", "Gagal memperbarui tampilan timeline", error)
@@ -1550,7 +1550,7 @@ class MainActivity : AppCompatActivity() {
             try {
                 if (::videoSelectionOverlay.isInitialized) videoSelectionOverlay.invalidate()
                 if (::playerView.isInitialized) playerView.foreground = null
-                refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
+                refreshEditedPreview(oldPosition.coerceAtMost(projectDurationMs()))
             } catch (error: Exception) {
                 android.util.Log.e("CAPCAKE_IMPORT", "Gagal memperbarui preview setelah impor", error)
             }
@@ -2127,7 +2127,7 @@ class MainActivity : AppCompatActivity() {
 
         forwardButton.setOnClickListener {
 
-            val duration = videoClipManager.durationMs
+            val duration = projectDurationMs()
             val target = (currentTimelinePosition() + 60000L).coerceAtMost(duration)
             seekTimelinePosition(target)
             updateTime()
@@ -2326,7 +2326,7 @@ class MainActivity : AppCompatActivity() {
                         val oldPosition = timelineController.positionMs
                         pushUndoSnapshot()
                         if (videoClipManager.moveToTimelinePosition(clipId, targetStartMs)) {
-                            refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
+                            refreshEditedPreview(oldPosition.coerceAtMost(projectDurationMs()))
                             saveCurrentProject()
                         } else if (undoStack.isNotEmpty()) {
                             // Jangan tinggalkan entri Undo untuk gerakan yang tidak mengubah urutan.
@@ -2347,7 +2347,7 @@ class MainActivity : AppCompatActivity() {
                 if (videoClipManager.trimClipEdges(clipId, leftDeltaMs, rightDeltaMs)) {
                     selectedVideoClipId = clipId
                     timeline.selectClip(clipId)
-                    refreshEditedPreview(oldPosition.coerceAtMost(videoClipManager.durationMs))
+                    refreshEditedPreview(oldPosition.coerceAtMost(projectDurationMs()))
                     saveCurrentProject()
                     updateToolMenu()
                 }
@@ -2760,8 +2760,8 @@ class MainActivity : AppCompatActivity() {
                 ?: videoClipManager.clips.firstOrNull()?.id
 
             timeline.setDuration(
-                videoClipManager.durationMs,
-                savedPosition.coerceIn(0L, videoClipManager.durationMs)
+                projectDurationMs(),
+                savedPosition.coerceIn(0L, projectDurationMs())
             )
             timeline.loadThumbnails(uri, sourceDuration)
 
@@ -3175,7 +3175,7 @@ class MainActivity : AppCompatActivity() {
         if (group.usesProxy) {
             val clip = group.clips.firstOrNull() ?: return timelineController.positionMs
             val localTimeline = (playerPosition / clip.speed.coerceIn(0.25f, 4f)).toLong()
-            return (clip.timelineStartMs + localTimeline).coerceIn(0L, videoClipManager.durationMs)
+            return (clip.timelineStartMs + localTimeline).coerceIn(0L, projectDurationMs())
         }
 
         val sourcePosition = (group.sourceStartMs + playerPosition).coerceIn(
@@ -3185,7 +3185,7 @@ class MainActivity : AppCompatActivity() {
             if (sourcePosition < clip.sourceEndMs || clip.id == group.clips.lastOrNull()?.id) {
                 val sourceOffset = (sourcePosition - clip.sourceStartMs).coerceIn(0L, clip.durationMs)
                 val localTimeline = (sourceOffset / clip.speed.coerceIn(0.25f, 4f)).toLong()
-                return (clip.timelineStartMs + localTimeline).coerceIn(0L, videoClipManager.durationMs)
+                return (clip.timelineStartMs + localTimeline).coerceIn(0L, projectDurationMs())
             }
         }
         return timelineController.positionMs
@@ -3234,7 +3234,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Kirim posisi terbaru maksimal setiap 50 ms; posisi akhir tetap di-seek presisi. */
     private fun requestScrubSeek(positionMs: Long) {
-        pendingScrubPositionMs = positionMs.coerceIn(0L, videoClipManager.durationMs)
+        pendingScrubPositionMs = positionMs.coerceIn(0L, projectDurationMs())
         if (!isTimelineScrubbing || scrubSeekScheduled) return
         scrubSeekScheduled = true
         handler.postDelayed(scrubSeekRunnable, 50L)
@@ -3266,7 +3266,7 @@ class MainActivity : AppCompatActivity() {
             return
         }
 
-        val target = positionMs.coerceIn(0L, videoClipManager.durationMs)
+        val target = positionMs.coerceIn(0L, projectDurationMs())
         val clip = videoClipManager.clips.firstOrNull { target < it.timelineEndMs }
             ?: videoClipManager.clips.last()
         val localTimelineMs = (target - clip.timelineStartMs).coerceIn(0L, clip.timelineDurationMs)
@@ -3316,14 +3316,14 @@ class MainActivity : AppCompatActivity() {
         }
 
         val wasPlaying = player.isPlaying
-        val safePosition = positionMs.coerceIn(0L, videoClipManager.durationMs)
+        val safePosition = positionMs.coerceIn(0L, projectDurationMs())
 
         player.pause()
         player.playWhenReady = false
         recordPlaybackDiagnostic("PLAYLIST_REPLACE source=refreshEditedPreview generation=$generation wasPlaying=$wasPlaying state=${player.playbackState} position=${player.currentPosition}ms target=${safePosition}ms")
         player.setMediaItems(buildEditedVideoItems())
 
-        timelineController.setDuration(videoClipManager.durationMs)
+        timelineController.setDuration(projectDurationMs())
         timelineController.setPosition(safePosition)
         timeline.invalidate()
 
@@ -3883,7 +3883,7 @@ class MainActivity : AppCompatActivity() {
                         // Playhead pada controller adalah posisi yang benar-benar terlihat
                         // setelah pengguna scrub. Posisi player bisa tertinggal saat seek cepat.
                         val editPosition = timelineController.positionMs
-                            .coerceIn(0L, videoClipManager.durationMs)
+                            .coerceIn(0L, projectDurationMs())
                         pushUndoSnapshot()
                         val second = videoClipManager.split(clip?.id, editPosition)
                         if (second != null) {
@@ -8675,8 +8675,8 @@ class MainActivity : AppCompatActivity() {
                     oldPosition <= oldStart + oldDuration ->
                         clip.timelineStartMs + (sourceOffset / clip.speed).toLong()
                     else -> oldPosition + clip.timelineDurationMs - oldDuration
-                }.coerceIn(0L, videoClipManager.durationMs)
-                timeline.setDuration(videoClipManager.durationMs, newPosition)
+                }.coerceIn(0L, projectDurationMs())
+                timeline.setDuration(projectDurationMs(), newPosition)
                 refreshEditedPreview(newPosition)
                 syncVideoClipProperties()
                 saveCurrentProject()
@@ -8893,9 +8893,9 @@ class MainActivity : AppCompatActivity() {
         if (::timeline.isInitialized) {
             timeline.selectClip(selectedVideoClipId)
             // setDuration mempertahankan tingkat zoom yang sedang dipakai.
-            timeline.setDuration(videoClipManager.durationMs, timelineController.positionMs)
+            timeline.setDuration(projectDurationMs(), timelineController.positionMs)
         }
-        refreshEditedPreview(timelineController.positionMs.coerceAtMost(videoClipManager.durationMs))
+        refreshEditedPreview(timelineController.positionMs.coerceAtMost(projectDurationMs()))
         saveCurrentProject()
         updateToolMenu()
     }
@@ -8996,14 +8996,14 @@ class MainActivity : AppCompatActivity() {
 
         val position = if (isRefreshingEditedPreview) {
             // Pertahankan titik edit yang sudah dipasang di controller.
-            timelineController.positionMs.coerceIn(0L, videoClipManager.durationMs)
+            timelineController.positionMs.coerceIn(0L, projectDurationMs())
         } else if (isTimelineScrubbing) {
-            pendingScrubPositionMs.coerceIn(0L, videoClipManager.durationMs)
+            pendingScrubPositionMs.coerceIn(0L, projectDurationMs())
         } else {
             currentTimelinePosition()
         }
         val duration = if (videoClipManager.clips.isNotEmpty()) {
-            videoClipManager.durationMs
+            projectDurationMs()
         } else {
             player.duration.coerceAtLeast(0L)
         }
@@ -10095,7 +10095,20 @@ class MainActivity : AppCompatActivity() {
             // Video utama menjadi background compositor. Penempatannya setelah seluruh
             // overlay penting: sebelumnya video utama berada di inputId 0 dan menutupi
             // semua overlay yang berada di sequence berikutnya.
-            sequences.add(EditedMediaItemSequence.withAudioAndVideoFrom(editedItems))
+            // Sequence utama juga diperpanjang sampai durasi global project.
+            // addGap pada sequence video menghasilkan frame hitam, sehingga area
+            // setelah video utama berakhir tetap memiliki background saat layer lain
+            // (overlay/text/audio/effect) masih berjalan.
+            val mainVideoSequence = EditedMediaItemSequence.Builder(
+                setOf(C.TRACK_TYPE_AUDIO, C.TRACK_TYPE_VIDEO)
+            )
+            editedItems.forEach { item -> mainVideoSequence.addItem(item) }
+            val mainTrailingGapMs = (projectDurationMs() - videoClipManager.durationMs)
+                .coerceAtLeast(0L)
+            if (mainTrailingGapMs > 0L) {
+                mainVideoSequence.addGap(mainTrailingGapMs * 1000L)
+            }
+            sequences.add(mainVideoSequence.build())
 
             // Tambahkan audio overlay setelah seluruh sequence video agar inputId
             // VideoCompositor tetap sejajar dengan exportOverlayClips/compositorLayers.
