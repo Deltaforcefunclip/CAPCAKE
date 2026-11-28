@@ -11,6 +11,8 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.Executors
 import kotlin.math.abs
 import kotlin.math.max
+import kotlin.math.sqrt
+import kotlin.math.pow
 
 /**
  * Decodes the source audio in the background and creates a compact amplitude
@@ -54,11 +56,13 @@ object AudioWaveformDecoder {
     }
 
     private fun decode(context: Context, clip: AudioClip): FloatArray {
-        // Adaptive density prevents sparse, needle-like peaks on short clips.
-        val barCount = ((clip.durationMs.coerceAtLeast(1L) * SAMPLES_PER_SECOND) / 1000L)
+        // Stable timeline density: 2 seconds = 100 points (50 points/second).
+        val durationMs = clip.durationMs.coerceAtLeast(1L)
+        val barCount = ((durationMs * SAMPLES_PER_SECOND) / 1000L)
             .toInt().coerceIn(12, MAX_BAR_COUNT)
         val peaks = FloatArray(barCount)
-        val populated = BooleanArray(barCount)
+        val squareSums = DoubleArray(barCount)
+        val sampleCounts = IntArray(barCount)
         var extractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
         try {
@@ -87,8 +91,11 @@ object AudioWaveformDecoder {
             var inputDone = false
             var outputDone = false
             var pcmFloat = false
+            var sampleRate = audioFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE)
+            var channelCount = audioFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
             val info = MediaCodec.BufferInfo()
-            val sourceEnd = clip.sourceStartMs + clip.durationMs.coerceAtLeast(1L)
+            val sourceStartUs = clip.sourceStartMs * 1000L
+            val sourceEndUs = (clip.sourceStartMs + durationMs) * 1000L
 
             while (!outputDone) {
                 if (!inputDone) {
@@ -120,31 +127,39 @@ object AudioWaveformDecoder {
                     outputIndex >= 0 -> {
                         if (info.size > 0) {
                             val output = decoder.getOutputBuffer(outputIndex)
-                            if (output != null) {
-                                val presentationMs = info.presentationTimeUs / 1000L
-                                if (presentationMs >= clip.sourceStartMs && presentationMs < sourceEnd) {
-                                    val bucket = (((presentationMs - clip.sourceStartMs).toDouble() /
-                                        clip.durationMs.coerceAtLeast(1L)) * barCount)
+                            if (output != null && sampleRate > 0 && channelCount > 0) {
+                                val data = output.duplicate().order(ByteOrder.LITTLE_ENDIAN)
+                                val start = info.offset.coerceAtLeast(0)
+                                val end = (info.offset + info.size).coerceAtMost(data.limit())
+                                val bytesPerSample = if (pcmFloat) 4 else 2
+                                val bytesPerFrame = bytesPerSample * channelCount
+                                val frameCount = ((end - start).coerceAtLeast(0)) / bytesPerFrame
+
+                                // Map every PCM frame by its own timestamp, not one codec buffer per point.
+                                for (frame in 0 until frameCount) {
+                                    val timeUs = info.presentationTimeUs +
+                                        (frame.toLong() * 1_000_000L / sampleRate)
+                                    if (timeUs < sourceStartUs || timeUs >= sourceEndUs) continue
+
+                                    val bucket = (((timeUs - sourceStartUs).toDouble() /
+                                        (durationMs * 1000.0)) * barCount)
                                         .toInt().coerceIn(0, barCount - 1)
-                                    val data = output.duplicate().order(ByteOrder.LITTLE_ENDIAN)
-                                    val start = info.offset
-                                    val end = (info.offset + info.size).coerceAtMost(data.capacity())
-                                    var peak = 0f
-                                    if (pcmFloat) {
-                                        var p = start
-                                        while (p + 3 < end) {
-                                            peak = max(peak, abs(data.getFloat(p)).coerceAtMost(1f))
-                                            p += 4
+                                    val frameOffset = start + frame * bytesPerFrame
+                                    var framePeak = 0f
+                                    var frameSquareSum = 0.0
+                                    for (channel in 0 until channelCount) {
+                                        val offset = frameOffset + channel * bytesPerSample
+                                        val value = if (pcmFloat) {
+                                            data.getFloat(offset).coerceIn(-1f, 1f)
+                                        } else {
+                                            data.getShort(offset).toInt() / 32768f
                                         }
-                                    } else {
-                                        var p = start
-                                        while (p + 1 < end) {
-                                            peak = max(peak, abs(data.getShort(p).toInt()) / 32768f)
-                                            p += 2
-                                        }
+                                        framePeak = max(framePeak, abs(value))
+                                        frameSquareSum += value.toDouble() * value.toDouble()
                                     }
-                                    peaks[bucket] = max(peaks[bucket], peak)
-                                    populated[bucket] = true
+                                    peaks[bucket] = max(peaks[bucket], framePeak)
+                                    squareSums[bucket] += frameSquareSum / channelCount
+                                    sampleCounts[bucket]++
                                 }
                             }
                         }
@@ -158,31 +173,30 @@ object AudioWaveformDecoder {
                         pcmFloat = try {
                             outputFormat.getInteger(MediaFormat.KEY_PCM_ENCODING) == AudioFormat.ENCODING_PCM_FLOAT
                         } catch (_: Exception) { false }
+                        sampleRate = try {
+                            outputFormat.getInteger(MediaFormat.KEY_SAMPLE_RATE).coerceAtLeast(1)
+                        } catch (_: Exception) { sampleRate }
+                        channelCount = try {
+                            outputFormat.getInteger(MediaFormat.KEY_CHANNEL_COUNT).coerceAtLeast(1)
+                        } catch (_: Exception) { channelCount }
                     }
                 }
             }
 
-            // Fill only buckets with no decoded frame; preserve genuine silence.
-            var previous = -1
-            for (i in populated.indices) {
-                if (!populated[i]) continue
-                if (previous >= 0 && i - previous > 1) {
-                    val from = peaks[previous]
-                    val to = peaks[i]
-                    val gap = i - previous
-                    for (j in 1 until gap) {
-                        val t = j.toFloat() / gap.toFloat()
-                        peaks[previous + j] = from + (to - from) * t
-                    }
+            // Blend transient peaks with RMS to reveal quieter detail without
+            // fabricating values in silent buckets.
+            for (i in peaks.indices) {
+                if (sampleCounts[i] > 0) {
+                    val rms = sqrt(squareSums[i] / sampleCounts[i]).toFloat()
+                    peaks[i] = max(peaks[i] * 0.78f, (rms * 1.35f).coerceAtMost(1f))
                 }
-                previous = i
             }
 
             val maximum = peaks.maxOrNull() ?: 0f
             if (maximum > 0f) {
                 for (i in peaks.indices) {
                     val normalized = (peaks[i] / maximum).coerceIn(0f, 1f)
-                    peaks[i] = kotlin.math.sqrt(normalized)
+                    peaks[i] = normalized.toDouble().pow(0.68).toFloat()
                 }
             }
         } catch (_: Exception) {
