@@ -8383,22 +8383,33 @@ class MainActivity : AppCompatActivity() {
         .put("effects", JSONArray(encodeEffectClips()))
         .put("overlayVideo", JSONArray(OverlayVideoCodec.encode(overlayVideoClips))).toString()
 
+    private fun restoreVisualLayerOrder() {
+        // Urutan lapisan tersimpan terpisah dari JSON clip. Pulihkan juga saat
+        // project lama/kosong belum memiliki payload text/effect.
+        val savedOrder = currentProject?.let { project ->
+            prefs.getString("visual_layer_order_${project.id}", null)
+                ?.split(",")
+                ?.filter { it in setOf("EFFECT", "OVERLAY", "TEXT") }
+                ?.distinct()
+        }.orEmpty()
+        visualLayerOrder.clear()
+        visualLayerOrder.addAll(savedOrder)
+        listOf("EFFECT", "OVERLAY", "TEXT").forEach { group ->
+            if (group !in visualLayerOrder) visualLayerOrder.add(group)
+        }
+    }
+
     private fun restoreTextAndEffects(json: String?) {
-        if (json.isNullOrBlank()) { restoreTextClips(null); restoreEffectClips(null); overlayVideoClips.clear(); return }
+        restoreVisualLayerOrder()
+        if (json.isNullOrBlank()) {
+            restoreTextClips(null)
+            restoreEffectClips(null)
+            overlayVideoClips.clear()
+            return
+        }
         runCatching {
             val root = JSONObject(json)
             restoreTextClips(root.optJSONArray("text")?.toString())
-        // Pulihkan urutan kelompok visual; project lama memakai urutan default.
-        currentProject?.let { project ->
-            val savedOrder = prefs.getString("visual_layer_order_${project.id}", null)
-                ?.split(",")?.filter { it in setOf("EFFECT", "OVERLAY", "TEXT") }
-                ?.distinct().orEmpty()
-            visualLayerOrder.clear()
-            visualLayerOrder.addAll(savedOrder)
-            listOf("EFFECT", "OVERLAY", "TEXT").forEach {
-                if (it !in visualLayerOrder) visualLayerOrder.add(it)
-            }
-        }
             restoreEffectClips(root.optJSONArray("effects")?.toString())
             OverlayVideoCodec.decode(root.optJSONArray("overlayVideo")?.toString(), overlayVideoClips)
         }.onFailure {
