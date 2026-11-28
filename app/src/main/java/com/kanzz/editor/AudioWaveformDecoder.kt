@@ -17,7 +17,8 @@ import kotlin.math.max
  * envelope for drawing inside timeline clips.
  */
 object AudioWaveformDecoder {
-    private const val BAR_COUNT = 180
+    private const val MAX_BAR_COUNT = 180
+    private const val SAMPLES_PER_SECOND = 50
     private val executor = Executors.newFixedThreadPool(2)
     private val cache = ConcurrentHashMap<String, FloatArray>()
     private val pending = ConcurrentHashMap<String, MutableList<(FloatArray) -> Unit>>()
@@ -53,7 +54,11 @@ object AudioWaveformDecoder {
     }
 
     private fun decode(context: Context, clip: AudioClip): FloatArray {
-        val peaks = FloatArray(BAR_COUNT)
+        // Adaptive density prevents sparse, needle-like peaks on short clips.
+        val barCount = ((clip.durationMs.coerceAtLeast(1L) * SAMPLES_PER_SECOND) / 1000L)
+            .toInt().coerceIn(12, MAX_BAR_COUNT)
+        val peaks = FloatArray(barCount)
+        val populated = BooleanArray(barCount)
         var extractor: MediaExtractor? = null
         var decoder: MediaCodec? = null
         try {
@@ -119,8 +124,8 @@ object AudioWaveformDecoder {
                                 val presentationMs = info.presentationTimeUs / 1000L
                                 if (presentationMs >= clip.sourceStartMs && presentationMs < sourceEnd) {
                                     val bucket = (((presentationMs - clip.sourceStartMs).toDouble() /
-                                        clip.durationMs.coerceAtLeast(1L)) * BAR_COUNT)
-                                        .toInt().coerceIn(0, BAR_COUNT - 1)
+                                        clip.durationMs.coerceAtLeast(1L)) * barCount)
+                                        .toInt().coerceIn(0, barCount - 1)
                                     val data = output.duplicate().order(ByteOrder.LITTLE_ENDIAN)
                                     val start = info.offset
                                     val end = (info.offset + info.size).coerceAtMost(data.capacity())
@@ -139,6 +144,7 @@ object AudioWaveformDecoder {
                                         }
                                     }
                                     peaks[bucket] = max(peaks[bucket], peak)
+                                    populated[bucket] = true
                                 }
                             }
                         }
@@ -156,9 +162,28 @@ object AudioWaveformDecoder {
                 }
             }
 
+            // Fill only buckets with no decoded frame; preserve genuine silence.
+            var previous = -1
+            for (i in populated.indices) {
+                if (!populated[i]) continue
+                if (previous >= 0 && i - previous > 1) {
+                    val from = peaks[previous]
+                    val to = peaks[i]
+                    val gap = i - previous
+                    for (j in 1 until gap) {
+                        val t = j.toFloat() / gap.toFloat()
+                        peaks[previous + j] = from + (to - from) * t
+                    }
+                }
+                previous = i
+            }
+
             val maximum = peaks.maxOrNull() ?: 0f
             if (maximum > 0f) {
-                for (i in peaks.indices) peaks[i] = (peaks[i] / maximum).coerceIn(0f, 1f)
+                for (i in peaks.indices) {
+                    val normalized = (peaks[i] / maximum).coerceIn(0f, 1f)
+                    peaks[i] = kotlin.math.sqrt(normalized)
+                }
             }
         } catch (_: Exception) {
             // Keep an empty waveform if the device codec cannot decode this format.
