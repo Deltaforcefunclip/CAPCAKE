@@ -4533,6 +4533,43 @@ class MainActivity : AppCompatActivity() {
 
     // Elevation preview mengikuti urutan kelompok yang dipilih.
     // Nilai kecil menjaga kontrol seleksi tetap berada di atas konten.
+    private fun isVisualGroupAbove(upperGroup: String, lowerGroup: String): Boolean {
+        val upperIndex = visualLayerOrder.indexOf(upperGroup).let { if (it >= 0) it else Int.MAX_VALUE }
+        val lowerIndex = visualLayerOrder.indexOf(lowerGroup).let { if (it >= 0) it else Int.MAX_VALUE }
+        return upperIndex < lowerIndex
+    }
+
+    /**
+     * EFFECT always affects the base video. It also affects overlay video only
+     * when EFFECT is ordered above OVERLAY. Preview uses a clip-local clock;
+     * export uses the composition-wide timeline clock.
+     */
+    private fun buildEffectsForOverlayLayer(
+        clip: OverlayVideoClip,
+        timelineOffsetMs: Long
+    ): List<androidx.media3.common.Effect> {
+        if (!isVisualGroupAbove("EFFECT", "OVERLAY")) return emptyList()
+        return effectClipManager.clips.mapNotNull { effectClip ->
+            if (effectClip.effectName != "Black & White" && effectClip.effectName != "Cahaya Lembut") return@mapNotNull null
+            if (effectClip.intensity * effectClip.opacity <= 0.001f) return@mapNotNull null
+            val overlapStart = maxOf(effectClip.startTimeMs, clip.startTimeMs)
+            val overlapEnd = minOf(effectClip.endTimeMs, clip.endTimeMs)
+            if (overlapEnd <= overlapStart) return@mapNotNull null
+            val startUs = (overlapStart - timelineOffsetMs).coerceAtLeast(0L) * 1000L
+            val endUs = (overlapEnd - timelineOffsetMs).coerceAtLeast(0L) * 1000L
+            if (endUs <= startUs) return@mapNotNull null
+            DreamyGlEffect(
+                intensity = effectClip.intensity * effectClip.opacity,
+                glowSpread = effectClip.glowSpread,
+                warmth = effectClip.warmth,
+                startTimeUs = startUs,
+                endTimeUs = endUs,
+                effectMode = if (effectClip.effectName == "Black & White") 1f else 2f,
+                softFocus = effectClip.softFocus
+            )
+        }
+    }
+
     private fun visualGroupElevation(group: String): Float {
         val index = visualLayerOrder.indexOf(group).let { if (it >= 0) it else visualLayerOrder.size - 1 }
         return dp(((visualLayerOrder.size - index) * 4)).toFloat()
@@ -5839,6 +5876,8 @@ class MainActivity : AppCompatActivity() {
             clip.chromaKeyColor, clip.chromaKeyThreshold, clip.chromaKeySoftness,
             clip.chromaKeyEnabled, clip.brightness, clip.contrast, clip.saturation
         ))
+        // Apply EFFECT above OVERLAY using the overlay player's local clock.
+        effects.addAll(buildEffectsForOverlayLayer(clip, clip.startTimeMs))
         if (includeCrop && (
                 clip.cropLeft > 0f || clip.cropTop > 0f ||
                 clip.cropRight > 0f || clip.cropBottom > 0f
@@ -10252,6 +10291,9 @@ class MainActivity : AppCompatActivity() {
                             )
                         )
                     }
+                    // Keep export consistent with preview: effects reach overlay
+                    // pixels only when EFFECT is above OVERLAY in the group order.
+                    addAll(buildEffectsForOverlayLayer(overlayClip, 0L))
                     if (overlayClip.cropLeft > 0f || overlayClip.cropTop > 0f ||
                         overlayClip.cropRight > 0f || overlayClip.cropBottom > 0f
                     ) {
