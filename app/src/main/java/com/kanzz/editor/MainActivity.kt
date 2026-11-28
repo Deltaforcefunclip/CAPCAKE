@@ -219,6 +219,15 @@ class MainActivity : AppCompatActivity() {
     private val audioLibraryExecutor = Executors.newSingleThreadExecutor()
     private val videoClipManager = VideoClipManager()
 
+    /** Durasi kerja timeline mencakup video utama dan seluruh jenis layer. */
+    private fun projectDurationMs(): Long = maxOf(
+        videoClipManager.durationMs,
+        overlayVideoClips.maxOfOrNull { it.endTimeMs } ?: 0L,
+        textClipManager.clips.maxOfOrNull { it.endTimeMs } ?: 0L,
+        effectClipManager.clips.maxOfOrNull { it.endTimeMs } ?: 0L,
+        audioClipManager.clips.maxOfOrNull { it.endTimeMs } ?: 0L
+    )
+
     // Playlist preview dapat menggabungkan klip berurutan dari sumber yang sama.
     // Klip timeline tetap terpisah agar editing dan penyimpanan project tidak berubah.
     private data class PlaybackGroup(
@@ -3975,23 +3984,91 @@ class MainActivity : AppCompatActivity() {
                             refreshAudioTracks()
                         } else if (videoSelected) {
                             val removedClip = videoClipManager.find(selectedVideoClipId)
-                            pushUndoSnapshot()
-                            if (videoClipManager.remove(selectedVideoClipId)) {
-                                val nextClip = videoClipManager.clips.firstOrNull {
-                                    it.timelineStartMs >= (removedClip?.timelineStartMs ?: 0L)
+                            if (removedClip != null) {
+                                val removedStartMs = removedClip.timelineStartMs
+                                val removedEndMs = removedClip.timelineEndMs
+                                val removedDurationMs = (removedEndMs - removedStartMs).coerceAtLeast(0L)
+                                pushUndoSnapshot()
+
+                                if (videoClipManager.remove(selectedVideoClipId)) {
+                                    // Ripple delete berlaku serentak untuk seluruh layer.
+                                    // Clip yang menyentuh rentang waktu terhapus dibuang utuh,
+                                    // sedangkan clip setelahnya bergeser ke kiri sebesar durasi
+                                    // clip video utama yang dihapus.
+                                    val removedOverlayIds = overlayVideoClips.filter { clip ->
+                                        clip.startTimeMs < removedEndMs && clip.endTimeMs > removedStartMs
+                                    }.map { it.id }.toSet()
+                                    overlayVideoClips.removeAll { it.id in removedOverlayIds }
+                                    overlayVideoClips.forEach { clip ->
+                                        if (clip.startTimeMs >= removedEndMs) {
+                                            clip.startTimeMs = (clip.startTimeMs - removedDurationMs).coerceAtLeast(0L)
+                                        }
+                                    }
+
+                                    val removedTextIds = textClipManager.clips.filter { clip ->
+                                        clip.startTimeMs < removedEndMs && clip.endTimeMs > removedStartMs
+                                    }.map { it.id }.toSet()
+                                    textClipManager.clips.removeAll { it.id in removedTextIds }
+                                    textClipManager.clips.forEach { clip ->
+                                        if (clip.startTimeMs >= removedEndMs) {
+                                            clip.startTimeMs = (clip.startTimeMs - removedDurationMs).coerceAtLeast(0L)
+                                        }
+                                    }
+                                    textClipManager.compactLanes()
+
+                                    val removedEffectIds = effectClipManager.clips.filter { clip ->
+                                        clip.startTimeMs < removedEndMs && clip.endTimeMs > removedStartMs
+                                    }.map { it.id }.toSet()
+                                    effectClipManager.clips.removeAll { it.id in removedEffectIds }
+                                    effectClipManager.clips.forEach { clip ->
+                                        if (clip.startTimeMs >= removedEndMs) {
+                                            clip.startTimeMs = (clip.startTimeMs - removedDurationMs).coerceAtLeast(0L)
+                                        }
+                                    }
+                                    effectClipManager.compactLanes()
+
+                                    val removedAudioIds = audioClipManager.clips.filter { clip ->
+                                        clip.startTimeMs < removedEndMs && clip.endTimeMs > removedStartMs
+                                    }.map { it.id }.toSet()
+                                    removedAudioIds.forEach { id ->
+                                        audioClipManager.removeClip(id)
+                                        audioPlayers.remove(id)?.release()
+                                        audioGainProcessors.remove(id)
+                                    }
+                                    audioClipManager.clips.forEach { clip ->
+                                        if (clip.startTimeMs >= removedEndMs) {
+                                            clip.startTimeMs = (clip.startTimeMs - removedDurationMs).coerceAtLeast(0L)
+                                        }
+                                    }
+
+                                    selectedOverlayVideoClipId = null
+                                    selectedTextClipId = null
+                                    selectedEffectClipId = null
+                                    selectedAudioClipId = null
+                                    videoSelected = true
+                                    val nextClip = videoClipManager.clips.firstOrNull {
+                                        it.timelineStartMs >= removedStartMs
+                                    }
+                                    val remainingLastClip = videoClipManager.clips.lastOrNull()
+                                    val targetClip = nextClip ?: remainingLastClip
+                                    selectedVideoClipId = targetClip?.id
+                                    val newPosition = if (nextClip == null && remainingLastClip != null) {
+                                        remainingLastClip.timelineEndMs
+                                    } else {
+                                        targetClip?.timelineStartMs ?: removedStartMs.coerceAtMost(projectDurationMs())
+                                    }
+
+                                    refreshOverlayVideoTracks()
+                                    refreshTextTracks()
+                                    refreshEffectTracks()
+                                    refreshAudioTracks()
+                                    if (::timeline.isInitialized) {
+                                        timeline.setDuration(projectDurationMs(), newPosition)
+                                        timelineController.setDuration(projectDurationMs())
+                                    }
+                                    refreshEditedPreview(newPosition.coerceAtMost(projectDurationMs()))
+                                    saveCurrentProject()
                                 }
-                                val remainingLastClip = videoClipManager.clips.lastOrNull()
-                                val targetClip = nextClip ?: remainingLastClip
-                                selectedVideoClipId = targetClip?.id
-                                // Jika clip yang dihapus adalah clip paling akhir,
-                                // playhead harus menuju ujung clip terakhir yang tersisa.
-                                val newPosition = if (nextClip == null && remainingLastClip != null) {
-                                    remainingLastClip.timelineEndMs
-                                } else {
-                                    targetClip?.timelineStartMs ?: videoClipManager.durationMs
-                                }
-                                refreshEditedPreview(newPosition)
-                                saveCurrentProject()
                             }
                         }
                         updateToolMenu()
@@ -9979,7 +10056,7 @@ class MainActivity : AppCompatActivity() {
                 if (overlayStart > 0L) overlaySequence.addGap(overlayStart * 1000L)
                 overlaySequence.addItem(overlayEdited)
                 val overlayEndMs = overlayStart + overlayClip.durationMs
-                val projectEndMs = maxOf(videoClipManager.durationMs, overlayEndMs)
+                val projectEndMs = maxOf(projectDurationMs(), overlayEndMs)
                 val trailingGapMs = (projectEndMs - overlayEndMs).coerceAtLeast(0L)
                 if (trailingGapMs > 0L) overlaySequence.addGap(trailingGapMs * 1000L)
                 sequences.add(overlaySequence.build())
