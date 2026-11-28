@@ -8319,6 +8319,22 @@ class MainActivity : AppCompatActivity() {
 
     private var lastPreviewTextStateKey: Long = Long.MIN_VALUE
 
+    private fun visualEffectTextColor(baseColor: Int, timelineMs: Long): Int {
+        if (!isVisualGroupAbove("EFFECT", "TEXT")) return baseColor
+        val effect = effectClipManager.clips.lastOrNull {
+            timelineMs >= it.startTimeMs && timelineMs < it.endTimeMs &&
+                (it.effectName == "Black & White" || it.effectName == "Cahaya Lembut")
+        } ?: return baseColor
+        if (effect.effectName != "Black & White") return baseColor
+        val amount = (effect.intensity * effect.opacity).coerceIn(0f, 1f)
+        if (amount <= 0f) return baseColor
+        val gray = (Color.red(baseColor) * 0.299f + Color.green(baseColor) * 0.587f +
+            Color.blue(baseColor) * 0.114f).toInt().coerceIn(0, 255)
+        fun mix(channel: Int): Int = (channel + (gray - channel) * amount).toInt().coerceIn(0, 255)
+        return Color.argb(Color.alpha(baseColor), mix(Color.red(baseColor)),
+            mix(Color.green(baseColor)), mix(Color.blue(baseColor)))
+    }
+
     private fun updateTextPreview(force: Boolean = true) {
         if (!::previewTextOverlay.isInitialized) return
 
@@ -8336,7 +8352,7 @@ class MainActivity : AppCompatActivity() {
         val primary = selected ?: activeClips.lastOrNull()
         fun applyText(view: TextView, clip: TextClip?) {
             view.text = clip?.text ?: ""
-            view.setTextColor(clip?.color ?: Color.WHITE)
+            view.setTextColor(clip?.let { visualEffectTextColor(it.color, position) } ?: Color.WHITE)
             view.alpha = clip?.opacity ?: 1f
             view.typeface = clip?.let { getLibraryTypeface(it.fontName, it.bold) } ?: Typeface.DEFAULT
             view.visibility = if (clip == null) View.GONE else View.VISIBLE
@@ -10020,7 +10036,7 @@ class MainActivity : AppCompatActivity() {
                                                     if (globalMs < textClip.startTimeMs ||
                                                         globalMs >= textClip.endTimeMs) return@forEach
 
-                                                    textPaint.color = textClip.color
+                                                    textPaint.color = visualEffectTextColor(textClip.color, globalMs)
                                                     textPaint.alpha = (Color.alpha(textClip.color) *
                                                         textClip.opacity.coerceIn(0f, 1f)).toInt()
                                                     textPaint.typeface = textClip.typeface
