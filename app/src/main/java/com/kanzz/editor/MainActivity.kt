@@ -10008,8 +10008,6 @@ class MainActivity : AppCompatActivity() {
                                 // boleh membaca View, Player, filesystem, atau daftar clip yang berubah.
                                 // Teks dirender pada sequence transparan terpisah.
 
-                                }
-
                                 // Resolusi opsional diterapkan setelah semua efek kanvas dan teks.
                                 if (exportWidth != null && exportHeight != null) {
                                     add(
