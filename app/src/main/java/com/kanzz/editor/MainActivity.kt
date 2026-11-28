@@ -8319,20 +8319,33 @@ class MainActivity : AppCompatActivity() {
 
     private var lastPreviewTextStateKey: Long = Long.MIN_VALUE
 
-    private fun visualEffectTextColor(baseColor: Int, timelineMs: Long): Int {
-        if (!isVisualGroupAbove("EFFECT", "TEXT")) return baseColor
-        val effect = effectClipManager.clips.firstOrNull {
+    private fun activeVisualEffectForText(timelineMs: Long): EffectClip? {
+        if (!isVisualGroupAbove("EFFECT", "TEXT")) return null
+        return effectClipManager.clips.firstOrNull {
             timelineMs >= it.startTimeMs && timelineMs < it.endTimeMs &&
-                (it.effectName == "Black & White" || it.effectName == "Cahaya Lembut")
-        } ?: return baseColor
+                (it.effectName == "Black & White" || it.effectName == "Cahaya Lembut") &&
+                it.intensity * it.opacity > 0.001f
+        }
+    }
+
+    private fun visualEffectTextColor(baseColor: Int, timelineMs: Long): Int {
+        val effect = activeVisualEffectForText(timelineMs) ?: return baseColor
         if (effect.effectName != "Black & White") return baseColor
         val amount = (effect.intensity * effect.opacity).coerceIn(0f, 1f)
-        if (amount <= 0f) return baseColor
         val gray = (Color.red(baseColor) * 0.299f + Color.green(baseColor) * 0.587f +
             Color.blue(baseColor) * 0.114f).toInt().coerceIn(0, 255)
         fun mix(channel: Int): Int = (channel + (gray - channel) * amount).toInt().coerceIn(0, 255)
         return Color.argb(Color.alpha(baseColor), mix(Color.red(baseColor)),
             mix(Color.green(baseColor)), mix(Color.blue(baseColor)))
+    }
+
+    private fun visualEffectTextGlow(timelineMs: Long, densityScale: Float = 1f): Pair<Float, Int>? {
+        val effect = activeVisualEffectForText(timelineMs)
+            ?.takeIf { it.effectName == "Cahaya Lembut" } ?: return null
+        val amount = (effect.intensity * effect.opacity).coerceIn(0f, 1f)
+        val radius = (2f + effect.softFocus.coerceIn(0f, 1f) * 16f) * amount * densityScale
+        val alpha = (90f + 130f * amount).toInt().coerceIn(0, 220)
+        return radius to Color.argb(alpha, 255, 244, 220)
     }
 
     private fun updateTextPreview(force: Boolean = true) {
@@ -8354,6 +8367,7 @@ class MainActivity : AppCompatActivity() {
                 stateKey = stateKey * 31L + effect.effectName.hashCode()
                 stateKey = stateKey * 31L + (effect.intensity * 1000f).toInt()
                 stateKey = stateKey * 31L + (effect.opacity * 1000f).toInt()
+                stateKey = stateKey * 31L + (effect.softFocus * 1000f).toInt()
             }
         if (!force && activeClips.none { it.zoomInDurationMs > 0L || it.zoomOutDurationMs > 0L } && stateKey == lastPreviewTextStateKey) return
         lastPreviewTextStateKey = stateKey
@@ -8363,6 +8377,12 @@ class MainActivity : AppCompatActivity() {
         fun applyText(view: TextView, clip: TextClip?) {
             view.text = clip?.text ?: ""
             view.setTextColor(clip?.let { visualEffectTextColor(it.color, position) } ?: Color.WHITE)
+            val textGlow = if (clip != null) visualEffectTextGlow(position, resources.displayMetrics.density) else null
+            if (textGlow != null) {
+                view.setShadowLayer(textGlow.first, 0f, 0f, textGlow.second)
+            } else {
+                view.setShadowLayer(dp(3).toFloat(), dp(1).toFloat(), dp(2).toFloat(), Color.BLACK)
+            }
             view.alpha = clip?.opacity ?: 1f
             view.typeface = clip?.let { getLibraryTypeface(it.fontName, it.bold) } ?: Typeface.DEFAULT
             view.visibility = if (clip == null) View.GONE else View.VISIBLE
@@ -10060,10 +10080,15 @@ class MainActivity : AppCompatActivity() {
                                                     )
                                                     textPaint.textSize = previewTextSize *
                                                         fontScale * textClip.scale.coerceIn(0.2f, 6f) * textZoom
-                                                    textPaint.setShadowLayer(
-                                                        3f * fontScale, 1f * fontScale,
-                                                        2f * fontScale, Color.BLACK
-                                                    )
+                                                    val textGlow = visualEffectTextGlow(globalMs, fontScale)
+                                                    if (textGlow != null) {
+                                                        textPaint.setShadowLayer(textGlow.first, 0f, 0f, textGlow.second)
+                                                    } else {
+                                                        textPaint.setShadowLayer(
+                                                            3f * fontScale, 1f * fontScale,
+                                                            2f * fontScale, Color.BLACK
+                                                        )
+                                                    }
 
                                                     val centerX = canvas.width / 2f + textClip.positionX * sx
                                                     val centerY = canvas.height / 2f + textClip.positionY * sy
