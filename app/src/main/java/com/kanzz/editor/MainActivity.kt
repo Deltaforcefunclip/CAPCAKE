@@ -8321,7 +8321,7 @@ class MainActivity : AppCompatActivity() {
 
     private fun visualEffectTextColor(baseColor: Int, timelineMs: Long): Int {
         if (!isVisualGroupAbove("EFFECT", "TEXT")) return baseColor
-        val effect = effectClipManager.clips.lastOrNull {
+        val effect = effectClipManager.clips.firstOrNull {
             timelineMs >= it.startTimeMs && timelineMs < it.endTimeMs &&
                 (it.effectName == "Black & White" || it.effectName == "Cahaya Lembut")
         } ?: return baseColor
