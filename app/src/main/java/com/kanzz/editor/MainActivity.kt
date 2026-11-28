@@ -10290,8 +10290,14 @@ class MainActivity : AppCompatActivity() {
             // video harus berurutan, baru sequence audio ditambahkan setelah video utama.
             val overlayAudioSequences = mutableListOf<EditedMediaItemSequence>()
 
-            // Urutan ini harus sama dengan urutan input video compositor.
-            val exportOverlayClips = overlayVideoClips.filter { it.durationMs > 0L }
+            // Input compositor dengan inputId lebih kecil digambar paling depan.
+            // Preview memakai elevation yang meningkat mengikuti trackIndex, sehingga
+            // export harus mengurutkan lane tertinggi lebih dahulu agar tumpukan overlay
+            // identik antara preview dan hasil akhir. sortedByDescending stabil untuk
+            // mempertahankan urutan klip yang berada pada lane yang sama.
+            val exportOverlayClips = overlayVideoClips
+                .filter { it.durationMs > 0L }
+                .sortedByDescending { it.trackIndex }
 
             // Setiap klip overlay video menjadi sequence video paralel.
             exportOverlayClips.forEach { overlayClip ->
