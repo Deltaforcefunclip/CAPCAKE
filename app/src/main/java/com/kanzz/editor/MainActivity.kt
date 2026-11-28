@@ -9775,6 +9775,7 @@ class MainActivity : AppCompatActivity() {
                 "height=${exportHeight ?: "source"} fps=${outputFps ?: "source"}"
         )
 
+        var textOverlayImageFile: File? = null
         val editedItems = try {
             videoClipManager.clips.map { clip ->
                 val exportSourceUri = Uri.parse(clip.sourceUri)
@@ -10005,113 +10006,8 @@ class MainActivity : AppCompatActivity() {
                                 // Snapshot data teks dibuat sebelum Transformer berjalan.
                                 // CanvasOverlay dipanggil di thread pemrosesan frame; callback tidak
                                 // boleh membaca View, Player, filesystem, atau daftar clip yang berubah.
-                                val exportTextSnapshot = textClipManager.clips.map { text ->
-                                    ExportTextSnapshot(
-                                        startTimeMs = text.startTimeMs,
-                                        endTimeMs = text.endTimeMs,
-                                        text = text.text,
-                                        typeface = getLibraryTypeface(text.fontName, text.bold),
-                                        color = text.color,
-                                        opacity = text.opacity,
-                                        scale = text.scale,
-                                        positionX = text.positionX,
-                                        positionY = text.positionY,
-                                        rotation = text.rotation,
-                                        zoomInDurationMs = text.zoomInDurationMs,
-                                        zoomOutDurationMs = text.zoomOutDurationMs,
-                                        zoomInMode = text.zoomInMode,
-                                        zoomOutMode = text.zoomOutMode
-                                    )
-                                }
-                                if (exportTextSnapshot.isNotEmpty()) {
-                                    val videoClip = clip
-                                    val previewW = fontPickerAnchorView.width.coerceAtLeast(1).toFloat()
-                                    val previewH = fontPickerAnchorView.height.coerceAtLeast(1).toFloat()
-                                    val previewTextSize = previewTextOverlay.textSize
+                                // Teks dirender pada sequence transparan terpisah.
 
-
-                                    val overlay = object : CanvasOverlay(true) {
-                                        private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                                            textAlign = Paint.Align.CENTER
-                                            style = Paint.Style.FILL
-                                        }
-
-                                        override fun onDraw(canvas: Canvas, presentationTimeUs: Long) {
-                                            try {
-                                                canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
-                                                // Timestamp dari frame processor sudah berada pada garis waktu sequence.
-                                                // Jangan menambahkan timelineStartMs lagi: itu menggandakan offset
-                                                // setiap clip setelah clip pertama.
-                                                val globalMs = presentationTimeUs / 1000L
-                                                // Gunakan rasio frame yang benar-benar sedang diproses.
-                                                // Pada proyek gabungan, tiap sumber video bisa memiliki
-                                                // rasio berbeda; player.videoSize hanya mewakili satu sumber.
-                                                val frameAspect = canvas.width.toFloat() /
-                                                    canvas.height.toFloat().coerceAtLeast(1f)
-                                                val previewAspect = previewW / previewH
-                                                val previewContentW: Float
-                                                val previewContentH: Float
-                                                if (frameAspect >= previewAspect) {
-                                                    previewContentW = previewW
-                                                    previewContentH = previewW / frameAspect
-                                                } else {
-                                                    previewContentH = previewH
-                                                    previewContentW = previewH * frameAspect
-                                                }
-                                                val sx = canvas.width / previewContentW.coerceAtLeast(1f)
-                                                val sy = canvas.height / previewContentH.coerceAtLeast(1f)
-                                                val fontScale = (sx + sy) / 2f
-
-                                                exportTextSnapshot.forEach { textClip ->
-                                                    if (globalMs < textClip.startTimeMs ||
-                                                        globalMs >= textClip.endTimeMs) return@forEach
-
-                                                    textPaint.color = visualEffectTextColor(textClip.color, globalMs)
-                                                    textPaint.alpha = (Color.alpha(textClip.color) *
-                                                        textClip.opacity.coerceIn(0f, 1f)).toInt()
-                                                    textPaint.typeface = textClip.typeface
-                                                    val textZoom = clipZoomScale(
-                                                        globalMs - textClip.startTimeMs,
-                                                        textClip.endTimeMs - textClip.startTimeMs,
-                                                        textClip.zoomInDurationMs,
-                                                        textClip.zoomOutDurationMs,
-                                                        textClip.zoomInMode,
-                                                        textClip.zoomOutMode
-                                                    )
-                                                    textPaint.textSize = previewTextSize *
-                                                        fontScale * textClip.scale.coerceIn(0.2f, 6f) * textZoom
-                                                    val textGlow = visualEffectTextGlow(globalMs, fontScale)
-                                                    if (textGlow != null) {
-                                                        textPaint.setShadowLayer(textGlow.first, 0f, 0f, textGlow.second)
-                                                    } else {
-                                                        textPaint.setShadowLayer(
-                                                            3f * fontScale, 1f * fontScale,
-                                                            2f * fontScale, Color.BLACK
-                                                        )
-                                                    }
-
-                                                    val centerX = canvas.width / 2f + textClip.positionX * sx
-                                                    val centerY = canvas.height / 2f + textClip.positionY * sy
-                                                    val lines = textClip.text.split('\n')
-                                                    val lineHeight = textPaint.fontSpacing
-                                                    val firstBaseline = centerY -
-                                                        ((lines.size - 1) * lineHeight / 2f) -
-                                                        (textPaint.ascent() + textPaint.descent()) / 2f
-                                                    canvas.save()
-                                                    canvas.rotate(textClip.rotation, centerX, centerY)
-                                                    lines.forEachIndexed { index, line ->
-                                                        canvas.drawText(line, centerX,
-                                                            firstBaseline + index * lineHeight, textPaint)
-                                                    }
-                                                    canvas.restore()
-                                                    textPaint.clearShadowLayer()
-                                                }
-                                            } catch (_: Exception) {
-                                                // Error gambar satu frame tidak boleh menghentikan ekspor.
-                                            }
-                                        }
-                                    }
-                                    add(OverlayEffect(listOf(overlay)))
                                 }
 
                                 // Resolusi opsional diterapkan setelah semua efek kanvas dan teks.
@@ -10290,6 +10186,118 @@ class MainActivity : AppCompatActivity() {
             // video harus berurutan, baru sequence audio ditambahkan setelah video utama.
             val overlayAudioSequences = mutableListOf<EditedMediaItemSequence>()
 
+
+            // Snapshot teks dibuat sekali dan dirender pada input transparan terpisah.
+            // Ini memungkinkan urutan TEXT relatif terhadap OVERLAY diatur compositor.
+            val textOverlayEffect: OverlayEffect? = if (textClipManager.clips.isNotEmpty()) {
+                val exportTextSnapshot = textClipManager.clips.map { text ->
+                ExportTextSnapshot(
+                startTimeMs = text.startTimeMs,
+                endTimeMs = text.endTimeMs,
+                text = text.text,
+                typeface = getLibraryTypeface(text.fontName, text.bold),
+                color = text.color,
+                opacity = text.opacity,
+                scale = text.scale,
+                positionX = text.positionX,
+                positionY = text.positionY,
+                rotation = text.rotation,
+                zoomInDurationMs = text.zoomInDurationMs,
+                zoomOutDurationMs = text.zoomOutDurationMs,
+                zoomInMode = text.zoomInMode,
+                zoomOutMode = text.zoomOutMode
+                )
+                }
+                if (exportTextSnapshot.isNotEmpty()) {
+                val previewW = fontPickerAnchorView.width.coerceAtLeast(1).toFloat()
+                val previewH = fontPickerAnchorView.height.coerceAtLeast(1).toFloat()
+                val previewTextSize = previewTextOverlay.textSize
+                
+                
+                val overlay = object : CanvasOverlay(true) {
+                private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                textAlign = Paint.Align.CENTER
+                style = Paint.Style.FILL
+                }
+                
+                override fun onDraw(canvas: Canvas, presentationTimeUs: Long) {
+                try {
+                canvas.drawColor(Color.TRANSPARENT, PorterDuff.Mode.CLEAR)
+                // Timestamp dari frame processor sudah berada pada garis waktu sequence.
+                // Jangan menambahkan timelineStartMs lagi: itu menggandakan offset
+                // setiap clip setelah clip pertama.
+                val globalMs = presentationTimeUs / 1000L
+                // Gunakan rasio frame yang benar-benar sedang diproses.
+                // Pada proyek gabungan, tiap sumber video bisa memiliki
+                // rasio berbeda; player.videoSize hanya mewakili satu sumber.
+                val frameAspect = canvas.width.toFloat() /
+                canvas.height.toFloat().coerceAtLeast(1f)
+                val previewAspect = previewW / previewH
+                val previewContentW: Float
+                val previewContentH: Float
+                if (frameAspect >= previewAspect) {
+                previewContentW = previewW
+                previewContentH = previewW / frameAspect
+                } else {
+                previewContentH = previewH
+                previewContentW = previewH * frameAspect
+                }
+                val sx = canvas.width / previewContentW.coerceAtLeast(1f)
+                val sy = canvas.height / previewContentH.coerceAtLeast(1f)
+                val fontScale = (sx + sy) / 2f
+                
+                exportTextSnapshot.forEach { textClip ->
+                if (globalMs < textClip.startTimeMs ||
+                globalMs >= textClip.endTimeMs) return@forEach
+                
+                textPaint.color = visualEffectTextColor(textClip.color, globalMs)
+                textPaint.alpha = (Color.alpha(textClip.color) *
+                textClip.opacity.coerceIn(0f, 1f)).toInt()
+                textPaint.typeface = textClip.typeface
+                val textZoom = clipZoomScale(
+                globalMs - textClip.startTimeMs,
+                textClip.endTimeMs - textClip.startTimeMs,
+                textClip.zoomInDurationMs,
+                textClip.zoomOutDurationMs,
+                textClip.zoomInMode,
+                textClip.zoomOutMode
+                )
+                textPaint.textSize = previewTextSize *
+                fontScale * textClip.scale.coerceIn(0.2f, 6f) * textZoom
+                val textGlow = visualEffectTextGlow(globalMs, fontScale)
+                if (textGlow != null) {
+                textPaint.setShadowLayer(textGlow.first, 0f, 0f, textGlow.second)
+                } else {
+                textPaint.setShadowLayer(
+                3f * fontScale, 1f * fontScale,
+                2f * fontScale, Color.BLACK
+                )
+                }
+                
+                val centerX = canvas.width / 2f + textClip.positionX * sx
+                val centerY = canvas.height / 2f + textClip.positionY * sy
+                val lines = textClip.text.split('\n')
+                val lineHeight = textPaint.fontSpacing
+                val firstBaseline = centerY -
+                ((lines.size - 1) * lineHeight / 2f) -
+                (textPaint.ascent() + textPaint.descent()) / 2f
+                canvas.save()
+                canvas.rotate(textClip.rotation, centerX, centerY)
+                lines.forEachIndexed { index, line ->
+                canvas.drawText(line, centerX,
+                firstBaseline + index * lineHeight, textPaint)
+                }
+                canvas.restore()
+                textPaint.clearShadowLayer()
+                }
+                } catch (_: Exception) {
+                // Error gambar satu frame tidak boleh menghentikan ekspor.
+                }
+                }
+                }
+                OverlayEffect(listOf(overlay))
+            } else null
+
             // Input compositor dengan inputId lebih kecil digambar paling depan.
             // Preview memakai elevation yang meningkat mengikuti trackIndex, sehingga
             // export harus mengurutkan lane tertinggi lebih dahulu agar tumpukan overlay
@@ -10298,6 +10306,61 @@ class MainActivity : AppCompatActivity() {
             val exportOverlayClips = overlayVideoClips
                 .filter { it.durationMs > 0L }
                 .sortedByDescending { it.trackIndex }
+
+
+            val projectEndForTextMs = projectDurationMs().coerceAtLeast(1L)
+            val textCompositorLayer = OverlayCompositorLayer(
+                scaleX = 1f,
+                scaleY = 1f,
+                rotationDegrees = 0f,
+                backgroundAnchorX = 0f,
+                backgroundAnchorY = 0f,
+                activeStartTimeUs = 0L,
+                activeEndTimeUs = projectEndForTextMs * 1_000L,
+                opacity = 1f
+            )
+            val textSequence = if (textOverlayEffect != null) {
+                val blankWidth = (exportWidth ?: player.videoSize.width.takeIf { it > 0 }
+                    ?: previewFrameContainer.width).coerceAtLeast(2)
+                val blankHeight = (exportHeight ?: player.videoSize.height.takeIf { it > 0 }
+                    ?: previewFrameContainer.height).coerceAtLeast(2)
+                val blankBitmap = Bitmap.createBitmap(blankWidth, blankHeight, Bitmap.Config.ARGB_8888)
+                blankBitmap.eraseColor(Color.TRANSPARENT)
+                val blankFile = File(cacheDir, "CAPCAKE_TEXT_${System.currentTimeMillis()}.png")
+                try {
+                    java.io.FileOutputStream(blankFile).use { stream ->
+                        blankBitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                    }
+                } finally {
+                    blankBitmap.recycle()
+                }
+                textOverlayImageFile = blankFile
+                val frameRate = (outputFps?.toInt() ?: 30).coerceIn(1, 120)
+                val textImage = MediaItem.Builder()
+                    .setUri(Uri.fromFile(blankFile))
+                    .setImageDurationMs(projectEndForTextMs)
+                    .build()
+                val textEdited = EditedMediaItem.Builder(textImage)
+                    .setFrameRate(frameRate)
+                    .setEffects(Effects(emptyList(), listOf(
+                        Presentation.createForWidthAndHeight(
+                            blankWidth, blankHeight, Presentation.LAYOUT_SCALE_TO_FIT
+                        ),
+                        textOverlayEffect
+                    )))
+                    .build()
+                EditedMediaItemSequence.Builder(setOf(C.TRACK_TYPE_VIDEO))
+                    .addItem(textEdited)
+                    .build()
+            } else null
+
+            // InputId lebih kecil berada di depan. TEXT disisipkan sesuai urutan panel.
+            val textAboveOverlay = visualLayerOrder.indexOf("TEXT") >= 0 &&
+                visualLayerOrder.indexOf("OVERLAY") >= 0 &&
+                visualLayerOrder.indexOf("TEXT") < visualLayerOrder.indexOf("OVERLAY")
+            if (textSequence != null && textAboveOverlay) {
+                sequences.add(textSequence)
+            }
 
             // Setiap klip overlay video menjadi sequence video paralel.
             exportOverlayClips.forEach { overlayClip ->
@@ -10458,6 +10521,10 @@ class MainActivity : AppCompatActivity() {
                 }
             }
 
+            if (textSequence != null && !textAboveOverlay) {
+                sequences.add(textSequence)
+            }
+
             // Video utama menjadi background compositor. Penempatannya setelah seluruh
             // overlay penting: sebelumnya video utama berada di inputId 0 dan menutupi
             // semua overlay yang berada di sequence berikutnya.
@@ -10545,12 +10612,12 @@ class MainActivity : AppCompatActivity() {
             // VideoCompositorSettings hanya boleh dipasang jika ada video overlay
             // sehingga komposisi benar-benar memiliki beberapa input video.
             val compositionBuilder = Composition.Builder(sequences)
-            if (exportOverlayClips.isNotEmpty()) {
+            if (exportOverlayClips.isNotEmpty() || textSequence != null) {
                 val frameW = previewFrameContainer.width.coerceAtLeast(1).toFloat()
                 val frameH = previewFrameContainer.height.coerceAtLeast(1).toFloat()
                 val canvasWidth = (exportWidth ?: frameW.toInt()).coerceAtLeast(2)
                 val canvasHeight = (exportHeight ?: frameH.toInt()).coerceAtLeast(2)
-                val compositorLayers = exportOverlayClips.map { overlayClip ->
+                val overlayCompositorLayers = exportOverlayClips.map { overlayClip ->
                     val geometry = calculateOverlayExportGeometry(
                         overlayClip, canvasWidth, canvasHeight
                     )
@@ -10565,6 +10632,14 @@ class MainActivity : AppCompatActivity() {
                             overlayClip.durationMs.coerceAtLeast(0L)) * 1_000L,
                         opacity = overlayClip.opacity.coerceIn(0f, 1f)
                     )
+                }
+
+                val compositorLayers = if (textSequence != null && textAboveOverlay) {
+                    listOf(textCompositorLayer) + overlayCompositorLayers
+                } else if (textSequence != null) {
+                    overlayCompositorLayers + textCompositorLayer
+                } else {
+                    overlayCompositorLayers
                 }
                 compositionBuilder.setVideoCompositorSettings(
                     CapcakeVideoCompositorSettings(
