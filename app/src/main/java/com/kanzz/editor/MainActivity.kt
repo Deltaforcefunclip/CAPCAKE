@@ -9908,17 +9908,29 @@ class MainActivity : AppCompatActivity() {
                     // ColorMatrix setelah shader karena RGB hasil chroma sudah
                     // premultiplied-alpha; offset matrix dapat mengubah transparansi
                     // menjadi warna hitam/hijau pada hasil ekspor.
-                    add(
-                        ChromaKeyGlEffect(
-                            overlayClip.chromaKeyColor,
-                            overlayClip.chromaKeyThreshold,
-                            overlayClip.chromaKeySoftness,
-                            overlayClip.chromaKeyEnabled,
-                            overlayClip.brightness,
-                            overlayClip.contrast,
-                            overlayClip.saturation
+                    // Jangan jalankan shader chroma/color pada overlay netral.
+                    // Shader ini diperlukan hanya saat chroma key atau penyesuaian warna
+                    // benar-benar aktif. Melewati pass GL yang tidak melakukan perubahan
+                    // menghindari artefak titik hitam di output compositor, sekaligus
+                    // mempertahankan urutan shader yang sama saat fitur dipakai.
+                    val overlayColorProcessingActive =
+                        overlayClip.chromaKeyEnabled ||
+                        kotlin.math.abs(overlayClip.brightness) > 0.0001f ||
+                        kotlin.math.abs(overlayClip.contrast - 1f) > 0.0001f ||
+                        kotlin.math.abs(overlayClip.saturation - 1f) > 0.0001f
+                    if (overlayColorProcessingActive) {
+                        add(
+                            ChromaKeyGlEffect(
+                                overlayClip.chromaKeyColor,
+                                overlayClip.chromaKeyThreshold,
+                                overlayClip.chromaKeySoftness,
+                                overlayClip.chromaKeyEnabled,
+                                overlayClip.brightness,
+                                overlayClip.contrast,
+                                overlayClip.saturation
+                            )
                         )
-                    )
+                    }
                     if (overlayClip.cropLeft > 0f || overlayClip.cropTop > 0f ||
                         overlayClip.cropRight > 0f || overlayClip.cropBottom > 0f
                     ) {
