@@ -145,6 +145,10 @@ class MainActivity : AppCompatActivity() {
     )
     private val overlayPreviewSessions = linkedMapOf<String, OverlayPreviewSession>()
     private var overlayPreviewSuspendedForExport = false
+
+    // Urutan kelompok visual disimpan terpisah dari data clip/timeline.
+    // Nilai awal: Effect di bawah Overlay, Text paling depan.
+    private val visualLayerOrder = mutableListOf("EFFECT", "OVERLAY", "TEXT")
     private var overlayCropModeEnabled = false
     private lateinit var timeline: TimelineView
     private lateinit var timelineController: SharedTimelineController
@@ -4410,6 +4414,114 @@ class MainActivity : AppCompatActivity() {
             toggle,
             LinearLayout.LayoutParams(-1, dp(22))
         )
+
+        // LAPISAN berada di menu utama, terpisah dari daftar aksi clip.
+        val layersButton = TextView(this).apply {
+            text = "LAPISAN"
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.rgb(28, 28, 28))
+            setPadding(0, dp(8), 0, dp(8))
+            setOnClickListener { showVisualLayerOrderDialog() }
+        }
+        toolsContainer.addView(layersButton, LinearLayout.LayoutParams(-1, dp(34)))
+    }
+
+    private fun showVisualLayerOrderDialog() {
+        val dialog = android.app.Dialog(this)
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(18), dp(16), dp(18), dp(12))
+            setBackgroundColor(Color.rgb(22, 22, 22))
+        }
+        root.addView(TextView(this).apply {
+            text = "URUTAN LAPISAN"
+            textSize = 16f
+            typeface = Typeface.DEFAULT_BOLD
+            setTextColor(Color.WHITE)
+        })
+        root.addView(TextView(this).apply {
+            text = "Kelompok paling atas tampil paling depan."
+            textSize = 11f
+            setTextColor(Color.LTGRAY)
+            setPadding(0, dp(5), 0, dp(12))
+        })
+        val list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        fun renderRows() {
+            list.removeAllViews()
+            visualLayerOrder.forEachIndexed { index, group ->
+                val rowView = LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL
+                    gravity = Gravity.CENTER_VERTICAL
+                    setPadding(dp(8), dp(4), dp(4), dp(4))
+                }
+                rowView.addView(TextView(this).apply {
+                    text = when (group) {
+                        "TEXT" -> "TEXT"
+                        "OVERLAY" -> "OVERLAY"
+                        else -> "EFFECT"
+                    }
+                    textSize = 13f
+                    typeface = Typeface.DEFAULT_BOLD
+                    setTextColor(Color.WHITE)
+                }, LinearLayout.LayoutParams(0, dp(42), 1f))
+                val up = TextView(this).apply {
+                    text = "▲"
+                    gravity = Gravity.CENTER
+                    setTextColor(if (index > 0) green else Color.DKGRAY)
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    isEnabled = index > 0
+                    setOnClickListener {
+                        if (index > 0) {
+                            java.util.Collections.swap(visualLayerOrder, index, index - 1)
+                            renderRows()
+                        }
+                    }
+                }
+                val down = TextView(this).apply {
+                    text = "▼"
+                    gravity = Gravity.CENTER
+                    setTextColor(if (index < visualLayerOrder.lastIndex) green else Color.DKGRAY)
+                    setPadding(dp(12), dp(10), dp(12), dp(10))
+                    isEnabled = index < visualLayerOrder.lastIndex
+                    setOnClickListener {
+                        if (index < visualLayerOrder.lastIndex) {
+                            java.util.Collections.swap(visualLayerOrder, index, index + 1)
+                            renderRows()
+                        }
+                    }
+                }
+                rowView.addView(up)
+                rowView.addView(down)
+                list.addView(rowView)
+            }
+        }
+        renderRows()
+        root.addView(list)
+        val actions = LinearLayout(this).apply { gravity = Gravity.END }
+        val cancel = TextView(this).apply {
+            text = "BATAL"; setTextColor(Color.LTGRAY); setPadding(dp(14), dp(12), dp(14), dp(8))
+            setOnClickListener { dialog.dismiss() }
+        }
+        val save = TextView(this).apply {
+            text = "SIMPAN"; setTextColor(green); typeface = Typeface.DEFAULT_BOLD
+            setPadding(dp(14), dp(12), dp(8), dp(8))
+            setOnClickListener {
+                saveCurrentProject()
+                dialog.dismiss()
+                showMessage("Urutan kelompok lapisan disimpan.")
+            }
+        }
+        actions.addView(cancel); actions.addView(save); root.addView(actions)
+        dialog.setContentView(root)
+        dialog.setOnDismissListener { }
+        dialog.show()
+        dialog.window?.apply {
+            setBackgroundDrawableResource(android.R.color.transparent)
+            setLayout((resources.displayMetrics.widthPixels - dp(48)).coerceAtLeast(dp(260)), -2)
+            setGravity(Gravity.CENTER)
+        }
     }
 
     private fun updateDreamyPreviewOverlay() {
@@ -8260,6 +8372,17 @@ class MainActivity : AppCompatActivity() {
         runCatching {
             val root = JSONObject(json)
             restoreTextClips(root.optJSONArray("text")?.toString())
+        // Pulihkan urutan kelompok visual; project lama memakai urutan default.
+        currentProject?.let { project ->
+            val savedOrder = prefs.getString("visual_layer_order_${project.id}", null)
+                ?.split(",")?.filter { it in setOf("EFFECT", "OVERLAY", "TEXT") }
+                ?.distinct().orEmpty()
+            visualLayerOrder.clear()
+            visualLayerOrder.addAll(savedOrder)
+            listOf("EFFECT", "OVERLAY", "TEXT").forEach {
+                if (it !in visualLayerOrder) visualLayerOrder.add(it)
+            }
+        }
             restoreEffectClips(root.optJSONArray("effects")?.toString())
             OverlayVideoCodec.decode(root.optJSONArray("overlayVideo")?.toString(), overlayVideoClips)
         }.onFailure {
@@ -9041,6 +9164,7 @@ class MainActivity : AppCompatActivity() {
                 .putString("text_timeline_${it.id}", encodeTextClips())
                 .putString("effect_timeline_${it.id}", encodeEffectClips())
                 .putString("overlay_video_timeline_${it.id}", OverlayVideoCodec.encode(overlayVideoClips))
+                .putString("visual_layer_order_${it.id}", visualLayerOrder.joinToString(","))
                 .apply()
         }
 
