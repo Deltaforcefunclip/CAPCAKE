@@ -10294,6 +10294,7 @@ class MainActivity : AppCompatActivity() {
                 }
                 }
                 OverlayEffect(listOf(overlay))
+                } else null
             } else null
 
             // Input compositor dengan inputId lebih kecil digambar paling depan.
