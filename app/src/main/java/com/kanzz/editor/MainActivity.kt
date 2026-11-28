@@ -530,7 +530,18 @@ class MainActivity : AppCompatActivity() {
     private val playbackUpdater = object : Runnable {
         override fun run() {
             if (::timeLabel.isInitialized) {
-                if (!player.isPlaying) updateTime()
+                // Fallback polling: beberapa jalur playlist/decoder dapat mencapai ENDED
+                // tanpa callback state yang tertangkap oleh listener utama.
+                if (player.playbackState == Player.STATE_ENDED &&
+                    projectDurationMs() > videoClipManager.durationMs && !isLayerTailPlaying) {
+                    layerTailPositionMs = videoClipManager.durationMs
+                    recordPlaybackDiagnostic(
+                        "LAYER_TAIL_START source=playbackUpdater mainEnd=${videoClipManager.durationMs}ms " +
+                            "projectEnd=${projectDurationMs()}ms"
+                    )
+                    startLayerTailPlayback()
+                }
+                if (!player.isPlaying || isLayerTailPlaying) updateTime()
                 syncVideoClipProperties()
                 syncAudioPlayback()
                 updateTextPreview(force = false)
@@ -698,8 +709,12 @@ class MainActivity : AppCompatActivity() {
                         "PLAYER_STATE state=$state playWhenReady=$playWhenReady isPlaying=$isPlaying " +
                             "item=$currentMediaItemIndex position=${currentPosition}ms"
                     )
-                    if (state == Player.STATE_ENDED && projectDurationMs() > videoClipManager.durationMs) {
+                    if (state == Player.STATE_ENDED && projectDurationMs() > videoClipManager.durationMs && !isLayerTailPlaying) {
                         layerTailPositionMs = videoClipManager.durationMs
+                        recordPlaybackDiagnostic(
+                            "LAYER_TAIL_START source=stateCallback mainEnd=${videoClipManager.durationMs}ms " +
+                                "projectEnd=${projectDurationMs()}ms"
+                        )
                         startLayerTailPlayback()
                     }
                 }
