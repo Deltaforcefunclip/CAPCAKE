@@ -2092,36 +2092,6 @@ class MainActivity : AppCompatActivity() {
         setupPreviewTransformGesture(ratioOverlay)
         applyPreviewTransform()
 
-        // Tombol Preview (PV), melayang di bawah tombol EXPORT.
-        val previewQualityButton = TextView(this).apply {
-            text = "PV"
-            textSize = 15f
-            setTextColor(green)
-            gravity = Gravity.CENTER
-            typeface = android.graphics.Typeface.DEFAULT_BOLD
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(Color.rgb(28, 28, 28))
-                setStroke(dp(1), green)
-                cornerRadius = dp(7).toFloat()
-            }
-            elevation = dp(8).toFloat()
-            contentDescription = "Pengaturan preview"
-            isClickable = true
-            isFocusable = true
-        }
-        val previewButtonParams = FrameLayout.LayoutParams(
-            dp(46),
-            dp(42),
-            Gravity.TOP or Gravity.END
-        ).apply {
-            topMargin = dp(8)
-            marginEnd = dp(8)
-        }
-        previewFrame.addView(previewQualityButton, previewButtonParams)
-        previewQualityButton.setOnClickListener {
-            showPreviewQualityDialog()
-        }
-
         val screenWidth =
             resources.displayMetrics.widthPixels
 
@@ -3896,7 +3866,9 @@ class MainActivity : AppCompatActivity() {
                 "CC" to "Subtitles",
                 "☆" to "Filter",
                 "◉" to "Sesuaikan",
-                "☺" to "Sticker"
+                "☺" to "Sticker",
+                "▤" to "LAPISAN",
+                "🎞" to "Proxy FPS"
             )
         }
 
@@ -4230,6 +4202,8 @@ class MainActivity : AppCompatActivity() {
                     "Rasio" -> {
                         showAspectRatioPicker()
                     }
+                    "LAPISAN" -> showVisualLayerOrderDialog()
+                    "Proxy FPS" -> showPreviewQualityDialog()
                     "Effect" -> {
                         val switchingGroup = activeLayerGroup != "EFFECT"
                         activeLayerGroup = "EFFECT"
@@ -4410,40 +4384,10 @@ class MainActivity : AppCompatActivity() {
             updateToolMenu()
         }
 
-        // Aksi tingkat utama dibuat satu baris agar tombol LAPISAN tidak
-        // terdorong keluar area layar pada perangkat dengan ruang menu terbatas.
-        val mainActionsRow = LinearLayout(this).apply {
-            orientation = LinearLayout.HORIZONTAL
-            gravity = Gravity.CENTER_VERTICAL
-        }
-        mainActionsRow.addView(
-            toggle,
-            LinearLayout.LayoutParams(0, dp(38), 1f)
-        )
-
-        val layersButton = TextView(this).apply {
-            text = "LAPISAN"
-            textSize = 11f
-            gravity = Gravity.CENTER
-            typeface = Typeface.DEFAULT_BOLD
-            setTextColor(Color.WHITE)
-            background = android.graphics.drawable.GradientDrawable().apply {
-                setColor(Color.rgb(28, 28, 28))
-                cornerRadius = dp(6).toFloat()
-                setStroke(dp(1), green)
-            }
-            setPadding(dp(14), 0, dp(14), 0)
-            setOnClickListener { showVisualLayerOrderDialog() }
-        }
-        mainActionsRow.addView(
-            layersButton,
-            LinearLayout.LayoutParams(dp(104), dp(38)).apply {
-                leftMargin = dp(6)
-            }
-        )
+        // Tombol navigasi kembali tetap berada di bawah barisan menu utama.
         toolsContainer.addView(
-            mainActionsRow,
-            LinearLayout.LayoutParams(-1, dp(42))
+            toggle,
+            LinearLayout.LayoutParams(-1, dp(30))
         )
     }
 
