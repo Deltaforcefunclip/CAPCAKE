@@ -9850,6 +9850,11 @@ class MainActivity : AppCompatActivity() {
             // Pada Media3, input sequence dengan inputId lebih kecil digambar di atas
             // sequence berikutnya. Video utama harus menjadi sequence video terakhir.
             val sequences = mutableListOf<EditedMediaItemSequence>()
+            // Simpan sequence audio overlay terpisah. VideoCompositor memberi inputId
+            // berdasarkan urutan sequence video; menyisipkan sequence audio di antara
+            // sequence video dapat menggeser pemetaan layer compositor. Semua sequence
+            // video harus berurutan, baru sequence audio ditambahkan setelah video utama.
+            val overlayAudioSequences = mutableListOf<EditedMediaItemSequence>()
 
             // Urutan ini harus sama dengan urutan input video compositor.
             val exportOverlayClips = overlayVideoClips.filter { it.durationMs > 0L }
@@ -10006,7 +10011,7 @@ class MainActivity : AppCompatActivity() {
                         .build()
                     overlayAudioSequence.addItem(overlayAudioItem)
                     if (trailingGapMs > 0L) overlayAudioSequence.addGap(trailingGapMs * 1000L)
-                    sequences.add(overlayAudioSequence.build())
+                    overlayAudioSequences.add(overlayAudioSequence.build())
                 }
             }
 
@@ -10014,6 +10019,10 @@ class MainActivity : AppCompatActivity() {
             // overlay penting: sebelumnya video utama berada di inputId 0 dan menutupi
             // semua overlay yang berada di sequence berikutnya.
             sequences.add(EditedMediaItemSequence.withAudioAndVideoFrom(editedItems))
+
+            // Tambahkan audio overlay setelah seluruh sequence video agar inputId
+            // VideoCompositor tetap sejajar dengan exportOverlayClips/compositorLayers.
+            sequences.addAll(overlayAudioSequences)
 
             // Setiap layer audio menjadi sequence terpisah agar beberapa layer dapat
             // bercampur bersamaan, sementara addGap menjaga posisi klip di timeline.
